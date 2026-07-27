@@ -561,33 +561,45 @@ mod tests {
         ];
 
         let mut violations = Vec::new();
-        for key in &legacy_keys {
-            let pattern = format!("\"{key}\"");
-            let output = std::process::Command::new("rg")
-                .args([
-                    "--no-heading",
-                    "-n",
-                    "--glob",
-                    "*.rs",
-                    "--glob",
-                    "!**/tests/**",
-                    "--glob",
-                    "!**/test*",
-                    &pattern,
-                ])
-                .current_dir(workspace)
-                .output()
-                .expect("rg should be available");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if !line.contains("env::var") && !line.contains("env_var") {
-                    continue;
-                }
-                let is_allowlisted = allowlisted_files
-                    .iter()
-                    .any(|allowed| line.starts_with(allowed));
-                if !is_allowlisted {
-                    violations.push(format!("{key}: {line}"));
+        for entry in walkdir::WalkDir::new(workspace)
+            .into_iter()
+            .filter_entry(|entry| {
+                let name = entry.file_name().to_string_lossy();
+                entry.depth() == 0
+                    || (!name.starts_with('.')
+                        && name != "target"
+                        && name != "tests"
+                        && !name.starts_with("test"))
+            })
+        {
+            let entry = entry.expect("walk workspace source");
+            if !entry.file_type().is_file()
+                || entry.path().extension().and_then(|ext| ext.to_str()) != Some("rs")
+            {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(workspace)
+                .expect("source path under workspace");
+            if allowlisted_files
+                .iter()
+                .any(|allowed| relative == std::path::Path::new(allowed))
+            {
+                continue;
+            }
+            let source = std::fs::read_to_string(entry.path()).expect("read Rust source");
+            for (line_index, line) in source.lines().enumerate() {
+                if line.contains("env::var") || line.contains("env_var") {
+                    for key in &legacy_keys {
+                        if line.contains(&format!("\"{key}\"")) {
+                            violations.push(format!(
+                                "{key}: {}:{}:{line}",
+                                relative.display(),
+                                line_index + 1
+                            ));
+                        }
+                    }
                 }
             }
         }
