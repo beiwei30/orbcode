@@ -1,0 +1,96 @@
+[workspace]
+members = [
+  "protocol",
+  "config",
+  "compat-fixtures",
+  "model-provider",
+  "session-store",
+  "core",
+  "app-server",
+  "app-server-protocol",
+  "app-server-client",
+  "app-server-transport",
+  "tui",
+  "cli",
+  "tools",
+  "mcp",
+]
+resolver = "2"
+
+[workspace.lints.clippy]
+# Internal functions are domain-driven (hook events, session lifecycle, render
+# pipelines) and their parameter lists reflect real data, not bad design.
+too_many_arguments = "allow"
+# Holding a std::sync lock guard across an .await point blocks the async runtime
+# and risks deadlocks. All current exceptions are test-only env-var
+# serialization guards (session-store prompt_history, tui clipboard tests,
+# config e2e_tests) annotated with #[allow]. Blocking I/O (std::fs,
+# std::process::Command) in async contexts is a separate known debt area with
+# no corresponding clippy lint.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["orbcode contributors"]
+repository = "https://github.com/beiwei30/orbcode"
+# No project site yet; until there is one, homepage is the repository so the
+# field is still populated for tooling that reads it (crates.io, `cargo info`).
+homepage = "https://github.com/beiwei30/orbcode"
+readme = "README.md"
+# Nothing in this workspace is published. What ships is one binary; the library
+# crates exist to build it, have no external consumers, and move their public
+# surfaces freely (see public-api-allow-list.txt), while
+# `orbcode-compat-fixtures` is a test-only corpus. Inherited by every member so
+# a stray `cargo publish` fails instead of claiming 14 names on crates.io. Flip
+# an individual crate to `publish = true` if it ever gains real consumers.
+publish = false
+# `description` is deliberately NOT inherited: these are 14 crates doing 14
+# different jobs, and a single shared description would be wrong for all but
+# one of them. Each crate carries its own.
+
+# Distribution release profile. Tuned for smaller, faster shipped binaries
+# while staying compatible with `cargo test --release` (no panic=abort, which
+# the test harness cannot link). LTO + a single codegen unit trade build time
+# for runtime size/speed; symbols are stripped since build metadata is embedded
+# separately via build.rs.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+agent-client-protocol = "0.14.0"
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", features = ["clock", "serde"] }
+clap = { version = "4.5.50", features = ["derive"] }
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+directories = "6.0.0"
+futures = "0.3.31"
+reqwest = { version = "0.12.24", default-features = false, features = ["charset", "http2", "json", "rustls-tls", "stream"] }
+rustls = { version = "0.23.40", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1.14.1"
+ratatui = "0.29.0"
+schemars = "1.2.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
+syntect = "5"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = "0.29.0"
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12", "logging"] }
+tokio-stream = "0.1.17"
+tracing = "0.1.41"
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
+tempfile = "3.23.0"
+unicode-width = "0.2.0"
+uuid = { version = "1.18.1", features = ["serde", "v4", "v5"] }
+url = "2.5"
+vt100 = "0.15.2"
+webpki-roots = "1.0.7"

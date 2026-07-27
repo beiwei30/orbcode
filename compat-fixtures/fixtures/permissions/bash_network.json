@@ -1,0 +1,9 @@
+{
+  "request_id": "22220001-0000-0000-0000-000000000001",
+  "session_id": "22220001-0000-0000-0000-000000000000",
+  "tool_use_id": "toolu_perm01",
+  "tool_name": "Bash",
+  "tool_input": "{\"command\":\"curl https://example.com\"}",
+  "requires_tools_permission": true,
+  "requires_network_permission": true
+}

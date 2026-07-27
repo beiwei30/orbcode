@@ -1,0 +1,39 @@
+[
+  {
+    "role": "user",
+    "content": "Run the test suite."
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_cccc01",
+        "name": "Bash",
+        "input": {
+          "command": "cargo test"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_cccc01",
+        "content": "test result: ok. 42 passed; 0 failed",
+        "is_error": false
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "All 42 tests passed."
+      }
+    ]
+  }
+]

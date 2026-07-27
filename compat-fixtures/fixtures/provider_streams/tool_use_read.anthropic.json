@@ -1,0 +1,43 @@
+[
+  {
+    "role": "user",
+    "content": "Read the README and summarize it."
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll read the README."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_bbbb01",
+        "name": "Read",
+        "input": {
+          "file_path": "/Users/dev/project/README.md"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_bbbb01",
+        "content": "# Project\n\nA demo project for compatibility fixtures.",
+        "is_error": false
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The README describes a demo project for compatibility fixtures."
+      }
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClientCapabilities",
+  "description": "Capabilities declared by the client during the handshake.",
+  "type": "object",
+  "properties": {
+    "streaming": {
+      "type": "boolean",
+      "default": false
+    },
+    "experimental_methods": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

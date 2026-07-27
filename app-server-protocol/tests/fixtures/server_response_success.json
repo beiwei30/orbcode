@@ -1,0 +1,10 @@
+{
+  "type": "response",
+  "id": "req-1",
+  "result": {
+    "status": "success",
+    "data": {
+      "sessions": []
+    }
+  }
+}

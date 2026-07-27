@@ -1,0 +1,8 @@
+{
+  "type": "response",
+  "id": "srv-req-1",
+  "result": {
+    "status": "success",
+    "data": true
+  }
+}

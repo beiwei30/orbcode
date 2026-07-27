@@ -1,0 +1,24 @@
+{
+  "name": "@orbcode/reference-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal reference client proving the orbcode protocol contract is externally consumable",
+  "type": "module",
+  "main": "src/client.ts",
+  "scripts": {
+    "test:stdio": "npx tsx src/smoke-stdio.ts",
+    "test:ws": "npx tsx src/smoke-ws.ts",
+    "test:host": "npx tsx src/smoke-host-productization.ts",
+    "start:web-host": "npx tsx src/local-web-host.ts",
+    "test:web-host": "npx tsx src/local-web-host.ts --smoke"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "orbcode-tui"
+version.workspace = true
+edition.workspace = true
+description = "ratatui terminal interface for Orb Code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+orbcode-app-server-client = { path = "../app-server-client", default-features = false }
+orbcode-config = { path = "../config" }
+orbcode-protocol = { path = "../protocol" }
+orbcode-tools = { path = "../tools" }
+chrono.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syntect.workspace = true
+tokio.workspace = true
+two-face.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+orbcode-app-server = { path = "../app-server" }
+orbcode-app-server-client = { path = "../app-server-client", features = ["test-support"] }
+orbcode-mcp = { path = "../mcp" }
+chrono.workspace = true
+tempfile.workspace = true
+vt100.workspace = true
+
+[lints]
+workspace = true

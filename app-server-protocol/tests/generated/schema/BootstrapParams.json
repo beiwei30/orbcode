@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BootstrapParams",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "additional_directories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "session_mcp_servers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/McpServerConfig"
+      },
+      "default": []
+    },
+    "read_only": {
+      "description": "When true, load the session record for read-only viewing only (e.g. a\nworkflow agent step's output). This must NOT mutate the live session's\nruntime context (cwd/permissions/effort) or the live-session registry.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "$defs": {
+    "McpServerConfig": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "transport": {
+          "$ref": "#/$defs/McpTransport"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/McpServerStatus",
+          "default": "ready"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "summary": {
+          "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/McpAuth"
+        },
+        "trust": {
+          "$ref": "#/$defs/McpServerTrust",
+          "default": "unknown"
+        },
+        "transport_type_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpServerSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "transport",
+        "endpoint",
+        "enabled",
+        "summary",
+        "auth"
+      ]
+    },
+    "McpTransport": {
+      "type": "string",
+      "enum": [
+        "stdio",
+        "http",
+        "https",
+        "streamable_http",
+        "web_socket"
+      ]
+    },
+    "McpServerStatus": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "starting",
+        "ready",
+        "failed",
+        "unauthorized",
+        "restarting",
+        "stopped"
+      ]
+    },
+    "McpAuth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "env_var": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bearer_env"
+            }
+          },
+          "required": [
+            "kind",
+            "env_var"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "header"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "value"
+          ]
+        }
+      ]
+    },
+    "McpServerTrust": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "trusted",
+        "denied"
+      ]
+    },
+    "McpServerSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plugin"
+            }
+          },
+          "$ref": "#/$defs/McpPluginSource",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "McpPluginSource": {
+      "type": "object",
+      "properties": {
+        "plugin_id": {
+          "type": "string"
+        },
+        "plugin_name": {
+          "type": "string"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "plugin_name",
+        "server_name",
+        "source"
+      ]
+    }
+  }
+}

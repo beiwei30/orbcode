@@ -1,0 +1,9 @@
+{
+  "request_id": "22220003-0000-0000-0000-000000000001",
+  "session_id": "22220003-0000-0000-0000-000000000000",
+  "tool_use_id": "toolu_perm03",
+  "tool_name": "Read",
+  "tool_input": "{\"file_path\":\"/Users/dev/project/notes.md\"}",
+  "requires_tools_permission": false,
+  "requires_network_permission": false
+}

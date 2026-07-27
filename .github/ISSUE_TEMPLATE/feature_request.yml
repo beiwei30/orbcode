@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose something Orb Code should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things worth checking first, because they decide most requests:
+
+        - The [feature maturity tables](https://github.com/beiwei30/orbcode#features-and-maturity)
+          list what is already deferred or partially implemented — a request to
+          finish one of those is very welcome, and useful to know about.
+        - Byte-level compatibility with the TypeScript Claude Code CLI is a design
+          goal. If the TypeScript CLI already does this, matching its behaviour is
+          almost certainly the answer, and knowing exactly what it does is the most
+          valuable thing you can put in this issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you currently cannot?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+      description: |
+        Concretely — the flag, subcommand, setting, tool, or TUI behaviour you
+        have in mind, and how you would expect to invoke it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ts-parity
+    attributes:
+      label: Does the TypeScript CLI do this?
+      options:
+        - "Yes — this is a parity gap"
+        - "No — this would be new behaviour beyond the TypeScript CLI"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: ts-behaviour
+    attributes:
+      label: TypeScript CLI behaviour
+      description: |
+        If it is a parity gap: the exact flag/output/on-disk format it produces.
+        Verbatim output beats a description, since compatibility is judged on
+        bytes.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including any workaround you are using today.

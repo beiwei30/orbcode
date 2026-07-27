@@ -1,0 +1,161 @@
+/**
+ * Minimal orbcode protocol client for stdio NDJSON transport.
+ *
+ * Imports types from the generated protocol contract — no hand-written
+ * protocol types, no Rust facade linking.
+ */
+
+import { ChildProcess, spawn } from "node:child_process";
+import { createInterface, Interface } from "node:readline";
+import type {
+  ClientRequestEnvelope,
+  ServerResponseEnvelope,
+  ServerNotificationEnvelope,
+  ServerRequestEnvelope,
+  InitializeParams,
+  InitializeResult,
+  ResponseResult,
+  ErrorCode,
+  ServerCapabilities,
+  ClientCapabilities,
+} from "@orbcode/protocol";
+
+export type ServerMessage =
+  | (ServerResponseEnvelope & { type: "response" })
+  | (ServerNotificationEnvelope & { type: "notification" })
+  | (ServerRequestEnvelope & { type: "request" });
+
+export class OrbCodeClient {
+  private process: ChildProcess;
+  private rl: Interface;
+  private pending = new Map<
+    string,
+    {
+      resolve: (msg: ServerMessage) => void;
+      reject: (err: Error) => void;
+    }
+  >();
+  private serverRequests: ServerMessage[] = [];
+  private notifications: ServerMessage[] = [];
+  private nextId = 0;
+
+  constructor(binPath: string, homeDir: string, cwd: string) {
+    this.process = spawn(binPath, ["serve", "--stdio"], {
+      cwd,
+      env: {
+        ORBCODE_HOME: homeDir,
+        PATH: process.env.PATH,
+        HOME: homeDir,
+        RUST_LOG: "warn",
+      },
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+
+    this.rl = createInterface({ input: this.process.stdout! });
+    this.rl.on("line", (line: string) => {
+      try {
+        const msg = JSON.parse(line) as ServerMessage;
+        this.dispatch(msg);
+      } catch {
+        // skip non-JSON lines
+      }
+    });
+  }
+
+  private dispatch(msg: ServerMessage): void {
+    if (msg.type === "response" && "id" in msg) {
+      const p = this.pending.get(msg.id);
+      if (p) {
+        this.pending.delete(msg.id);
+        p.resolve(msg);
+      }
+    } else if (msg.type === "request") {
+      this.serverRequests.push(msg);
+    } else if (msg.type === "notification") {
+      this.notifications.push(msg);
+    }
+  }
+
+  async request(method: string, params?: unknown): Promise<ServerMessage> {
+    const id = `req-${this.nextId++}`;
+    const msg = { type: "request" as const, id, method, params };
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      const line = JSON.stringify(msg) + "\n";
+      this.process.stdin!.write(line);
+      setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`timeout waiting for response to ${method}`));
+        }
+      }, 10_000);
+    });
+  }
+
+  async respond(id: string, data: unknown): Promise<void> {
+    const msg = {
+      type: "response",
+      id,
+      result: { status: "success", data },
+    };
+    const line = JSON.stringify(msg) + "\n";
+    this.process.stdin!.write(line);
+  }
+
+  async initialize(
+    opts: { experimentalMethods?: boolean } = {},
+  ): Promise<InitializeResult> {
+    const resp = await this.request("initialize", {
+      protocol_version: "1.0",
+      client_info: { name: "ts-reference-client", version: "0.1.0" },
+      capabilities: {
+        streaming: true,
+        experimental_methods: opts.experimentalMethods ?? false,
+      },
+    });
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`initialize failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as InitializeResult;
+  }
+
+  async sessionList(): Promise<unknown[]> {
+    const resp = await this.request("session/list");
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`session/list failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as unknown[];
+  }
+
+  async bootstrap(): Promise<unknown> {
+    const resp = await this.request("session/bootstrap");
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`session/bootstrap failed: ${JSON.stringify(result)}`);
+    }
+    return result.data;
+  }
+
+  getServerRequests(): ServerMessage[] {
+    return [...this.serverRequests];
+  }
+
+  getNotifications(): ServerMessage[] {
+    return [...this.notifications];
+  }
+
+  clearNotifications(): void {
+    this.notifications = [];
+  }
+
+  async close(): Promise<void> {
+    this.rl.close();
+    this.process.stdin!.end();
+    await new Promise<void>((resolve) => {
+      this.process.on("close", () => resolve());
+      setTimeout(resolve, 5000);
+    });
+  }
+}

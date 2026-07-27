@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PermissionDecisionWire",
+  "description": "Client's decision in response to a [`PermissionRequest`].\n\nThis is a wire-serializable enum mirroring `core`'s `PermissionDecision`,\nkept here so the protocol crate stays free of core dependencies.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "const": "approve"
+        }
+      },
+      "required": [
+        "decision"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "const": "deny"
+        }
+      },
+      "required": [
+        "decision"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "decision": {
+          "type": "string",
+          "const": "approve_always"
+        }
+      },
+      "required": [
+        "decision"
+      ]
+    }
+  ]
+}

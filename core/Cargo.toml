@@ -1,0 +1,38 @@
+[package]
+name = "orbcode-core"
+version.workspace = true
+edition.workspace = true
+description = "Turn orchestration, agent loop, permissions, hooks and compaction for Orb Code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+orbcode-config = { path = "../config" }
+orbcode-mcp = { path = "../mcp" }
+orbcode-model-provider = { path = "../model-provider" }
+orbcode-protocol = { path = "../protocol" }
+orbcode-session-store = { path = "../session-store" }
+orbcode-tools = { path = "../tools" }
+chrono.workspace = true
+regex = "1"
+# Fallback engine for hook matchers that use valid-JavaScript regex features
+# the `regex` crate rejects (lookaround, backreferences), e.g. `^(?!Read$).*`.
+fancy-regex = "0.18"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# Enable the mock provider for the retry/fallback test suite. Feature
+# unification keeps it on only for `cargo test`, never in release builds.
+orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

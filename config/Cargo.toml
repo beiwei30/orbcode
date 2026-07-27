@@ -1,0 +1,27 @@
+[package]
+name = "orbcode-config"
+version.workspace = true
+edition.workspace = true
+description = "Settings layering, auth, permission rules, home resolution and managed policy for Orb Code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbcode-protocol = { path = "../protocol" }
+chrono.workspace = true
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tree-sitter.workspace = true
+tree-sitter-bash.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

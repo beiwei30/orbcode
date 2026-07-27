@@ -1,0 +1,12 @@
+{
+  "type": "notification",
+  "method": "stream/event",
+  "params": {
+    "subscription_id": "sub-1",
+    "event": {
+      "event": "assistant_delta",
+      "session_id": "s1",
+      "delta": "hello"
+    }
+  }
+}

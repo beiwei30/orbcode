@@ -1,0 +1,16 @@
+[
+  "parse_error",
+  "invalid_request",
+  "method_not_found",
+  "invalid_params",
+  "internal_error",
+  "session_not_found",
+  "active_turn",
+  "no_active_turn",
+  "permission_denied",
+  "provider_failed",
+  "config_error",
+  "tool_error",
+  "mcp_error",
+  "overloaded"
+]

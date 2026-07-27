@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerRequestEnvelope",
+  "description": "A request initiated by the server that expects a client response.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "method": {
+      "type": "string"
+    },
+    "params": true
+  },
+  "required": [
+    "id",
+    "method",
+    "params"
+  ]
+}

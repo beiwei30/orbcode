@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClientMessage",
+  "description": "Messages sent from a client to the server.",
+  "oneOf": [
+    {
+      "description": "A new request initiated by the client.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "request"
+        }
+      },
+      "$ref": "#/$defs/ClientRequestEnvelope",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A response to a server-initiated request.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "response"
+        }
+      },
+      "$ref": "#/$defs/ServerRequestResponse",
+      "required": [
+        "type"
+      ]
+    }
+  ],
+  "$defs": {
+    "ClientRequestEnvelope": {
+      "description": "A request envelope sent by the client.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": true
+      },
+      "required": [
+        "id",
+        "method"
+      ]
+    },
+    "ResponseResult": {
+      "description": "Outcome of a request -- either success or an error.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": true,
+            "status": {
+              "type": "string",
+              "const": "success"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "$ref": "#/$defs/ProtocolError",
+          "required": [
+            "status"
+          ]
+        }
+      ]
+    },
+    "ErrorCode": {
+      "description": "Error codes for the app-server protocol.",
+      "type": "string",
+      "enum": [
+        "parse_error",
+        "invalid_request",
+        "method_not_found",
+        "invalid_params",
+        "internal_error",
+        "session_not_found",
+        "active_turn",
+        "no_active_turn",
+        "permission_denied",
+        "provider_failed",
+        "config_error",
+        "tool_error",
+        "mcp_error",
+        "overloaded"
+      ]
+    },
+    "ProtocolError": {
+      "description": "Structured error returned inside [`ResponseResult::Error`](crate::ResponseResult).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": true
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ServerRequestResponse": {
+      "description": "Client's response to a server-initiated request.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/ResponseResult"
+        }
+      },
+      "required": [
+        "id",
+        "result"
+      ]
+    }
+  }
+}

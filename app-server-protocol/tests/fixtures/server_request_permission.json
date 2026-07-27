@@ -1,0 +1,13 @@
+{
+  "type": "request",
+  "id": "sreq-1",
+  "method": "permission/request",
+  "params": {
+    "request_id": "perm-1",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls"
+    },
+    "risk_category": "medium"
+  }
+}

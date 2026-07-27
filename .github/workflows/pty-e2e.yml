@@ -1,0 +1,48 @@
+name: pty-e2e
+
+# Dedicated, isolated job for the PTY-level TUI smoke tests
+# (cli/tests/tui_remote_pty_e2e.rs).
+#
+# These tests drive a real pseudo-terminal with blocking I/O and are #[ignore]d
+# so the default `cargo test --workspace` neither runs nor hangs on them. They
+# are load-sensitive: reliable only on a quiet, uncontended machine. A dedicated
+# CI runner is exactly that, so this job runs them serially (`--test-threads=1`)
+# via `scripts/check.sh --pty-e2e`. `timeout-minutes` is the hard outer bound so
+# a stall fails the job instead of hanging the pipeline (the script also applies
+# an inner `timeout` when the coreutils binary is present, as it is on ubuntu).
+
+on:
+  workflow_dispatch: {}
+  # No `paths` filter: these tests launch the full `orbcode` binary, so a change in
+  # ANY workspace crate (core, protocol, config, mcp, model-provider, tools,
+  # session-store, ...) or the Cargo manifests/lockfile can alter PTY behavior. A
+  # path filter would silently skip those, and the default `cargo test --workspace`
+  # ignores these three tests — leaving no backstop. Run on every pull request.
+  pull_request: {}
+
+# Runs pull-request code, including from forks: read-only token, declared here so
+# it does not follow the repository-level default if that is ever widened.
+permissions:
+  contents: read
+
+concurrency:
+  group: pty-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pty-e2e:
+    name: PTY e2e (ignored, serial)
+    runs-on: ubuntu-latest
+    # Hard outer bound: the PTY harness must never hang the pipeline.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run ignored PTY e2e tests serially
+        # Invoke via `bash` so this does not depend on the script's executable
+        # bit (which is easy to lose across checkouts / editors).
+        run: bash scripts/check.sh --pty-e2e

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskUserQuestionResponse",
+  "description": "Client's response to an [`AskUserQuestionRequest`].",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "description": "The `request_id` from the original [`AskUserQuestionRequest`].",
+      "type": "string"
+    },
+    "answer": {
+      "description": "The user's answer. `None` if the user dismissed or cancelled the\nprompt without providing an answer.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "request_id"
+  ]
+}

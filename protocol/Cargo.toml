@@ -1,0 +1,19 @@
+[package]
+name = "orbcode-protocol"
+version.workspace = true
+edition.workspace = true
+description = "Shared serde types and streaming contracts (StreamEvent, transcript and session records) for Orb Code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

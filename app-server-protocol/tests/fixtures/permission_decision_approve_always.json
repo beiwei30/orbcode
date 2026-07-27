@@ -1,0 +1,6 @@
+{
+  "decision": "approve_always",
+  "rules": [
+    "allow tool:Bash"
+  ]
+}

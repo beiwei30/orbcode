@@ -1,0 +1,31 @@
+{
+  "session_id": "session-123",
+  "cwd": "/tmp/project",
+  "additional_directories": [
+    "/tmp/project/packages/docs"
+  ],
+  "session_mcp_servers": [
+    {
+      "id": "docs-server",
+      "transport": "stdio",
+      "endpoint": "/usr/bin/docs-mcp",
+      "args": [
+        "--stdio"
+      ],
+      "env": {
+        "DOCS_TOKEN": "secret"
+      },
+      "cwd": null,
+      "headers": {},
+      "enabled": true,
+      "status": "ready",
+      "error": null,
+      "summary": "Docs Server",
+      "auth": {
+        "kind": "none"
+      },
+      "trust": "unknown"
+    }
+  ],
+  "read_only": false
+}

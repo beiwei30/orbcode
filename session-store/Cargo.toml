@@ -1,0 +1,28 @@
+[package]
+name = "orbcode-session-store"
+version.workspace = true
+edition.workspace = true
+description = "JSONL transcript persistence, prompt history and live-session registry for Orb Code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbcode-protocol = { path = "../protocol" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+orbcode-compat-fixtures = { path = "../compat-fixtures" }
+orbcode-model-provider = { path = "../model-provider" }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

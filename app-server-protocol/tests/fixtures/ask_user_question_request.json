@@ -1,0 +1,9 @@
+{
+  "session_id": "session-123",
+  "request_id": "ask-1",
+  "question": "Which database?",
+  "options": [
+    "PostgreSQL",
+    "MySQL"
+  ]
+}

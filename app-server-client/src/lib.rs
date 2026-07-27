@@ -1,0 +1,3366 @@
+//! Protocol-preserving async client facade for AppServer.
+//!
+//! `AppClient` provides a high-level, strongly-typed API that mirrors the
+//! public surface of [`orbcode_app_server::AppServer`]. Internally it delegates
+//! through an [`InProcessTransport`] which routes every call through the full
+//! protocol path via [`orbcode_app_server::message_processor::MessageProcessor`].
+//!
+//! All requests are serialised into protocol DTOs, processed by the
+//! MessageProcessor (including the initialize handshake), and the responses
+//! are deserialised back into typed Rust values. This ensures in-process
+//! callers exercise the same contract as socket and WebSocket transports.
+
+mod error;
+#[cfg(feature = "in-process")]
+mod in_process;
+mod ndjson_transport;
+mod transport;
+mod websocket_transport;
+
+pub use error::ClientError;
+#[cfg(feature = "in-process")]
+pub use in_process::InProcessTransport;
+pub use ndjson_transport::NdjsonTransport;
+pub use transport::ClientTransport;
+pub use websocket_transport::WebSocketTransport;
+
+pub use orbcode_app_server_protocol::{
+    AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
+    AgentDefinition, AgentLoadWarning, AuthOverview, AuthStatusEntry, BootstrapParams,
+    BootstrapState, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
+    ContextOverview, ContextTokenSource, ContextUsageOverview, CostOverview, DoctorCheck,
+    DoctorReport, DoctorStatus, HookDiscovery, McpAuth, McpOAuthOverview, McpOAuthStatusEntry,
+    McpPromptResult, McpResourceSlashSuggestion, McpServerConfig, McpServerSlashSuggestion,
+    McpServerStatus, McpServerTrust, McpSlashSuggestionCatalog, McpToolSlashSuggestion,
+    McpTransport, MemoryFileOverview, MemoryOverview, PermissionContext, PermissionDecision,
+    PermissionOverview, PlanOverview, PolicyConflictOverview, PolicyOverview, PolicySourceOverview,
+    ProviderRequestDebugSnapshot, SandboxLocalSettings, SandboxSettingsUpdate, SkillDefinition,
+    StatsActivityDay, StatsOverview, StatusOverview, UsageOverview, WorkflowCommand,
+    WorkflowSource, WorkspaceDiff, format_cost,
+};
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+
+#[cfg(feature = "in-process")]
+use orbcode_app_server::{AppConfigOverrides, AppServer};
+use orbcode_app_server_protocol::{
+    AskUserQuestionRequest, AskUserQuestionResponse, InitializeResult, McpTrustDecisionWire,
+    PermissionDecisionWire, PermissionResponseParams, ResponseResult, ServerNotificationEnvelope,
+    ServerRequestEnvelope, StreamEventNotification, method,
+};
+use orbcode_protocol::SessionSummary;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+#[cfg(feature = "in-process")]
+use std::path::PathBuf;
+use tokio::sync::{Mutex, mpsc};
+
+/// High-level async client for AppServer operations.
+///
+/// `AppClient` wraps a [`ClientTransport`] implementation and exposes typed
+/// async methods for every major AppServer operation. Every call goes through
+/// the protocol message path (initialize, request/response, notifications,
+/// server requests), ensuring protocol correctness regardless of transport.
+pub struct AppClient {
+    transport: Box<dyn ClientTransport>,
+    #[cfg(feature = "test-support")]
+    test_server: Option<AppServer>,
+    stream_routes: Arc<Mutex<HashMap<String, StreamRoute>>>,
+    pending_stream_events: Arc<Mutex<HashMap<String, VecDeque<orbcode_protocol::StreamEvent>>>>,
+    pending_server_requests: Arc<Mutex<PendingServerRequests>>,
+    notification_rx: Mutex<Option<mpsc::Receiver<ServerNotificationEnvelope>>>,
+    server_request_rx: Mutex<Option<mpsc::Receiver<ServerRequestEnvelope>>>,
+}
+
+struct StreamRoute {
+    tx: mpsc::UnboundedSender<orbcode_protocol::StreamEvent>,
+    close_on_terminal_background_task: bool,
+}
+
+#[derive(Default)]
+struct PendingServerRequests {
+    permissions: HashMap<String, String>,
+    mcp_trust: HashMap<String, String>,
+    ask_user: HashMap<String, String>,
+}
+
+impl AppClient {
+    /// Create a client backed by an in-process `AppServer`.
+    ///
+    /// This constructor sends the `initialize` handshake automatically. If
+    /// initialization fails, an error is returned and the transport is torn
+    /// down.
+    #[cfg(feature = "in-process")]
+    pub async fn new(app_server: AppServer) -> Result<Self, ClientError> {
+        Self::new_in_process(app_server).await
+    }
+
+    /// Create a client backed by an in-process `AppServer` (same as `new`).
+    #[cfg(feature = "in-process")]
+    pub async fn new_in_process(app_server: AppServer) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport(Box::new(transport)).await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
+    /// Construct an `AppServer` from a working directory and config overrides,
+    /// then wrap it in an `AppClient` with automatic initialization. This is a
+    /// convenience that combines [`AppServer::new`] and [`AppClient::new`].
+    #[cfg(feature = "in-process")]
+    pub async fn from_cwd(
+        cwd: impl Into<PathBuf>,
+        overrides: AppConfigOverrides,
+    ) -> Result<Self, ClientError> {
+        let app_server = AppServer::new(cwd, overrides)
+            .await
+            .map_err(ClientError::Core)?;
+        Self::new_in_process(app_server).await
+    }
+
+    /// Connect to a `orbcode serve --socket <path>` server.
+    /// Authenticates with the token and sends `initialize` automatically.
+    pub async fn connect_socket(
+        path: &std::path::Path,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        let transport = NdjsonTransport::connect(path, auth_token).await?;
+        Self::from_transport(Box::new(transport)).await
+    }
+
+    /// Connect to a `orbcode serve --websocket <addr>` server.
+    /// Authenticates with the token and sends `initialize` automatically.
+    pub async fn connect_websocket(endpoint: &str, auth_token: &str) -> Result<Self, ClientError> {
+        let transport = WebSocketTransport::connect(endpoint, auth_token).await?;
+        Self::from_transport(Box::new(transport)).await
+    }
+
+    /// Create a client from an already-constructed transport. The caller is
+    /// responsible for ensuring the transport is connected and ready.
+    /// Sends the `initialize` handshake automatically.
+    pub async fn from_transport(transport: Box<dyn ClientTransport>) -> Result<Self, ClientError> {
+        let (notification_tx, notification_rx) = mpsc::channel(256);
+        let (server_request_tx, server_request_rx) = mpsc::channel(64);
+        let client = Self {
+            transport,
+            #[cfg(feature = "test-support")]
+            test_server: None,
+            stream_routes: Arc::new(Mutex::new(HashMap::new())),
+            pending_stream_events: Arc::new(Mutex::new(HashMap::new())),
+            pending_server_requests: Arc::new(Mutex::new(PendingServerRequests::default())),
+            notification_rx: Mutex::new(Some(notification_rx)),
+            server_request_rx: Mutex::new(Some(server_request_rx)),
+        };
+        client.initialize().await?;
+        client
+            .start_router_tasks(notification_tx, server_request_tx)
+            .await;
+        Ok(client)
+    }
+
+    /// Access the underlying transport for taking notification/request receivers.
+    pub fn transport(&self) -> &dyn ClientTransport {
+        &*self.transport
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn app_server(&self) -> Option<&AppServer> {
+        self.test_server.as_ref()
+    }
+
+    async fn start_router_tasks(
+        &self,
+        notification_tx: mpsc::Sender<ServerNotificationEnvelope>,
+        server_request_tx: mpsc::Sender<ServerRequestEnvelope>,
+    ) {
+        if let Some(notification_rx) = self.transport.take_notification_receiver().await {
+            // Detached router; it exits when the transport notification channel closes.
+            std::mem::drop(tokio::spawn(route_notifications(
+                notification_rx,
+                notification_tx,
+                Arc::clone(&self.stream_routes),
+                Arc::clone(&self.pending_stream_events),
+            )));
+        }
+
+        if let Some(server_request_rx) = self.transport.take_server_request_receiver().await {
+            // Detached router; it exits when the transport server-request channel closes.
+            std::mem::drop(tokio::spawn(route_server_requests(
+                server_request_rx,
+                server_request_tx,
+                Arc::clone(&self.pending_server_requests),
+            )));
+        }
+    }
+
+    /// Send a request and deserialize the response into a typed result.
+    ///
+    /// This is a convenience wrapper around `transport.request()` that handles
+    /// the `serde_json::from_value` step internally. Callers can use it to
+    /// avoid manual deserialization when the response type is known:
+    ///
+    /// ```rust,ignore
+    /// let sessions: Vec<SessionSummary> = client.request_typed("session/list", None).await?;
+    /// ```
+    pub async fn request_typed<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<T, ClientError> {
+        let value = self.transport.request(method, params).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    // =========================================================================
+    // Protocol lifecycle
+    // =========================================================================
+
+    /// Send the `initialize` handshake. Called automatically by [`new`].
+    async fn initialize(&self) -> Result<InitializeResult, ClientError> {
+        let result = self
+            .transport
+            .request(
+                "initialize",
+                Some(json!({
+                    "protocol_version": "1.0",
+                    "client_info": {
+                        "name": "orbcode-client",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                    "capabilities": {
+                        "streaming": true,
+                        "experimental_methods": true,
+                    },
+                })),
+            )
+            .await?;
+        serde_json::from_value(result).map_err(ClientError::Serialization)
+    }
+
+    // =========================================================================
+    // Lifecycle
+    // =========================================================================
+
+    /// Start a new session or resume an existing one.
+    pub async fn bootstrap(
+        &self,
+        requested_session: Option<&str>,
+    ) -> Result<BootstrapState, ClientError> {
+        let value = self.bootstrap_value(requested_session).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    pub async fn bootstrap_with_params(
+        &self,
+        params: BootstrapParams,
+    ) -> Result<BootstrapState, ClientError> {
+        let value = self.bootstrap_value_with_params(params).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Start a new session or resume an existing one, returning the raw
+    /// protocol payload. Most callers should use [`bootstrap`] instead.
+    pub async fn bootstrap_value(
+        &self,
+        requested_session: Option<&str>,
+    ) -> Result<Value, ClientError> {
+        let params = requested_session.map(|id| json!({ "session_id": id }));
+        self.transport.request("session/bootstrap", params).await
+    }
+
+    pub async fn bootstrap_value_with_params(
+        &self,
+        params: BootstrapParams,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request("session/bootstrap", Some(serde_json::to_value(params)?))
+            .await
+    }
+
+    /// Backward-compatible alias for [`bootstrap`].
+    pub async fn bootstrap_typed(
+        &self,
+        requested_session: Option<&str>,
+    ) -> Result<BootstrapState, ClientError> {
+        self.bootstrap(requested_session).await
+    }
+
+    /// Load a session record for read-only viewing (e.g. a workflow agent
+    /// step's output). This never mutates the live session's runtime context
+    /// (cwd/permissions/effort) or the live-session registry.
+    pub async fn load_session_view(&self, session_id: &str) -> Result<BootstrapState, ClientError> {
+        self.bootstrap_with_params(BootstrapParams {
+            session_id: Some(session_id.to_string()),
+            read_only: true,
+            ..BootstrapParams::default()
+        })
+        .await
+    }
+
+    // =========================================================================
+    // Sessions
+    // =========================================================================
+
+    /// List all persisted sessions.
+    pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, ClientError> {
+        let result = self.transport.request("session/list", None).await?;
+        serde_json::from_value(result).map_err(ClientError::Serialization)
+    }
+
+    /// Rename a session.
+    pub async fn rename_session(
+        &self,
+        session_id: &str,
+        new_title: &str,
+    ) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                "session/rename",
+                Some(json!({ "session_id": session_id, "new_title": new_title })),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Fork a session into a new independent copy.
+    pub async fn fork_session(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        note: Option<String>,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "session/fork",
+                Some(json!({
+                    "session_id": session_id,
+                    "title": title,
+                    "note": note,
+                })),
+            )
+            .await
+    }
+
+    pub async fn acp_load_replay_preflight(
+        &self,
+        session_id: &str,
+    ) -> Result<AcpLoadReplayPreflight, ClientError> {
+        self.request_typed(
+            method::SESSION_ACP_LOAD_PREFLIGHT,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
+    pub async fn acp_load_setup(
+        &self,
+        params: BootstrapParams,
+    ) -> Result<BootstrapState, ClientError> {
+        self.request_typed(
+            method::SESSION_ACP_LOAD_SETUP,
+            Some(serde_json::to_value(params)?),
+        )
+        .await
+    }
+
+    pub async fn acp_resume_setup(
+        &self,
+        params: BootstrapParams,
+    ) -> Result<BootstrapState, ClientError> {
+        self.request_typed(
+            method::SESSION_ACP_RESUME_SETUP,
+            Some(serde_json::to_value(params)?),
+        )
+        .await
+    }
+
+    pub async fn acp_delete_session(
+        &self,
+        params: AcpDeleteSessionParams,
+    ) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                method::SESSION_ACP_DELETE,
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Clear a session and start fresh.
+    pub async fn clear_session(&self, previous_session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "session/clear",
+                Some(json!({ "session_id": previous_session_id })),
+            )
+            .await
+    }
+
+    /// Record a system message in a session transcript.
+    pub async fn record_system_message(
+        &self,
+        session_id: &str,
+        message: &str,
+    ) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                "session/record_message",
+                Some(json!({ "session_id": session_id, "message": message })),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Rewind a session to keep only the first `keep_messages` messages.
+    pub async fn rewind_session(
+        &self,
+        session_id: &str,
+        keep_messages: usize,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "session/rewind",
+                Some(json!({
+                    "session_id": session_id,
+                    "keep_messages": keep_messages,
+                })),
+            )
+            .await
+    }
+
+    /// Compact a session (summarize older messages to free context).
+    pub async fn compact_session(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("session/compact", Some(json!({"session_id": session_id})))
+            .await
+    }
+
+    /// Evaluate whether a manual compact is recommended for this session.
+    pub async fn compact_decision(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "session/compact_decision",
+                Some(json!({"session_id": session_id})),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // Turns
+    // =========================================================================
+
+    /// Submit a new conversational turn. Returns a `TurnSubscription` with the
+    /// subscription ID. Stream events arrive via the notification receiver
+    /// (obtained from `transport().take_notification_receiver()`).
+    pub async fn submit_turn(
+        &self,
+        session_id: &str,
+        prompt: &str,
+    ) -> Result<TurnSubscription, ClientError> {
+        let result = self
+            .transport
+            .request(
+                "turn/submit",
+                Some(json!({
+                    "session_id": session_id,
+                    "prompt": prompt,
+                })),
+            )
+            .await?;
+        let subscription_id = result["subscription_id"]
+            .as_str()
+            .ok_or_else(|| ClientError::Transport("missing subscription_id in response".into()))?
+            .to_string();
+        Ok(TurnSubscription { subscription_id })
+    }
+
+    /// Inject a steering prompt into an active turn.
+    pub async fn steer_turn(&self, session_id: &str, prompt: &str) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                "turn/steer",
+                Some(json!({
+                    "session_id": session_id,
+                    "prompt": prompt,
+                })),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Cancel the active turn for a session. Returns `true` if a turn was
+    /// actually cancelled, `false` if no turn was active.
+    pub async fn cancel_turn(&self, session_id: &str) -> Result<bool, ClientError> {
+        let value = self
+            .transport
+            .request("turn/cancel", Some(json!({ "session_id": session_id })))
+            .await?;
+        Ok(value["cancelled"].as_bool().unwrap_or(false))
+    }
+
+    /// Interrupt the active turn (tool-level cancellation). Returns `true` if
+    /// a turn was actually interrupted, `false` if no turn was active.
+    pub async fn interrupt_turn(&self, session_id: &str) -> Result<bool, ClientError> {
+        let value = self
+            .transport
+            .request("turn/interrupt", Some(json!({ "session_id": session_id })))
+            .await?;
+        Ok(value["interrupted"].as_bool().unwrap_or(false))
+    }
+
+    /// Respond to a pending permission request from a tool execution.
+    ///
+    /// The `decision` must be a [`PermissionDecisionWire`] which serializes as
+    /// `{"decision": "approve"}` (internally tagged). Sending a plain string
+    /// would fail server-side deserialization.
+    pub async fn respond_to_permission_request(
+        &self,
+        request_id: &str,
+        decision: orbcode_app_server_protocol::PermissionDecisionWire,
+    ) -> Result<Value, ClientError> {
+        let params = orbcode_app_server_protocol::PermissionResponseParams {
+            request_id: request_id.to_string(),
+            decision,
+        };
+        self.transport
+            .request(
+                "permission/respond",
+                Some(serde_json::to_value(params).map_err(ClientError::Serialization)?),
+            )
+            .await
+    }
+
+    /// Respond to a server-initiated request (e.g. a permission prompt
+    /// received as a server-request rather than via the fallback
+    /// `permission/respond` method).
+    pub async fn respond_to_server_request(
+        &self,
+        id: String,
+        result: ResponseResult,
+    ) -> Result<(), ClientError> {
+        self.transport.respond_to_server_request(id, result).await
+    }
+
+    // =========================================================================
+    // Context / Usage / Cost
+    // =========================================================================
+
+    /// Preview the current turn context.
+    pub async fn context_preview(&self) -> Result<Value, ClientError> {
+        self.transport.request("context/preview", None).await
+    }
+
+    /// Full context overview including token usage and diagnostics.
+    pub async fn context_overview(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "context/overview",
+                Some(json!({ "session_id": session_id })),
+            )
+            .await
+    }
+
+    /// Token usage overview for a session.
+    pub async fn usage_overview(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("usage/overview", Some(json!({ "session_id": session_id })))
+            .await
+    }
+
+    /// Cost overview for a session.
+    pub async fn cost_overview(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("usage/cost", Some(json!({ "session_id": session_id })))
+            .await
+    }
+
+    /// Aggregate statistics across all sessions.
+    pub async fn stats_overview(&self) -> Result<Value, ClientError> {
+        self.transport.request("usage/stats", None).await
+    }
+
+    // =========================================================================
+    // Permissions
+    // =========================================================================
+
+    /// Full permission overview with rule breakdowns.
+    pub async fn permission_overview(&self) -> Result<Value, ClientError> {
+        self.transport.request("permission/overview", None).await
+    }
+
+    /// Current permission mode.
+    pub async fn permission_mode(&self) -> Result<Value, ClientError> {
+        self.transport.request("permission/mode", None).await
+    }
+
+    /// Set the runtime permission mode.
+    pub async fn set_permission_mode(&self, mode: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("permission/set_mode", Some(json!({ "mode": mode })))
+            .await
+    }
+
+    /// Add a permission rule (allow or deny).
+    pub async fn add_permission_rule(&self, kind: &str, rule: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/add_rule",
+                Some(json!({ "kind": kind, "rule": rule })),
+            )
+            .await
+    }
+
+    /// Remove a permission rule (allow or deny).
+    pub async fn remove_permission_rule(
+        &self,
+        kind: &str,
+        rule: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/remove_rule",
+                Some(json!({ "kind": kind, "rule": rule })),
+            )
+            .await
+    }
+
+    /// Add a session-scoped permission rule.
+    pub async fn add_session_permission_rule(
+        &self,
+        session_id: &str,
+        kind: &str,
+        rule: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/add_session_rule",
+                Some(json!({ "session_id": session_id, "kind": kind, "rule": rule })),
+            )
+            .await
+    }
+
+    /// Remove a session-scoped permission rule.
+    pub async fn remove_session_permission_rule(
+        &self,
+        session_id: &str,
+        kind: &str,
+        rule: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/remove_session_rule",
+                Some(json!({ "session_id": session_id, "kind": kind, "rule": rule })),
+            )
+            .await
+    }
+
+    /// Validate a directory path before adding it as an additional directory.
+    pub async fn validate_add_directory(&self, path: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/validate_directory",
+                Some(json!({ "path": path })),
+            )
+            .await
+    }
+
+    /// Add an additional directory to the session's permitted directories.
+    pub async fn add_directory(
+        &self,
+        session_id: &str,
+        directory: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "permission/add_directory",
+                Some(json!({ "session_id": session_id, "directory": directory })),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // Settings
+    // =========================================================================
+
+    /// Current model name.
+    pub async fn model_name(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/model_name", None).await
+    }
+
+    /// Available model options for the model picker.
+    pub async fn model_options(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/model_options", None).await
+    }
+
+    /// List of supported providers and their model resolutions.
+    pub async fn supported_providers(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/providers", None).await
+    }
+
+    /// Set or clear the model override. Returns the new display name.
+    pub async fn set_model_override(&self, model: Option<String>) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/set_model", Some(json!({ "model": model })))
+            .await
+    }
+
+    /// Current theme setting.
+    pub async fn theme_setting(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/theme", None).await
+    }
+
+    /// Update the theme setting.
+    pub async fn set_theme_setting(&self, theme: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/set_theme", Some(json!({ "theme": theme })))
+            .await
+    }
+
+    /// Current effort level override, if any.
+    pub async fn effort_level(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/effort", None).await
+    }
+
+    /// Set or clear the effort level override for a session.
+    pub async fn set_effort_override(
+        &self,
+        session_id: &str,
+        effort: Option<&str>,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "settings/set_effort",
+                Some(json!({
+                    "session_id": session_id,
+                    "effort": effort,
+                })),
+            )
+            .await
+    }
+
+    /// Current output style setting.
+    pub async fn output_style_setting(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/output_style", None).await
+    }
+
+    /// Update the output style setting.
+    pub async fn set_output_style_setting(&self, style: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/set_output_style", Some(json!({ "style": style })))
+            .await
+    }
+
+    /// Current sandbox local settings.
+    pub async fn sandbox_local_settings(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/sandbox", None).await
+    }
+
+    /// Update sandbox settings.
+    pub async fn update_sandbox_settings(
+        &self,
+        enabled: Option<bool>,
+        auto_allow_bash_if_sandboxed: Option<bool>,
+        allow_unsandboxed_commands: Option<bool>,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "settings/update_sandbox",
+                Some(json!({
+                    "enabled": enabled,
+                    "auto_allow_bash_if_sandboxed": auto_allow_bash_if_sandboxed,
+                    "allow_unsandboxed_commands": allow_unsandboxed_commands,
+                })),
+            )
+            .await
+    }
+
+    /// Ensure the keybindings file exists and return its path.
+    pub async fn keybindings(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/keybindings", None).await
+    }
+
+    // =========================================================================
+    // Tools
+    // =========================================================================
+
+    /// List all registered tool specs.
+    pub async fn list_tools(&self) -> Result<Value, ClientError> {
+        self.transport.request("tools/list", None).await
+    }
+
+    /// Load skill definitions from the workspace.
+    pub async fn skill_definitions(&self) -> Result<Value, ClientError> {
+        self.transport.request("tools/skills", None).await
+    }
+
+    /// Load skill definitions visible to a session.
+    pub async fn skill_definitions_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request("tools/skills", Some(json!({ "session_id": session_id })))
+            .await
+    }
+
+    /// List loaded agent definitions.
+    pub async fn agent_definitions(&self) -> Result<Value, ClientError> {
+        self.transport.request("tools/agents", None).await
+    }
+
+    /// Invoke a tool by name with a JSON input string.
+    pub async fn invoke_tool(&self, name: &str, input: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "tools/invoke",
+                Some(json!({ "name": name, "input": input })),
+            )
+            .await
+    }
+
+    /// Get plan overview (plan file, state file, mode).
+    pub async fn plan_overview(&self) -> Result<Value, ClientError> {
+        self.transport.request("tools/plan", None).await
+    }
+
+    /// Load a task list snapshot by its ID.
+    pub async fn load_task_list_snapshot(&self, task_list_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "tools/task_list",
+                Some(json!({ "task_list_id": task_list_id })),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // MCP
+    // =========================================================================
+
+    /// List all configured MCP servers.
+    pub async fn list_mcp_servers(&self) -> Result<Value, ClientError> {
+        self.transport.request("mcp/list_servers", None).await
+    }
+
+    /// Get the trust level for a specific MCP server.
+    pub async fn mcp_server_trust(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/server_trust", Some(json!({ "server_id": server_id })))
+            .await
+    }
+
+    /// Set the trust level for an MCP server.
+    pub async fn set_mcp_server_trust(
+        &self,
+        server_id: &str,
+        trust: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/set_trust",
+                Some(json!({ "server_id": server_id, "trust": trust })),
+            )
+            .await
+    }
+
+    /// List tools provided by a specific MCP server.
+    pub async fn list_mcp_tools(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/list_tools", Some(json!({ "server_id": server_id })))
+            .await
+    }
+
+    /// List resources provided by a specific MCP server.
+    pub async fn list_mcp_resources(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/list_resources",
+                Some(json!({ "server_id": server_id })),
+            )
+            .await
+    }
+
+    /// Read a resource from an MCP server by URI.
+    pub async fn read_mcp_resource(
+        &self,
+        server_id: &str,
+        uri: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/read_resource",
+                Some(json!({ "server_id": server_id, "uri": uri })),
+            )
+            .await
+    }
+
+    /// List prompts provided by a specific MCP server.
+    pub async fn list_mcp_prompts(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/list_prompts", Some(json!({ "server_id": server_id })))
+            .await
+    }
+
+    /// Get a prompt from an MCP server by name with optional arguments.
+    pub async fn get_mcp_prompt(
+        &self,
+        server_id: &str,
+        name: &str,
+        arguments: Value,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/get_prompt",
+                Some(json!({
+                    "server_id": server_id,
+                    "name": name,
+                    "arguments": arguments,
+                })),
+            )
+            .await
+    }
+
+    /// Invoke a tool on an MCP server.
+    pub async fn invoke_mcp_tool(
+        &self,
+        server_id: &str,
+        tool_name: &str,
+        input: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/invoke_tool",
+                Some(json!({
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "input": input,
+                })),
+            )
+            .await
+    }
+
+    /// Run diagnostics on an MCP server.
+    pub async fn diagnose_mcp_server(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/diagnose", Some(json!({ "server_id": server_id })))
+            .await
+    }
+
+    /// Upsert (add or update) an MCP server configuration.
+    pub async fn upsert_mcp_server(&self, config: Value) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/upsert_server", Some(config))
+            .await
+    }
+
+    /// Remove an MCP server by ID.
+    pub async fn remove_mcp_server(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("mcp/remove_server", Some(json!({ "server_id": server_id })))
+            .await
+    }
+
+    /// Get MCP capabilities overview.
+    pub async fn mcp_capabilities(&self) -> Result<Value, ClientError> {
+        self.transport.request("mcp/capabilities", None).await
+    }
+
+    /// Get MCP slash command suggestions (servers, tools, resources).
+    pub async fn mcp_slash_suggestions(&self) -> Result<Value, ClientError> {
+        self.transport.request("mcp/slash_suggestions", None).await
+    }
+
+    // =========================================================================
+    // Background Jobs
+    // =========================================================================
+
+    /// List all background jobs.
+    pub async fn list_background_jobs(&self) -> Result<Value, ClientError> {
+        self.transport.request("background/list", None).await
+    }
+
+    pub async fn list_workflows(&self) -> Result<Vec<WorkflowCommand>, ClientError> {
+        self.request_typed("workflow/list", None).await
+    }
+
+    pub async fn start_workflow(
+        &self,
+        session_id: &str,
+        name: &str,
+        arguments: &str,
+    ) -> Result<String, ClientError> {
+        let value = self
+            .transport
+            .request(
+                "workflow/start",
+                Some(json!({
+                    "session_id": session_id,
+                    "name": name,
+                    "arguments": arguments,
+                })),
+            )
+            .await?;
+        Ok(value["task_id"].as_str().unwrap_or_default().to_string())
+    }
+
+    pub async fn start_dynamic_workflow(
+        &self,
+        session_id: &str,
+        name: &str,
+        spec: Value,
+        arguments: &str,
+    ) -> Result<String, ClientError> {
+        let value = self
+            .transport
+            .request(
+                "workflow/start_dynamic",
+                Some(json!({
+                    "session_id": session_id,
+                    "name": name,
+                    "spec": spec,
+                    "arguments": arguments,
+                })),
+            )
+            .await?;
+        Ok(value["task_id"].as_str().unwrap_or_default().to_string())
+    }
+
+    pub async fn resume_workflow(&self, run_id: &str) -> Result<String, ClientError> {
+        let value = self
+            .transport
+            .request("workflow/resume", Some(json!({ "run_id": run_id })))
+            .await?;
+        Ok(value["task_id"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// Get detailed view for a single background job.
+    pub async fn background_job_detail(&self, job_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("background/detail", Some(json!({ "job_id": job_id })))
+            .await
+    }
+
+    /// Create a new background job.
+    pub async fn create_background_job(
+        &self,
+        session_id: &str,
+        prompt: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "background/create",
+                Some(json!({ "session_id": session_id, "prompt": prompt })),
+            )
+            .await
+    }
+
+    /// Cancel a running background job.
+    pub async fn cancel_background_job(&self, job_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("background/cancel", Some(json!({ "job_id": job_id })))
+            .await
+    }
+
+    /// Read the log output of a background job.
+    pub async fn read_background_log(&self, job_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("background/log", Some(json!({ "job_id": job_id })))
+            .await
+    }
+
+    pub async fn subscribe_background_task_stream(
+        &self,
+        task_id: &str,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<orbcode_protocol::StreamEvent>, ClientError>
+    {
+        let value = self
+            .transport
+            .request(
+                method::BACKGROUND_SUBSCRIBE,
+                Some(json!({ "task_id": task_id })),
+            )
+            .await?;
+        let subscription_id = value["subscription_id"]
+            .as_str()
+            .ok_or_else(|| ClientError::Transport("missing subscription_id in response".into()))?
+            .to_string();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+        register_stream_route(
+            &self.stream_routes,
+            &self.pending_stream_events,
+            subscription_id,
+            tx,
+            true,
+        )
+        .await;
+        Ok(rx)
+    }
+
+    /// Read the stream-json event log of a background job.
+    pub async fn read_background_events(&self, job_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("background/events", Some(json!({ "job_id": job_id })))
+            .await
+    }
+
+    // =========================================================================
+    // Diagnostics
+    // =========================================================================
+
+    /// Full status overview for a session.
+    pub async fn status_overview(&self, session_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "diagnostics/status",
+                Some(json!({ "session_id": session_id })),
+            )
+            .await
+    }
+
+    /// Memory file overview (user + project memories).
+    pub async fn memory_overview(&self) -> Result<Value, ClientError> {
+        self.transport.request("diagnostics/memory", None).await
+    }
+
+    /// Run the doctor diagnostic suite.
+    pub async fn doctor_report(&self) -> Result<Value, ClientError> {
+        self.transport.request("diagnostics/doctor", None).await
+    }
+
+    /// Remove scoped orphan child-session artifacts, or preview removal when `dry_run` is true.
+    pub async fn cleanup_orphan_child_sessions(
+        &self,
+        dry_run: bool,
+        stale_running_cutoff_ms: Option<i64>,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                method::DIAGNOSTICS_CLEANUP_CHILD_SESSIONS,
+                Some(json!({
+                    "dry_run": dry_run,
+                    "stale_running_cutoff_ms": stale_running_cutoff_ms,
+                })),
+            )
+            .await
+    }
+
+    /// Discover configured hooks.
+    pub async fn hook_discovery(&self) -> Result<Value, ClientError> {
+        self.transport.request("diagnostics/hooks", None).await
+    }
+
+    /// Get the workspace git diff (staged, unstaged, untracked).
+    pub async fn workspace_diff(&self) -> Result<Value, ClientError> {
+        self.transport.request("diagnostics/diff", None).await
+    }
+
+    /// List advanced capabilities and their status.
+    pub async fn advanced_capabilities(&self) -> Result<Value, ClientError> {
+        self.transport.request("diagnostics/advanced", None).await
+    }
+
+    // =========================================================================
+    // Auth
+    // =========================================================================
+
+    /// Authentication overview for all providers.
+    pub async fn auth_overview(&self) -> Result<Value, ClientError> {
+        self.transport.request("auth/overview", None).await
+    }
+
+    /// Log in to a provider with the given auth method.
+    pub async fn auth_login(
+        &self,
+        provider: &str,
+        method: &str,
+        token: Option<&str>,
+        env_var: Option<&str>,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "auth/login",
+                Some(json!({
+                    "provider": provider,
+                    "method": method,
+                    "token": token,
+                    "env_var": env_var,
+                })),
+            )
+            .await
+    }
+
+    /// Log out of a provider (or all providers if none specified).
+    pub async fn auth_logout(&self, provider: Option<&str>) -> Result<Value, ClientError> {
+        self.transport
+            .request("auth/logout", Some(json!({ "provider": provider })))
+            .await
+    }
+
+    // =========================================================================
+    // Transport receivers
+    // =========================================================================
+
+    /// Take the notification receiver for stream events. Can only be called
+    /// once; subsequent calls return `None`.
+    pub async fn take_notification_receiver(
+        &self,
+    ) -> Option<mpsc::Receiver<ServerNotificationEnvelope>> {
+        self.notification_rx.lock().await.take()
+    }
+
+    /// Take the server-request receiver for permission prompts and MCP trust
+    /// requests. Can only be called once; subsequent calls return `None`.
+    pub async fn take_server_request_receiver(
+        &self,
+    ) -> Option<mpsc::Receiver<ServerRequestEnvelope>> {
+        self.server_request_rx.lock().await.take()
+    }
+
+    // =========================================================================
+    // Extended settings (TUI migration)
+    // =========================================================================
+
+    /// Get whether all permissions are bypassed.
+    pub async fn allow_all(&self) -> Result<bool, ClientError> {
+        let v = self.transport.request("settings/allow_all", None).await?;
+        Ok(v["allow_all"].as_bool().unwrap_or(false))
+    }
+
+    /// Set the allow-all permission bypass flag.
+    pub async fn set_allow_all(&self, enabled: bool) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                "settings/set_allow_all",
+                Some(json!({ "allow_all": enabled })),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Submit a turn and adapt protocol stream notifications into a typed
+    /// stream receiver.
+    pub async fn submit_turn_typed(
+        &self,
+        session_id: &str,
+        prompt: &str,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<orbcode_protocol::StreamEvent>, ClientError>
+    {
+        self.submit_turn_stream(session_id, prompt.to_string())
+            .await
+    }
+
+    /// Get the current editor mode setting.
+    pub async fn editor_mode_setting(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/editor_mode", None).await
+    }
+
+    /// Set the editor mode.
+    pub async fn set_editor_mode_setting(&self, mode: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/set_editor_mode", Some(json!({ "mode": mode })))
+            .await
+    }
+
+    /// Get available output style options.
+    pub async fn output_style_options(&self) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/output_style_options", None)
+            .await
+    }
+
+    /// Get the active output style name and whether it matched.
+    pub async fn active_output_style(&self) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/active_output_style", None)
+            .await
+    }
+
+    /// Check whether a setting key is locked by managed policy.
+    pub async fn is_setting_locked(&self, key: &str) -> Result<bool, ClientError> {
+        let v = self
+            .transport
+            .request("settings/is_locked", Some(json!({ "key": key })))
+            .await?;
+        Ok(v["locked"].as_bool().unwrap_or(false))
+    }
+
+    /// Enable or disable auto-memory.
+    pub async fn set_auto_memory_enabled(&self, enabled: bool) -> Result<(), ClientError> {
+        self.transport
+            .request(
+                "settings/set_auto_memory",
+                Some(json!({ "enabled": enabled })),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Ensure a memory file exists at the given path.
+    pub async fn ensure_memory_file(&self, path: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request("settings/ensure_memory_file", Some(json!({ "path": path })))
+            .await
+    }
+
+    /// Add a sandbox excluded command pattern.
+    pub async fn add_sandbox_excluded_command(&self, command: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "settings/add_sandbox_excluded",
+                Some(json!({ "command": command })),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // Extended sessions
+    // =========================================================================
+
+    /// Find a session by its exact custom title.
+    pub async fn session_id_for_exact_custom_title(
+        &self,
+        title: &str,
+    ) -> Result<Option<String>, ClientError> {
+        let v = self
+            .transport
+            .request("session/find_by_title", Some(json!({ "title": title })))
+            .await?;
+        Ok(v["session_id"].as_str().map(String::from))
+    }
+
+    // =========================================================================
+    // Extended MCP
+    // =========================================================================
+
+    /// Get MCP OAuth overview.
+    pub async fn mcp_oauth_overview(&self, server_id: Option<&str>) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/oauth_overview",
+                Some(json!({ "server_id": server_id })),
+            )
+            .await
+    }
+
+    /// Log out an MCP OAuth token.
+    pub async fn logout_mcp_oauth_token(&self, server_id: &str) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "mcp/logout_oauth_token",
+                Some(json!({ "server_id": server_id })),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // Extended diagnostics
+    // =========================================================================
+
+    /// Get the last provider request debug snapshot.
+    pub async fn last_provider_request_snapshot(&self) -> Result<Value, ClientError> {
+        self.transport
+            .request("diagnostics/last_request", None)
+            .await
+    }
+
+    /// Get pre-user instructions preview for a session.
+    pub async fn pre_user_instructions_preview(
+        &self,
+        session_id: &str,
+    ) -> Result<Value, ClientError> {
+        self.transport
+            .request(
+                "diagnostics/pre_user_instructions",
+                Some(json!({ "session_id": session_id })),
+            )
+            .await
+    }
+
+    // =========================================================================
+    // Extended tools
+    // =========================================================================
+
+    /// Enter plan mode.
+    pub async fn enter_plan_mode(&self) -> Result<Value, ClientError> {
+        self.transport.request("tools/enter_plan", None).await
+    }
+
+    // =========================================================================
+    // Extended background
+    // =========================================================================
+
+    /// List background jobs in summary form.
+    pub async fn list_background_jobs_summary(&self) -> Result<Value, ClientError> {
+        self.transport
+            .request("background/list_summary", None)
+            .await
+    }
+
+    // =========================================================================
+    // Additional protocol methods (Phase 4 migration)
+    // =========================================================================
+
+    /// Get agent definitions with load warnings.
+    pub async fn agent_definitions_with_warnings(&self) -> Result<Value, ClientError> {
+        self.transport
+            .request("tools/agents_with_warnings", None)
+            .await
+    }
+
+    /// Ensure the keybindings file exists; returns path and whether it was created.
+    pub async fn ensure_keybindings_file(&self) -> Result<Value, ClientError> {
+        self.transport.request("settings/keybindings", None).await
+    }
+
+    /// Get the active output style name.
+    pub async fn active_output_style_name(&self) -> Result<String, ClientError> {
+        let v = self
+            .transport
+            .request("settings/active_output_style", None)
+            .await?;
+        Ok(v["name"].as_str().unwrap_or("").to_string())
+    }
+
+    /// Get whether the active output style matched a known style.
+    pub async fn active_output_style_matched(&self) -> Result<bool, ClientError> {
+        let v = self
+            .transport
+            .request("settings/active_output_style", None)
+            .await?;
+        Ok(v["matched"].as_bool().unwrap_or(false))
+    }
+
+    // =========================================================================
+    // Typed protocol helpers for TUI overlay migration.
+    // =========================================================================
+
+    /// List background jobs in summary form, returning typed views.
+    pub async fn list_background_jobs_summary_typed(
+        &self,
+    ) -> Result<Vec<orbcode_protocol::BackgroundTaskView>, ClientError> {
+        let value = self.list_background_jobs_summary().await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Get detailed view for a single background job, returning typed view.
+    pub async fn background_job_detail_typed(
+        &self,
+        job_id: &str,
+    ) -> Result<orbcode_protocol::BackgroundTaskView, ClientError> {
+        let value = self.background_job_detail(job_id).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Cancel a background job and return the job ID from the record.
+    pub async fn cancel_background_job_typed(
+        &self,
+        job_id: &str,
+    ) -> Result<CancelledJob, ClientError> {
+        let value = self.cancel_background_job(job_id).await?;
+        let job_id = value["job_id"]
+            .as_str()
+            .ok_or_else(|| ClientError::Transport("missing job_id in response".into()))?
+            .to_string();
+        Ok(CancelledJob { job_id })
+    }
+
+    /// Get sandbox local settings as a typed struct.
+    pub async fn sandbox_local_settings_typed(&self) -> Result<SandboxLocalSettings, ClientError> {
+        let value = self.sandbox_local_settings().await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Update sandbox settings with a typed update struct.
+    pub async fn update_sandbox_settings_typed(
+        &self,
+        update: SandboxSettingsUpdate,
+    ) -> Result<std::path::PathBuf, ClientError> {
+        let value = self
+            .update_sandbox_settings(
+                update.enabled,
+                update.auto_allow_bash_if_sandboxed,
+                update.allow_unsandboxed_commands,
+            )
+            .await?;
+        serde_json::from_value(value["path"].clone()).map_err(ClientError::Serialization)
+    }
+
+    /// Validate an add-directory candidate, returning the typed result.
+    pub async fn validate_add_directory_typed(
+        &self,
+        path: &str,
+    ) -> Result<AddDirectoryCandidate, ClientError> {
+        let value = self.validate_add_directory(path).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Add a directory to the session, returning the typed result.
+    pub async fn add_directory_typed(
+        &self,
+        session_id: &str,
+        path: std::path::PathBuf,
+    ) -> Result<AddedDirectory, ClientError> {
+        let value = self
+            .add_directory(session_id, &path.to_string_lossy())
+            .await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Rewind a session and return the typed BootstrapState.
+    pub async fn rewind_session_typed(
+        &self,
+        session_id: &str,
+        keep_messages: usize,
+    ) -> Result<BootstrapState, ClientError> {
+        let value = self.rewind_session(session_id, keep_messages).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Fork a session and return the typed result.
+    pub async fn fork_session_typed(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        note: Option<String>,
+    ) -> Result<orbcode_protocol::SessionRecord, ClientError> {
+        let value = self.fork_session(session_id, title, note).await?;
+        serde_json::from_value(value).map_err(ClientError::Serialization)
+    }
+
+    /// Ensure a memory file exists at the given path (typed PathBuf API).
+    pub async fn ensure_memory_file_typed(
+        &self,
+        path: std::path::PathBuf,
+    ) -> Result<(), ClientError> {
+        self.ensure_memory_file(&path.to_string_lossy()).await?;
+        Ok(())
+    }
+
+    /// Respond to a permission request using the core PermissionDecision type.
+    /// Returns `true` if the response was delivered to the pending request.
+    pub async fn respond_to_permission_request_typed(
+        &self,
+        request_id: &str,
+        decision: PermissionDecision,
+    ) -> bool {
+        let Some(protocol_request_id) = self
+            .pending_server_requests
+            .lock()
+            .await
+            .permissions
+            .remove(request_id)
+        else {
+            return false;
+        };
+        let params = PermissionResponseParams {
+            request_id: request_id.to_string(),
+            decision: permission_decision_to_wire(decision),
+        };
+        let Ok(data) = serde_json::to_value(params) else {
+            return false;
+        };
+        self.respond_to_server_request(
+            protocol_request_id,
+            ResponseResult::Success { data: Some(data) },
+        )
+        .await
+        .is_ok()
+    }
+
+    /// Respond to an MCP trust server-request.
+    pub async fn respond_to_mcp_trust_request(
+        &self,
+        server_id: &str,
+        decision: McpTrustDecisionWire,
+    ) -> bool {
+        let Some(protocol_request_id) = self
+            .pending_server_requests
+            .lock()
+            .await
+            .mcp_trust
+            .remove(server_id)
+        else {
+            return false;
+        };
+        let Ok(data) = serde_json::to_value(decision) else {
+            return false;
+        };
+        self.respond_to_server_request(
+            protocol_request_id,
+            ResponseResult::Success { data: Some(data) },
+        )
+        .await
+        .is_ok()
+    }
+
+    /// Respond to an ask-user-question server-request.
+    pub async fn respond_to_ask_user_question(
+        &self,
+        request_id: &str,
+        answer: Option<String>,
+    ) -> bool {
+        let Some(protocol_request_id) = self
+            .pending_server_requests
+            .lock()
+            .await
+            .ask_user
+            .remove(request_id)
+        else {
+            return false;
+        };
+        let Ok(data) = serde_json::to_value(AskUserQuestionResponse {
+            request_id: request_id.to_string(),
+            answer,
+        }) else {
+            return false;
+        };
+        self.respond_to_server_request(
+            protocol_request_id,
+            ResponseResult::Success { data: Some(data) },
+        )
+        .await
+        .is_ok()
+    }
+
+    /// Submit a turn and return a typed `StreamEvent` receiver.
+    pub async fn submit_turn_stream(
+        &self,
+        session_id: &str,
+        prompt: impl Into<String>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<orbcode_protocol::StreamEvent>, ClientError>
+    {
+        let sub = self.submit_turn(session_id, &prompt.into()).await?;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+        register_stream_route(
+            &self.stream_routes,
+            &self.pending_stream_events,
+            sub.subscription_id,
+            tx,
+            false,
+        )
+        .await;
+        Ok(rx)
+    }
+}
+
+/// Drain any events buffered in `pending_stream_events` for `subscription_id`
+/// into `tx`, then (unless a terminal event was already drained) install a live
+/// route so subsequent events go straight to `tx`.
+///
+/// `stream_routes` is held across the whole drain+insert. The producer
+/// ([`route_stream_event`]) takes `stream_routes` first and only then
+/// `pending_stream_events`, holding both across its check-and-enqueue; using the
+/// same routes→pending order here serializes the two so an event cannot slip
+/// into `pending` between the drain and the insert (which would strand it — and
+/// hang the consumer if terminal). `close_on_terminal_background_task` selects
+/// which notion of "terminal" applies to the drained events (turn-terminal for a
+/// turn subscription, background-task-terminal for a background subscription).
+async fn register_stream_route(
+    stream_routes: &Arc<Mutex<HashMap<String, StreamRoute>>>,
+    pending_stream_events: &Arc<Mutex<HashMap<String, VecDeque<orbcode_protocol::StreamEvent>>>>,
+    subscription_id: String,
+    tx: mpsc::UnboundedSender<orbcode_protocol::StreamEvent>,
+    close_on_terminal_background_task: bool,
+) {
+    let mut routes = stream_routes.lock().await;
+    let mut terminal_seen = false;
+    if let Some(mut pending) = pending_stream_events.lock().await.remove(&subscription_id) {
+        while let Some(event) = pending.pop_front() {
+            terminal_seen |= if close_on_terminal_background_task {
+                background_task_update_is_terminal(&event)
+            } else {
+                event.is_terminal()
+            };
+            if tx.send(event).is_err() {
+                return;
+            }
+        }
+    }
+
+    if !terminal_seen {
+        routes.insert(
+            subscription_id,
+            StreamRoute {
+                tx,
+                close_on_terminal_background_task,
+            },
+        );
+    }
+}
+
+/// Handle returned by `submit_turn` identifying the active turn subscription.
+/// Stream events arrive via the notification receiver.
+#[derive(Debug, Clone)]
+pub struct TurnSubscription {
+    pub subscription_id: String,
+}
+
+/// Lightweight result from cancelling a background job, exposing only the
+/// `job_id` without leaking the crate-private `BackgroundJobRecord`.
+#[derive(Debug, Clone)]
+pub struct CancelledJob {
+    pub job_id: String,
+}
+
+async fn route_notifications(
+    mut rx: mpsc::Receiver<ServerNotificationEnvelope>,
+    external_tx: mpsc::Sender<ServerNotificationEnvelope>,
+    stream_routes: Arc<Mutex<HashMap<String, StreamRoute>>>,
+    pending_stream_events: Arc<Mutex<HashMap<String, VecDeque<orbcode_protocol::StreamEvent>>>>,
+) {
+    while let Some(envelope) = rx.recv().await {
+        if envelope.method == method::NOTIFICATION_STREAM_EVENT
+            && let Ok(notification) =
+                serde_json::from_value::<StreamEventNotification>(envelope.params.clone())
+        {
+            route_stream_event(notification, &stream_routes, &pending_stream_events).await;
+        }
+        let _ = external_tx.try_send(envelope);
+    }
+}
+
+async fn route_stream_event(
+    notification: StreamEventNotification,
+    stream_routes: &Arc<Mutex<HashMap<String, StreamRoute>>>,
+    pending_stream_events: &Arc<Mutex<HashMap<String, VecDeque<orbcode_protocol::StreamEvent>>>>,
+) {
+    let subscription_id = notification.subscription_id;
+    let event = notification.event;
+
+    // Hold `stream_routes` across the pending enqueue below. The registrar
+    // (`submit_turn_stream` / `subscribe_*`) locks `stream_routes` first and only
+    // then `pending_stream_events`, draining pending and inserting the route
+    // while holding `stream_routes`. If we dropped `stream_routes` after the
+    // "no route" check and re-acquired only `pending_stream_events` to enqueue,
+    // a registrar could slip in between — drain the (still empty) pending queue,
+    // insert the route — and our subsequent enqueue would strand the event in
+    // `pending_stream_events` forever (hanging the consumer if it was terminal).
+    // Keeping `stream_routes` held, in the same routes→pending order, makes the
+    // check-and-enqueue atomic against the registrar without risking deadlock.
+    let mut routes = stream_routes.lock().await;
+    if let Some(route) = routes.get(&subscription_id) {
+        let is_terminal = event.is_terminal()
+            || (route.close_on_terminal_background_task
+                && background_task_update_is_terminal(&event));
+        let send_failed = route.tx.send(event).is_err();
+        if send_failed || is_terminal {
+            routes.remove(&subscription_id);
+        }
+        return;
+    }
+
+    pending_stream_events
+        .lock()
+        .await
+        .entry(subscription_id)
+        .or_default()
+        .push_back(event);
+    drop(routes);
+}
+
+fn background_task_update_is_terminal(event: &orbcode_protocol::StreamEvent) -> bool {
+    match event {
+        orbcode_protocol::StreamEvent::BackgroundTaskUpdated { task, .. } => {
+            !task.status.is_active()
+        }
+        _ => false,
+    }
+}
+
+async fn route_server_requests(
+    mut rx: mpsc::Receiver<ServerRequestEnvelope>,
+    external_tx: mpsc::Sender<ServerRequestEnvelope>,
+    pending_server_requests: Arc<Mutex<PendingServerRequests>>,
+) {
+    while let Some(envelope) = rx.recv().await {
+        index_server_request(&envelope, &pending_server_requests).await;
+        let _ = external_tx.try_send(envelope);
+    }
+}
+
+async fn index_server_request(
+    envelope: &ServerRequestEnvelope,
+    pending_server_requests: &Arc<Mutex<PendingServerRequests>>,
+) {
+    match envelope.method.as_str() {
+        method::SERVER_REQUEST_PERMISSION => {
+            if let Ok(request) = serde_json::from_value::<orbcode_protocol::PermissionRequest>(
+                envelope.params.clone(),
+            ) {
+                pending_server_requests
+                    .lock()
+                    .await
+                    .permissions
+                    .insert(request.request_id, envelope.id.clone());
+            }
+        }
+        method::SERVER_REQUEST_MCP_TRUST => {
+            if let Ok(request) = serde_json::from_value::<orbcode_protocol::McpTrustApprovalRequest>(
+                envelope.params.clone(),
+            ) {
+                pending_server_requests
+                    .lock()
+                    .await
+                    .mcp_trust
+                    .insert(request.server_id, envelope.id.clone());
+            }
+        }
+        method::SERVER_REQUEST_ASK_USER => {
+            if let Ok(request) =
+                serde_json::from_value::<AskUserQuestionRequest>(envelope.params.clone())
+            {
+                pending_server_requests
+                    .lock()
+                    .await
+                    .ask_user
+                    .insert(request.request_id, envelope.id.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn permission_decision_to_wire(decision: PermissionDecision) -> PermissionDecisionWire {
+    match decision {
+        PermissionDecision::Approve => PermissionDecisionWire::Approve,
+        PermissionDecision::Deny => PermissionDecisionWire::Deny,
+        PermissionDecision::ApproveAlways(rule) => {
+            PermissionDecisionWire::ApproveAlways { rules: vec![rule] }
+        }
+        PermissionDecision::ApproveAlwaysMany(rules) => {
+            PermissionDecisionWire::ApproveAlways { rules }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use orbcode_app_server_protocol::ErrorCode;
+    use orbcode_config::{AppConfigOverrides, sanitize_path};
+    use orbcode_protocol::{BackgroundTaskViewStatus, StreamEvent};
+    use orbcode_tools::{
+        BackgroundTaskRecord, BackgroundTaskStatus, background_log_path, register_progress_stream,
+        task_record_to_view, unregister_progress_stream, write_background_task_record,
+    };
+
+    use super::{AppClient, ClientError};
+
+    fn test_path(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "orbcode-app-client-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    async fn write_project_transcript(
+        home: &std::path::Path,
+        cwd: &std::path::Path,
+        session_id: &str,
+        body: &str,
+    ) {
+        let project_dir = home
+            .join("projects")
+            .join(sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        tokio::fs::write(project_dir.join(format!("{session_id}.jsonl")), body)
+            .await
+            .expect("write transcript");
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Bootstrap creates a session (protocol round trip)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn bootstrap_creates_session() {
+        let home = test_path("bootstrap-home");
+        let cwd = test_path("bootstrap-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let state = client.bootstrap(None).await.expect("bootstrap");
+        assert!(
+            !state.session.session_id.is_empty(),
+            "bootstrap should return a session_id"
+        );
+        let sid = state.session.session_id.as_str();
+        assert!(!sid.is_empty(), "session_id should not be empty");
+        assert!(
+            !state.model_display_name.is_empty(),
+            "bootstrap should include model_display_name"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_background_task_stream_receives_initial_progress_and_terminal_update() {
+        let home = test_path("bg-sub-home");
+        let cwd = test_path("bg-sub-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd.clone(),
+            AppConfigOverrides {
+                home_dir: Some(home.clone()),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let task_id = "workflow-subscribe-test";
+        let log_path = background_log_path(&home, task_id);
+        let mut record = BackgroundTaskRecord::new_workflow(
+            task_id.to_string(),
+            "session-1".to_string(),
+            "generated workflow".to_string(),
+            cwd.display().to_string(),
+            log_path.display().to_string(),
+        );
+        write_background_task_record(&home, &record)
+            .await
+            .expect("write running record");
+        let progress_tx = register_progress_stream(task_id, 16);
+
+        let mut rx = client
+            .subscribe_background_task_stream(task_id)
+            .await
+            .expect("subscribe");
+        let initial = rx.recv().await.expect("initial task snapshot");
+        match initial {
+            StreamEvent::BackgroundTaskUpdated { task, .. } => {
+                assert_eq!(task.task_id, task_id);
+                assert_eq!(task.status, BackgroundTaskViewStatus::Running);
+            }
+            other => panic!("unexpected initial event: {other:?}"),
+        }
+
+        record.status = BackgroundTaskStatus::Completed;
+        record.finished_at = Some(chrono::Utc::now().to_rfc3339());
+        write_background_task_record(&home, &record)
+            .await
+            .expect("write completed record");
+        progress_tx
+            .send(StreamEvent::BackgroundTaskUpdated {
+                session_id: "session-1".to_string(),
+                task: task_record_to_view(&record),
+            })
+            .expect("send terminal task snapshot");
+
+        let terminal = rx.recv().await.expect("terminal task snapshot");
+        match terminal {
+            StreamEvent::BackgroundTaskUpdated { task, .. } => {
+                assert_eq!(task.task_id, task_id);
+                assert_eq!(task.status, BackgroundTaskViewStatus::Completed);
+            }
+            other => panic!("unexpected terminal event: {other:?}"),
+        }
+        let closed = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("terminal update should close the client route");
+        assert!(closed.is_none());
+
+        unregister_progress_stream(task_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_register_and_terminal_event_is_never_stranded() {
+        use std::collections::VecDeque;
+        use std::sync::Arc;
+
+        use tokio::sync::{Mutex, mpsc};
+
+        use super::{StreamRoute, register_stream_route, route_stream_event};
+        use orbcode_app_server_protocol::StreamEventNotification;
+        use orbcode_tools::{BackgroundTaskRecord, BackgroundTaskStatus, task_record_to_view};
+
+        fn terminal_bg_event() -> StreamEvent {
+            let mut record = BackgroundTaskRecord::new_workflow(
+                "task-race".to_string(),
+                "session-1".to_string(),
+                "prompt".to_string(),
+                "/tmp".to_string(),
+                "/tmp/log".to_string(),
+            );
+            record.status = BackgroundTaskStatus::Completed;
+            StreamEvent::BackgroundTaskUpdated {
+                session_id: "session-1".to_string(),
+                task: task_record_to_view(&record),
+            }
+        }
+
+        // Race the producer (`route_stream_event`) against the registrar
+        // (`register_stream_route`) many times. Before the fix, a terminal event
+        // arriving in the window between the registrar's drain and its route
+        // insert was stranded in `pending_stream_events` and never delivered to
+        // the consumer's `rx` — hanging it forever. The consumer only ever reads
+        // `rx`, so a correct implementation must ALWAYS deliver the event there,
+        // regardless of interleaving.
+        let subscription_id = "sub-race".to_string();
+        for _ in 0..5000 {
+            let stream_routes: Arc<Mutex<HashMap<String, StreamRoute>>> =
+                Arc::new(Mutex::new(HashMap::new()));
+            let pending: Arc<Mutex<HashMap<String, VecDeque<StreamEvent>>>> =
+                Arc::new(Mutex::new(HashMap::new()));
+            let (tx, mut rx) = mpsc::unbounded_channel();
+
+            let producer = tokio::spawn({
+                let stream_routes = Arc::clone(&stream_routes);
+                let pending = Arc::clone(&pending);
+                let subscription_id = subscription_id.clone();
+                async move {
+                    route_stream_event(
+                        StreamEventNotification {
+                            subscription_id,
+                            event: terminal_bg_event(),
+                        },
+                        &stream_routes,
+                        &pending,
+                    )
+                    .await;
+                }
+            });
+            let registrar = tokio::spawn({
+                let stream_routes = Arc::clone(&stream_routes);
+                let pending = Arc::clone(&pending);
+                let subscription_id = subscription_id.clone();
+                async move {
+                    register_stream_route(&stream_routes, &pending, subscription_id, tx, true)
+                        .await;
+                }
+            });
+            let _ = tokio::join!(producer, registrar);
+
+            assert!(
+                rx.try_recv().is_ok(),
+                "terminal event was stranded (registration TOCTOU regression)"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. List sessions finds a persisted session
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn list_sessions_finds_persisted_session() {
+        let home = test_path("list-sess-home");
+        let cwd = test_path("list-sess-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        // Pre-create a persisted transcript so list_sessions can discover it.
+        let project_dir = home
+            .join("projects")
+            .join(orbcode_config::sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let session_id = "list-sess-test-session";
+        let payload = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-1",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "hello" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        tokio::fs::write(
+            project_dir.join(format!("{session_id}.jsonl")),
+            format!("{}\n", serde_json::to_string(&payload).expect("serialize")),
+        )
+        .await
+        .expect("write transcript");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let sessions = client.list_sessions().await.expect("list sessions");
+        assert!(
+            sessions.iter().any(|s| s.session_id == session_id),
+            "persisted session should appear in list"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_load_replay_preflight_allows_safe_transcript() {
+        let home = test_path("acp-preflight-safe-home");
+        let cwd = test_path("acp-preflight-safe-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let session_id = "acp-preflight-safe-session";
+        let payload = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-1",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "hello" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        write_project_transcript(
+            &home,
+            &cwd,
+            session_id,
+            &format!("{}\n", serde_json::to_string(&payload).expect("serialize")),
+        )
+        .await;
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let preflight = client
+            .acp_load_replay_preflight(session_id)
+            .await
+            .expect("preflight");
+        assert_eq!(preflight.session.session_id, session_id);
+        assert!(preflight.replay_allowed);
+        assert!(preflight.blockers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn acp_load_replay_preflight_reports_replay_blockers() {
+        let home = test_path("acp-preflight-blocked-home");
+        let cwd = test_path("acp-preflight-blocked-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let session_id = "acp-preflight-blocked-session";
+        let user = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-1",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "hello" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        let api_error = serde_json::json!({
+            "type": "system",
+            "subtype": "api_error",
+            "uuid": "uuid-2",
+            "timestamp": "2026-06-01T00:00:01.000Z",
+            "content": "provider failed",
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        write_project_transcript(
+            &home,
+            &cwd,
+            session_id,
+            &format!(
+                "{}\n{}\n",
+                serde_json::to_string(&user).expect("serialize user"),
+                serde_json::to_string(&api_error).expect("serialize error"),
+            ),
+        )
+        .await;
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let preflight = client
+            .acp_load_replay_preflight(session_id)
+            .await
+            .expect("preflight");
+        assert!(!preflight.replay_allowed);
+        assert!(
+            preflight
+                .blockers
+                .iter()
+                .any(|reason| reason.contains("system/API-error provenance")),
+            "expected API-error blocker, got {:?}",
+            preflight.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_load_replay_preflight_reports_corrupt_and_relative_cwd_blockers() {
+        let home = test_path("acp-preflight-invalid-home");
+        let cwd = test_path("acp-preflight-invalid-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let session_id = "acp-preflight-invalid-session";
+        let user = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-1",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "hello" },
+            "cwd": "relative/project",
+            "sessionId": session_id,
+        });
+        write_project_transcript(
+            &home,
+            &cwd,
+            session_id,
+            &format!(
+                "{}\nnot-json\n",
+                serde_json::to_string(&user).expect("serialize user")
+            ),
+        )
+        .await;
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let preflight = client
+            .acp_load_replay_preflight(session_id)
+            .await
+            .expect("preflight");
+        assert!(!preflight.replay_allowed);
+        assert!(
+            preflight
+                .blockers
+                .iter()
+                .any(|reason| reason.contains("corrupt transcript lines")),
+            "expected corrupt-transcript blocker, got {:?}",
+            preflight.blockers
+        );
+        assert!(
+            preflight
+                .blockers
+                .iter()
+                .any(|reason| reason.contains("relative cwd")),
+            "expected relative-cwd blocker, got {:?}",
+            preflight.blockers
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_load_replay_preflight_errors_for_missing_session() {
+        let home = test_path("acp-preflight-missing-home");
+        let cwd = test_path("acp-preflight-missing-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let err = client
+            .acp_load_replay_preflight("missing-session")
+            .await
+            .expect_err("missing session should error");
+        match err {
+            ClientError::Protocol(err) => assert_eq!(err.code, ErrorCode::SessionNotFound),
+            other => panic!("expected protocol error, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Model name returns non-empty
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn model_name_returns_non_empty() {
+        let home = test_path("model-name-home");
+        let cwd = test_path("model-name-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let result = client.model_name().await.expect("model_name");
+        let model = result["model_name"].as_str().expect("model_name string");
+        assert!(!model.is_empty(), "model name should not be empty");
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Permission mode defaults to default
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn permission_mode_defaults_to_default() {
+        let home = test_path("perm-mode-home");
+        let cwd = test_path("perm-mode-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let result = client.permission_mode().await.expect("permission_mode");
+        let mode = result["mode"].as_str().expect("mode string");
+        assert_eq!(mode, "default", "should default to 'default' mode");
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. List tools includes foundation tools
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn list_tools_includes_foundation_tools() {
+        let home = test_path("tools-home");
+        let cwd = test_path("tools-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let tools = client.list_tools().await.expect("list_tools");
+        let tools_arr = tools.as_array().expect("tools should be an array");
+        assert!(!tools_arr.is_empty(), "should have foundation tools");
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Effort level defaults to None
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn effort_level_defaults_to_none() {
+        let home = test_path("effort-home");
+        let cwd = test_path("effort-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let result = client.effort_level().await.expect("effort_level");
+        // Fresh server should have no effort override set
+        assert!(
+            result["effort"].is_null() || result.is_null(),
+            "effort should default to null/none"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. Full lifecycle: bootstrap and rename
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn full_lifecycle_bootstrap_and_rename() {
+        let home = test_path("full-lifecycle-home");
+        let cwd = test_path("full-lifecycle-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        // Pre-create a persisted transcript.
+        let project_dir = home
+            .join("projects")
+            .join(orbcode_config::sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let session_id = "full-lifecycle-session";
+        let payload = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-fl",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "lifecycle test" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        tokio::fs::write(
+            project_dir.join(format!("{session_id}.jsonl")),
+            format!("{}\n", serde_json::to_string(&payload).expect("serialize")),
+        )
+        .await
+        .expect("write transcript");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        // Bootstrap the persisted session
+        let state = client.bootstrap(Some(session_id)).await.expect("bootstrap");
+        assert_eq!(state.session.session_id, session_id);
+
+        // The session should appear in the session list
+        let sessions = client.list_sessions().await.expect("list sessions");
+        assert!(
+            sessions.iter().any(|s| s.session_id == session_id),
+            "bootstrapped session should appear in list_sessions"
+        );
+
+        // Rename the session
+        client
+            .rename_session(session_id, "Renamed Session")
+            .await
+            .expect("rename");
+
+        // Verify the rename took effect
+        let sessions = client.list_sessions().await.expect("list after rename");
+        let our = sessions
+            .iter()
+            .find(|s| s.session_id == session_id)
+            .expect("session should be in list");
+        assert_eq!(
+            our.custom_title.as_deref(),
+            Some("Renamed Session"),
+            "custom title should be updated"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Session fork creates a second session
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn session_fork_creates_second_session() {
+        let home = test_path("fork-home");
+        let cwd = test_path("fork-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        // Pre-create a persisted transcript.
+        let project_dir = home
+            .join("projects")
+            .join(orbcode_config::sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let session_id = "fork-source-session";
+        let payload = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-fork",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "fork test" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        tokio::fs::write(
+            project_dir.join(format!("{session_id}.jsonl")),
+            format!("{}\n", serde_json::to_string(&payload).expect("serialize")),
+        )
+        .await
+        .expect("write transcript");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        // Bootstrap the persisted session first
+        let _state = client.bootstrap(Some(session_id)).await.expect("bootstrap");
+
+        // Fork the session
+        let forked = client
+            .fork_session(session_id, Some("forked".into()), None)
+            .await
+            .expect("fork session");
+
+        let forked_id = forked["session_id"].as_str().expect("forked session_id");
+        assert_ne!(
+            forked_id, session_id,
+            "forked session should have a different id"
+        );
+
+        // Both should appear in the list
+        let sessions = client.list_sessions().await.expect("list sessions");
+        assert!(
+            sessions.iter().any(|s| s.session_id == session_id),
+            "original session should be in list"
+        );
+        assert!(
+            sessions.iter().any(|s| s.session_id == forked_id),
+            "forked session should be in list"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Context preview has cwd
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn context_preview_has_cwd() {
+        let home = test_path("ctx-preview-home");
+        let cwd = test_path("ctx-preview-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd.clone(),
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let ctx = client.context_preview().await.expect("context_preview");
+        let ctx_cwd = ctx["cwd"].as_str().expect("cwd string");
+        assert!(
+            !ctx_cwd.is_empty(),
+            "context_preview cwd should not be empty"
+        );
+        let cwd_name = cwd
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("cwd filename");
+        assert!(
+            ctx_cwd.contains(cwd_name),
+            "context_preview cwd should reference our working directory"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. Permission overview returns data
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn permission_overview_returns_data() {
+        let home = test_path("perm-ov-home");
+        let cwd = test_path("perm-ov-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let overview = client
+            .permission_overview()
+            .await
+            .expect("permission_overview");
+        assert_eq!(
+            overview["allow_all"].as_bool(),
+            Some(false),
+            "fresh server should not have allow_all"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 11. Protocol round-trip test
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn protocol_round_trip() {
+        let home = test_path("protocol-rt-home");
+        let cwd = test_path("protocol-rt-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        // Pre-create a transcript so the bootstrapped session is discoverable.
+        let project_dir = home
+            .join("projects")
+            .join(orbcode_config::sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let session_id = "protocol-rt-session";
+        let payload = serde_json::json!({
+            "type": "user",
+            "uuid": "uuid-rt",
+            "timestamp": "2026-06-01T00:00:00.000Z",
+            "message": { "role": "user", "content": "round trip test" },
+            "cwd": cwd.display().to_string(),
+            "sessionId": session_id,
+        });
+        tokio::fs::write(
+            project_dir.join(format!("{session_id}.jsonl")),
+            format!("{}\n", serde_json::to_string(&payload).expect("serialize")),
+        )
+        .await
+        .expect("write transcript");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client should initialize via protocol");
+
+        // Bootstrap the persisted session
+        let state = client.bootstrap(Some(session_id)).await.expect("bootstrap");
+        assert_eq!(state.session.session_id, session_id);
+
+        // List sessions and find it
+        let sessions = client.list_sessions().await.expect("list");
+        assert!(
+            sessions.iter().any(|s| s.session_id == session_id),
+            "bootstrap session should appear in list"
+        );
+
+        // Check model name through protocol
+        let model = client.model_name().await.expect("model_name");
+        assert!(model["model_name"].as_str().is_some());
+
+        // List tools through protocol
+        let tools = client.list_tools().await.expect("tools");
+        assert!(!tools.as_array().unwrap().is_empty());
+    }
+
+    // =========================================================================
+    // Mock-provider helpers
+    // =========================================================================
+
+    fn mock_overrides(scenario: &str) -> HashMap<String, String> {
+        let mut env = orbcode_app_server::sealed_provider_env_overrides();
+        env.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            format!("mock://anthropic?scenario={scenario}"),
+        );
+        env.insert("ANTHROPIC_API_KEY".to_string(), "test-key".to_string());
+        env
+    }
+
+    async fn client_with_mock(label: &str, scenario: &str) -> (AppClient, String) {
+        let home = test_path(&format!("{label}-home"));
+        let cwd = test_path(&format!("{label}-cwd"));
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                env_overrides: mock_overrides(scenario),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let state = client.bootstrap(None).await.expect("bootstrap");
+        let session_id = state.session.session_id;
+        (client, session_id)
+    }
+
+    // =========================================================================
+    // 12. submit_turn + stream event delivery (P0-1)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn submit_turn_delivers_stream_events() {
+        let (client, session_id) = client_with_mock("stream-events", "hello").await;
+
+        let mut notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        let sub = client
+            .submit_turn(&session_id, "hello")
+            .await
+            .expect("submit_turn");
+        assert!(!sub.subscription_id.is_empty());
+
+        // StreamEvent uses #[serde(tag = "event")] so the discriminator is at
+        // params["event"]["event"] (StreamEventNotification wraps StreamEvent).
+        let mut events = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout_at(deadline, notif_rx.recv()).await {
+                Ok(Some(notif)) => {
+                    if notif.method == "stream/event" {
+                        events.push(notif.params.clone());
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+            if let Some(last) = events.last() {
+                let et = last["event"]["event"].as_str().unwrap_or("");
+                if et == "turn_complete" || et == "turn_finished" {
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            !events.is_empty(),
+            "should receive at least one stream event notification"
+        );
+
+        let event_types: Vec<&str> = events
+            .iter()
+            .map(|p| p["event"]["event"].as_str().unwrap_or("unknown"))
+            .collect();
+
+        let has_content = events
+            .iter()
+            .any(|p| p["event"]["event"].as_str() == Some("assistant_delta"));
+        assert!(
+            has_content,
+            "stream should contain assistant_delta events, got: {event_types:?}"
+        );
+    }
+
+    // =========================================================================
+    // 13. Concurrent turn rejection (P0-3)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn concurrent_turn_rejected_with_active_turn_error() {
+        use orbcode_app_server_protocol::ErrorCode;
+
+        use super::ClientError;
+
+        let (client, session_id) = client_with_mock("concurrent-turn", "hang").await;
+
+        let _notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        // First turn starts and hangs
+        let _sub = client
+            .submit_turn(&session_id, "first")
+            .await
+            .expect("first submit_turn");
+
+        // Give the turn time to register in ActiveTurnRegistry
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Second turn should be rejected
+        let result = client.submit_turn(&session_id, "second").await;
+        match result {
+            Err(ClientError::Protocol(e)) => {
+                assert_eq!(
+                    e.code,
+                    ErrorCode::ActiveTurn,
+                    "second turn should get ActiveTurn error, got: {e:?}"
+                );
+            }
+            other => panic!("expected Protocol(ActiveTurn) error, got: {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // 14. Permission round-trip via server request (P0-2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn permission_round_trip_via_server_request() {
+        use orbcode_app_server_protocol::ResponseResult;
+        use serde_json::json;
+
+        let (client, session_id) =
+            client_with_mock("perm-roundtrip", "tool_use&key=bash&command=echo+hi").await;
+
+        let mut notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+        let mut srv_req_rx = client
+            .take_server_request_receiver()
+            .await
+            .expect("server request receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "run echo hi")
+            .await
+            .expect("submit_turn");
+
+        // Wait for a permission server-request
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let perm_req = loop {
+            tokio::select! {
+                    req = srv_req_rx.recv() => {
+                        match req {
+                            Some(r) if r.method == "permission/request" => break r,
+                            Some(_) => {}
+                            None => panic!("server request channel closed without permission request"),
+                        }
+                    }
+                    _ = notif_rx.recv() => {}
+                _ = tokio::time::sleep_until(deadline) => {
+                    panic!("timed out waiting for permission server-request");
+                }
+            }
+        };
+
+        let perm_request_id = perm_req.params["request_id"]
+            .as_str()
+            .expect("permission request should have request_id")
+            .to_string();
+
+        // Respond with approve
+        client
+            .respond_to_server_request(
+                perm_req.id.clone(),
+                ResponseResult::Success {
+                    data: Some(json!({
+                        "request_id": perm_request_id,
+                        "decision": { "decision": "approve" }
+                    })),
+                },
+            )
+            .await
+            .expect("respond_to_server_request");
+
+        // After approval, the turn proceeds. Cancel to avoid infinite tool_use loop.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let cancel_result = client.cancel_turn(&session_id).await;
+        assert!(
+            cancel_result.is_ok(),
+            "cancel_turn should succeed after permission approval"
+        );
+    }
+
+    // =========================================================================
+    // 15. turn/cancel via protocol dispatch (P1-5a)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn turn_cancel_via_protocol_dispatch() {
+        let (client, session_id) = client_with_mock("turn-cancel", "hang").await;
+
+        let _notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "hang")
+            .await
+            .expect("submit_turn");
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let result = client.cancel_turn(&session_id).await.expect("cancel_turn");
+        assert!(result, "cancel should return true");
+    }
+
+    // =========================================================================
+    // 16. turn/interrupt via protocol dispatch (P1-5b)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn turn_interrupt_via_protocol_dispatch() {
+        let (client, session_id) = client_with_mock("turn-interrupt", "hang").await;
+
+        let _notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "hang")
+            .await
+            .expect("submit_turn");
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let result = client
+            .interrupt_turn(&session_id)
+            .await
+            .expect("interrupt_turn");
+        assert!(result, "interrupt should return true");
+    }
+
+    // =========================================================================
+    // 17. permission/respond sent=true via protocol dispatch
+    // =========================================================================
+
+    #[tokio::test]
+    async fn permission_respond_sent_true_via_public_api() {
+        use orbcode_app_server_protocol::PermissionDecisionWire;
+
+        let (client, session_id) =
+            client_with_mock("perm-sent-true", "tool_use&key=bash&command=echo+hi").await;
+
+        let mut notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+        let _srv_req_rx = client
+            .take_server_request_receiver()
+            .await
+            .expect("server request receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "echo hi")
+            .await
+            .expect("submit_turn");
+
+        // Wait for the PermissionRequested stream event to learn the request_id.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let perm_request_id = loop {
+            match tokio::time::timeout_at(deadline, notif_rx.recv()).await {
+                Ok(Some(notif)) if notif.method == "stream/event" => {
+                    let evt = &notif.params["event"];
+                    if evt["event"].as_str() == Some("permission_requested") {
+                        break evt["request"]["request_id"]
+                            .as_str()
+                            .expect("request_id in PermissionRequested")
+                            .to_string();
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("channel closed without PermissionRequested"),
+                Err(_) => panic!("timed out waiting for PermissionRequested event"),
+            }
+        };
+
+        // Call the public API — this exercises the PermissionDecisionWire
+        // serialization path end-to-end.
+        let result = client
+            .respond_to_permission_request(&perm_request_id, PermissionDecisionWire::Approve)
+            .await
+            .expect("respond_to_permission_request");
+        assert_eq!(
+            result["sent"].as_bool(),
+            Some(true),
+            "respond_to_permission_request with real pending id should return sent=true"
+        );
+
+        let _ = client.cancel_turn(&session_id).await;
+    }
+
+    // =========================================================================
+    // 18. permission/respond sent=false for unknown id
+    // =========================================================================
+
+    #[tokio::test]
+    async fn permission_respond_sent_false_for_unknown_id() {
+        use orbcode_app_server_protocol::PermissionDecisionWire;
+
+        let (client, _session_id) = client_with_mock("perm-sent-false", "hello").await;
+
+        let result = client
+            .respond_to_permission_request("nonexistent-id", PermissionDecisionWire::Approve)
+            .await
+            .expect("respond_to_permission_request");
+        assert_eq!(
+            result["sent"].as_bool(),
+            Some(false),
+            "respond_to_permission_request with unknown id should return sent=false"
+        );
+    }
+
+    // =========================================================================
+    // 19. Full permission flow: approve → tool result arrives (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn full_permission_flow_approve_produces_tool_result() {
+        use orbcode_app_server_protocol::ResponseResult;
+        use serde_json::json;
+
+        let (client, session_id) =
+            client_with_mock("perm-full-flow", "tool_use&key=bash&command=echo+hi").await;
+
+        let mut notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+        let mut srv_req_rx = client
+            .take_server_request_receiver()
+            .await
+            .expect("server request receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "echo hi")
+            .await
+            .expect("submit_turn");
+
+        // Wait for the first permission server-request
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let perm_req = loop {
+            tokio::select! {
+                    req = srv_req_rx.recv() => {
+                        match req {
+                            Some(r) if r.method == "permission/request" => break r,
+                            Some(_) => {}
+                            None => panic!("channel closed without permission request"),
+                        }
+                    }
+                    _ = notif_rx.recv() => {}
+                _ = tokio::time::sleep_until(deadline) => {
+                    panic!("timed out waiting for permission server-request");
+                }
+            }
+        };
+
+        let perm_request_id = perm_req.params["request_id"]
+            .as_str()
+            .expect("request_id")
+            .to_string();
+
+        // Approve the permission via server-request response
+        client
+            .respond_to_server_request(
+                perm_req.id.clone(),
+                ResponseResult::Success {
+                    data: Some(json!({
+                        "request_id": perm_request_id,
+                        "decision": { "decision": "approve" }
+                    })),
+                },
+            )
+            .await
+            .expect("respond_to_server_request");
+
+        // After approval, wait for tool-related events (tool_use_started or
+        // tool_use_completed) to confirm the tool actually executed.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut saw_tool_event = false;
+        loop {
+            match tokio::time::timeout_at(deadline, notif_rx.recv()).await {
+                Ok(Some(notif)) if notif.method == "stream/event" => {
+                    let et = notif.params["event"]["event"].as_str().unwrap_or("");
+                    if et == "tool_use_started" || et == "tool_use_completed" {
+                        saw_tool_event = true;
+                        break;
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+        assert!(
+            saw_tool_event,
+            "should receive tool execution event after permission approval"
+        );
+
+        let _ = client.cancel_turn(&session_id).await;
+    }
+
+    // =========================================================================
+    // 20. Turn lifecycle: submit → steer → cancel → TurnCancelled (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn turn_lifecycle_submit_steer_cancel() {
+        let (client, session_id) = client_with_mock("turn-lifecycle", "hang").await;
+
+        let mut notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "hanging")
+            .await
+            .expect("submit_turn");
+
+        // Wait for turn to start
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Steer the turn (inject additional prompt)
+        client
+            .steer_turn(&session_id, "additional context")
+            .await
+            .expect("steer_turn");
+
+        // Cancel the turn
+        let cancelled = client.cancel_turn(&session_id).await.expect("cancel_turn");
+        assert!(cancelled, "cancel_turn should return true");
+
+        // Drain notifications and look for turn_cancelled event
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut saw_cancelled = false;
+        loop {
+            match tokio::time::timeout_at(deadline, notif_rx.recv()).await {
+                Ok(Some(notif)) if notif.method == "stream/event" => {
+                    let et = notif.params["event"]["event"].as_str().unwrap_or("");
+                    if et == "turn_cancelled" {
+                        saw_cancelled = true;
+                        break;
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+        assert!(
+            saw_cancelled,
+            "should receive turn_cancelled event after cancel"
+        );
+    }
+
+    // =========================================================================
+    // 21. turn/steer E2E (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn turn_steer_via_protocol_dispatch() {
+        let (client, session_id) = client_with_mock("turn-steer", "hang").await;
+
+        let _notif_rx = client
+            .take_notification_receiver()
+            .await
+            .expect("notification receiver");
+
+        let _sub = client
+            .submit_turn(&session_id, "hanging")
+            .await
+            .expect("submit_turn");
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Steer should succeed while turn is active
+        client
+            .steer_turn(&session_id, "follow-up")
+            .await
+            .expect("steer_turn should succeed for active turn");
+
+        let _ = client.cancel_turn(&session_id).await;
+    }
+
+    // =========================================================================
+    // 22. session/rewind E2E (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn session_rewind_via_protocol_dispatch() {
+        let home = test_path("rewind-home");
+        let cwd = test_path("rewind-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        // Pre-create a transcript with multiple messages
+        let project_dir = home
+            .join("projects")
+            .join(orbcode_config::sanitize_path(&cwd.display().to_string()));
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let session_id = "rewind-test-session";
+        let mut transcript = String::new();
+        for i in 0..3 {
+            let msg = serde_json::json!({
+                "type": "user",
+                "uuid": format!("uuid-rewind-{i}"),
+                "timestamp": format!("2026-06-01T00:0{i}:00.000Z"),
+                "message": { "role": "user", "content": format!("message {i}") },
+                "cwd": cwd.display().to_string(),
+                "sessionId": session_id,
+            });
+            transcript.push_str(&serde_json::to_string(&msg).expect("serialize"));
+            transcript.push('\n');
+        }
+        tokio::fs::write(project_dir.join(format!("{session_id}.jsonl")), &transcript)
+            .await
+            .expect("write transcript");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        // Bootstrap the session
+        let state = client.bootstrap(Some(session_id)).await.expect("bootstrap");
+        assert_eq!(state.session.session_id, session_id);
+
+        // Rewind to keep only 1 message
+        let result = client
+            .rewind_session(session_id, 1)
+            .await
+            .expect("rewind_session");
+        assert!(
+            result["session"].is_object(),
+            "rewind should return session state"
+        );
+    }
+
+    // =========================================================================
+    // 23. permission/set_mode E2E (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn permission_set_mode_valid_and_invalid() {
+        use orbcode_app_server_protocol::ErrorCode;
+
+        use super::ClientError;
+
+        let home = test_path("set-mode-home");
+        let cwd = test_path("set-mode-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        // Default: allow_all should be false
+        let overview = client.permission_overview().await.expect("overview");
+        assert_eq!(overview["allow_all"].as_bool(), Some(false));
+
+        // Set to bypassPermissions mode (sets allow_all = true)
+        client
+            .set_permission_mode("bypassPermissions")
+            .await
+            .expect("set_permission_mode bypassPermissions");
+
+        // Verify allow_all changed
+        let overview = client
+            .permission_overview()
+            .await
+            .expect("overview after set");
+        assert_eq!(
+            overview["allow_all"].as_bool(),
+            Some(true),
+            "bypass_permissions should set allow_all=true"
+        );
+
+        // Invalid mode should return InvalidParams
+        let result = client.set_permission_mode("nonexistent_mode").await;
+        match result {
+            Err(ClientError::Protocol(e)) => {
+                assert_eq!(e.code, ErrorCode::InvalidParams);
+            }
+            other => panic!("expected InvalidParams error, got: {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // 24. Error chain: CoreError → protocol → ClientError::Protocol (P2)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn error_chain_session_not_found_propagates() {
+        use orbcode_app_server_protocol::ErrorCode;
+
+        use super::ClientError;
+
+        let home = test_path("err-chain-home");
+        let cwd = test_path("err-chain-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        // Rewind on a nonexistent session triggers SessionNotFound in core,
+        // which propagates through the protocol handler as
+        // ErrorCode::SessionNotFound, and surfaces at the client as
+        // ClientError::Protocol.
+        let result = client.rewind_session("no-such-session", 0).await;
+        match result {
+            Err(ClientError::Protocol(e)) => {
+                assert_eq!(
+                    e.code,
+                    ErrorCode::SessionNotFound,
+                    "should propagate SessionNotFound, got: {e:?}"
+                );
+            }
+            other => panic!("expected Protocol(SessionNotFound), got: {other:?}"),
+        }
+    }
+}

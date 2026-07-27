@@ -1,0 +1,31 @@
+[package]
+name = "orbcode-app-server"
+version.workspace = true
+edition.workspace = true
+description = "In-process facade over the Orb Code core, tools, MCP and configuration layers."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbcode-app-server-protocol = { path = "../app-server-protocol" }
+orbcode-config = { path = "../config" }
+orbcode-core = { path = "../core" }
+orbcode-mcp = { path = "../mcp" }
+orbcode-model-provider = { path = "../model-provider" }
+orbcode-protocol = { path = "../protocol" }
+orbcode-tools = { path = "../tools" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+[package]
+name = "orbcode-app-server-client"
+version.workspace = true
+edition.workspace = true
+description = "Protocol-preserving async client facade for the Orb Code app-server."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[features]
+default = ["in-process"]
+in-process = ["dep:orbcode-app-server"]
+test-support = ["in-process"]
+
+[dependencies]
+async-trait.workspace = true
+orbcode-app-server = { path = "../app-server", optional = true }
+orbcode-app-server-protocol = { path = "../app-server-protocol" }
+orbcode-core = { path = "../core" }
+orbcode-protocol = { path = "../protocol" }
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+orbcode-config = { path = "../config" }
+orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
+orbcode-tools = { path = "../tools" }
+chrono.workspace = true
+
+[lints]
+workspace = true

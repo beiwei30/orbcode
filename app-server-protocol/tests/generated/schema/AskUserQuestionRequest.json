@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskUserQuestionRequest",
+  "description": "Server-initiated request asking the connected client to prompt the user\nwith a question and relay the answer back.\n\nSent via [`method::SERVER_REQUEST_ASK_USER`](crate::method::SERVER_REQUEST_ASK_USER).\n\nThe full tool-level integration is wired: the `AskUserQuestion` tool\npauses execution via `ToolContext::ask_user_tx`, the event pump in\n`MessageProcessor::pump_events` sends this as a server-request, and the\nclient's response is routed back to the tool via\n`AppServer::resolve_ask_user_question`. Cancellation (disconnect,\ntimeout, turn cancel) resolves with `None`.",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "description": "Session that owns the active turn for this question. Older clients may\nomit this field; servers should then fall back to their legacy routing.",
+      "type": "string"
+    },
+    "request_id": {
+      "description": "Unique identifier for this question, used to correlate the response.",
+      "type": "string"
+    },
+    "question": {
+      "description": "The question text to present to the user.",
+      "type": "string"
+    },
+    "options": {
+      "description": "Optional list of choices. When provided, the client should present\nthese as selectable options rather than a free-text input.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "request_id",
+    "question"
+  ]
+}

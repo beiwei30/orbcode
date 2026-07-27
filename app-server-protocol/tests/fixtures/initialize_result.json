@@ -1,0 +1,26 @@
+{
+  "protocol_version": "1.0",
+  "server_info": {
+    "name": "orbcode",
+    "version": "0.0.1"
+  },
+  "capabilities": {
+    "streaming": true,
+    "stable_methods": [
+      "initialize",
+      "session/bootstrap",
+      "session/list"
+    ],
+    "experimental_methods": [
+      "background/create"
+    ],
+    "server_notification_methods": [
+      "stream/event"
+    ],
+    "server_request_methods": [
+      "permission/request",
+      "mcp_trust/request",
+      "ask_user/request"
+    ]
+  }
+}

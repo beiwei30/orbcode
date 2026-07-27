@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "McpTrustDecisionWire",
+  "description": "Client's decision in response to a [`McpTrustApprovalRequest`].",
+  "type": "string",
+  "enum": [
+    "trust",
+    "deny"
+  ]
+}

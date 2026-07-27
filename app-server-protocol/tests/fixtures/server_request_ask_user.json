@@ -1,0 +1,14 @@
+{
+  "type": "request",
+  "id": "sreq-3",
+  "method": "ask_user/request",
+  "params": {
+    "session_id": "session-123",
+    "request_id": "ask-1",
+    "question": "Which database?",
+    "options": [
+      "PostgreSQL",
+      "MySQL"
+    ]
+  }
+}

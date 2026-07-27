@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerMessage",
+  "description": "Messages sent from the server to a client.",
+  "oneOf": [
+    {
+      "description": "A response to a client-initiated request.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "response"
+        }
+      },
+      "$ref": "#/$defs/ServerResponseEnvelope",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "An unsolicited notification (e.g. stream events).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "notification"
+        }
+      },
+      "$ref": "#/$defs/ServerNotificationEnvelope",
+      "required": [
+        "type"
+      ]
+    },
+    {
+      "description": "A server-initiated request (e.g. permission prompt).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "request"
+        }
+      },
+      "$ref": "#/$defs/ServerRequestEnvelope",
+      "required": [
+        "type"
+      ]
+    }
+  ],
+  "$defs": {
+    "ResponseResult": {
+      "description": "Outcome of a request -- either success or an error.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": true,
+            "status": {
+              "type": "string",
+              "const": "success"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "$ref": "#/$defs/ProtocolError",
+          "required": [
+            "status"
+          ]
+        }
+      ]
+    },
+    "ErrorCode": {
+      "description": "Error codes for the app-server protocol.",
+      "type": "string",
+      "enum": [
+        "parse_error",
+        "invalid_request",
+        "method_not_found",
+        "invalid_params",
+        "internal_error",
+        "session_not_found",
+        "active_turn",
+        "no_active_turn",
+        "permission_denied",
+        "provider_failed",
+        "config_error",
+        "tool_error",
+        "mcp_error",
+        "overloaded"
+      ]
+    },
+    "ProtocolError": {
+      "description": "Structured error returned inside [`ResponseResult::Error`](crate::ResponseResult).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": true
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ServerResponseEnvelope": {
+      "description": "Response envelope returned by the server for a client request.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/ResponseResult"
+        }
+      },
+      "required": [
+        "id",
+        "result"
+      ]
+    },
+    "ServerNotificationEnvelope": {
+      "description": "Unsolicited server notification (stream events, progress, etc.).",
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "params": true
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    "ServerRequestEnvelope": {
+      "description": "A request initiated by the server that expects a client response.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": true
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ]
+    }
+  }
+}

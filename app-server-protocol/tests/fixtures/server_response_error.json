@@ -1,0 +1,9 @@
+{
+  "type": "response",
+  "id": "req-err",
+  "result": {
+    "status": "error",
+    "code": "method_not_found",
+    "message": "unknown method"
+  }
+}

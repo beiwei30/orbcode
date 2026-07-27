@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "McpTrustResponseParams",
+  "description": "Parameters for the [`method::SERVER_REQUEST_MCP_TRUST`](crate::method::SERVER_REQUEST_MCP_TRUST)\nresponse sent by the client.",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/$defs/McpTrustDecisionWire"
+    }
+  },
+  "required": [
+    "request_id",
+    "decision"
+  ],
+  "$defs": {
+    "McpTrustDecisionWire": {
+      "description": "Client's decision in response to a [`McpTrustApprovalRequest`].",
+      "type": "string",
+      "enum": [
+        "trust",
+        "deny"
+      ]
+    }
+  }
+}

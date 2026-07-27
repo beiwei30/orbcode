@@ -1,0 +1,29 @@
+[package]
+name = "orbcode-mcp"
+version.workspace = true
+edition.workspace = true
+description = "Model Context Protocol client for Orb Code: transports, OAuth, server registry and trust."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22"
+orbcode-config = { path = "../config" }
+rand = "0.9"
+reqwest.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
+
+[lints]
+workspace = true

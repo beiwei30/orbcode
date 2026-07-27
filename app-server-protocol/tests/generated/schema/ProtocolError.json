@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProtocolError",
+  "description": "Structured error returned inside [`ResponseResult::Error`](crate::ResponseResult).",
+  "type": "object",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "message": {
+      "type": "string"
+    },
+    "data": true
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "$defs": {
+    "ErrorCode": {
+      "description": "Error codes for the app-server protocol.",
+      "type": "string",
+      "enum": [
+        "parse_error",
+        "invalid_request",
+        "method_not_found",
+        "invalid_params",
+        "internal_error",
+        "session_not_found",
+        "active_turn",
+        "no_active_turn",
+        "permission_denied",
+        "provider_failed",
+        "config_error",
+        "tool_error",
+        "mcp_error",
+        "overloaded"
+      ]
+    }
+  }
+}

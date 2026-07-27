@@ -1,0 +1,18 @@
+# Only the two structured templates; a blank issue skips the fields (version,
+# platform, permission configuration) that almost every report here needs.
+blank_issues_enabled: false
+
+# Deliberately no Discussions link: Discussions is not enabled on this repo, and
+# a dead entry here is worse than no entry. Add one if that changes.
+contact_links:
+  - name: Usage question — start with the README
+    url: https://github.com/beiwei30/orbcode#readme
+    about: Flags, configuration, env vars, MCP setup, and the feature maturity tables. Tool execution being off by default answers a surprising share of "it did nothing" questions.
+
+  - name: Contributing, building, running the checks
+    url: https://github.com/beiwei30/orbcode/blob/main/CONTRIBUTING.md
+    about: How to build, which single command CI runs, and what will fail review.
+
+  - name: Security vulnerability — report it privately
+    url: https://github.com/beiwei30/orbcode/security/advisories/new
+    about: Permission bypass, sandbox escape, transport auth bypass, credential exposure. Please do not open a public issue.

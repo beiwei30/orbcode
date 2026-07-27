@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerNotificationEnvelope",
+  "description": "Unsolicited server notification (stream events, progress, etc.).",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string"
+    },
+    "params": true
+  },
+  "required": [
+    "method",
+    "params"
+  ]
+}

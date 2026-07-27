@@ -1,0 +1,11 @@
+{
+  "type": "request",
+  "id": "sreq-2",
+  "method": "mcp_trust/request",
+  "params": {
+    "request_id": "trust-1",
+    "session_id": "session-123",
+    "server_id": "my-mcp-server",
+    "tool_name": "search"
+  }
+}

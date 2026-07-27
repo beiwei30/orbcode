@@ -1,0 +1,28 @@
+[
+  {
+    "role": "user",
+    "content": "What is 2+2?"
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "2 + 2 = 4."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": "Thanks!"
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "You're welcome!"
+      }
+    ]
+  }
+]

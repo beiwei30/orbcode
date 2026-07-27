@@ -1,0 +1,92 @@
+name: Bug report
+description: Something behaves differently from what you expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Orb Code is alpha software, so "not implemented yet" is a real possibility —
+        the [feature maturity tables](https://github.com/beiwei30/orbcode#features-and-maturity)
+        in the README say what is stable, beta, experimental, or deferred.
+
+        If this is a security issue, please **stop** and use
+        [SECURITY.md](https://github.com/beiwei30/orbcode/blob/main/SECURITY.md) instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        I ran `orbcode -p "..."` with `--permission-mode acceptEdits` and expected
+        the edit to apply without a prompt. Instead ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The smallest sequence that shows the problem. A throwaway home directory
+        (`ORBCODE_HOME="$(mktemp -d)"`) rules out your own settings and makes the
+        report reproducible for us.
+      placeholder: |
+        1. ORBCODE_HOME="$(mktemp -d)" cargo run -p orbcode -- ...
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The full first line of `orbcode --version` (it carries the commit SHA).
+      placeholder: orbcode 0.0.1 (a1b2c3d)
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and terminal
+      description: |
+        Terminal and multiplexer matter for anything TUI-shaped — rendering,
+        scrollback, and resize behaviour differ between them.
+      placeholder: macOS 15.3 (Apple Silicon), tmux 3.5 inside iTerm2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface
+      options:
+        - Interactive TUI
+        - Headless (-p / --print)
+        - stream-json input or output
+        - app-server (serve / remote)
+        - MCP client
+        - Build, tests, or tooling
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: |
+        Permission mode, allow/deny rules, provider and model, MCP servers, and
+        which settings layers are in play. **Redact API keys and tokens.**
+        `orbcode doctor` is a good summary to paste.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      description: |
+        Error text, a failing test's output, or a trace. Redact secrets and
+        anything private from your transcripts before pasting.
+      render: text

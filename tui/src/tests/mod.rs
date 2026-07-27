@@ -1,0 +1,13 @@
+mod banner;
+mod frame_capture;
+mod history;
+mod hooks;
+mod ide;
+mod input;
+mod permission;
+mod picker_overlay;
+mod render;
+mod slash_command;
+mod status_bar;
+mod support;
+mod tool_progress;

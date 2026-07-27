@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeResult",
+  "description": "Result returned by the server for the `initialize` request.",
+  "type": "object",
+  "properties": {
+    "protocol_version": {
+      "type": "string"
+    },
+    "server_info": {
+      "$ref": "#/$defs/ServerInfo"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/ServerCapabilities"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "server_info",
+    "capabilities"
+  ],
+  "$defs": {
+    "ServerInfo": {
+      "description": "Identifies the server.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "ServerCapabilities": {
+      "description": "Capabilities advertised by the server.",
+      "type": "object",
+      "properties": {
+        "streaming": {
+          "type": "boolean"
+        },
+        "stable_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "experimental_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "server_notification_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "server_request_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "streaming",
+        "stable_methods",
+        "experimental_methods",
+        "server_notification_methods",
+        "server_request_methods"
+      ]
+    }
+  }
+}

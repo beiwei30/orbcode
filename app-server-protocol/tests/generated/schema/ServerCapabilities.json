@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerCapabilities",
+  "description": "Capabilities advertised by the server.",
+  "type": "object",
+  "properties": {
+    "streaming": {
+      "type": "boolean"
+    },
+    "stable_methods": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "experimental_methods": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "server_notification_methods": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "server_request_methods": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "streaming",
+    "stable_methods",
+    "experimental_methods",
+    "server_notification_methods",
+    "server_request_methods"
+  ]
+}

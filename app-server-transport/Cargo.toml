@@ -1,0 +1,28 @@
+[package]
+name = "orbcode-app-server-transport"
+version.workspace = true
+edition.workspace = true
+description = "Stdio, Unix-socket and WebSocket transports for the Orb Code app-server."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+publish.workspace = true
+
+[dependencies]
+orbcode-app-server-protocol = { path = "../app-server-protocol" }
+orbcode-app-server = { path = "../app-server" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+orbcode-config = { path = "../config" }
+orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
+
+[lints]
+workspace = true

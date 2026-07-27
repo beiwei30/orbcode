@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeParams",
+  "description": "Parameters sent by the client in the `initialize` request.",
+  "type": "object",
+  "properties": {
+    "protocol_version": {
+      "type": "string"
+    },
+    "client_info": {
+      "$ref": "#/$defs/ClientInfo"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/ClientCapabilities",
+      "default": {
+        "streaming": false,
+        "experimental_methods": false
+      }
+    }
+  },
+  "required": [
+    "protocol_version",
+    "client_info"
+  ],
+  "$defs": {
+    "ClientInfo": {
+      "description": "Identifies the connecting client.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "ClientCapabilities": {
+      "description": "Capabilities declared by the client during the handshake.",
+      "type": "object",
+      "properties": {
+        "streaming": {
+          "type": "boolean",
+          "default": false
+        },
+        "experimental_methods": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

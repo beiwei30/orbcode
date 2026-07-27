@@ -1,0 +1,9 @@
+{
+  "request_id": "22220002-0000-0000-0000-000000000001",
+  "session_id": "22220002-0000-0000-0000-000000000000",
+  "tool_use_id": "toolu_perm02",
+  "tool_name": "Write",
+  "tool_input": "{\"file_path\":\"/Users/dev/project/out.txt\",\"content\":\"data\"}",
+  "requires_tools_permission": true,
+  "requires_network_permission": false
+}

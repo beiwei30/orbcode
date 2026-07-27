@@ -1,0 +1,67 @@
+name: ci
+
+# The canonical gate: exactly what `scripts/check.sh` runs locally, so a green
+# PR means the same thing as a green local run. The script's own claim ("Runs the
+# same checks as CI so local failures surface before push") is only true because
+# this job invokes the script rather than re-listing the steps here — keep it
+# that way. Adding a check means editing scripts/check.sh, not this file.
+#
+# What it covers, in order: rustfmt --check, clippy --workspace --all-targets,
+# cargo check --workspace, cargo check --no-default-features, the public API
+# surface audit, the brand audit, then cargo test --workspace.
+#
+# What it deliberately does NOT cover, because a dedicated workflow owns it:
+#   - the #[ignore]d PTY e2e tests            -> pty-e2e.yml (needs a quiet runner)
+#   - cross-platform build + packaging smoke  -> release.yml (Linux/macOS/Windows)
+# Consequently this job is Linux-only. The other two are where a platform-specific
+# break is meant to surface.
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+# No `paths` filter: this is the gate for the whole workspace, and the crates are
+# a tight dependency DAG (protocol -> config -> ... -> cli), so a change almost
+# anywhere can break almost anything downstream.
+
+# This job runs code from pull requests, including forks, so the token it gets
+# should be able to do nothing but read this checkout. Declared explicitly rather
+# than inherited: the repository-level default is a setting someone can widen
+# later, and a workflow that only reads should not silently gain write when they
+# do.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt + clippy + check + test
+    runs-on: ubuntu-latest
+    # The full workspace suite is ~100 test binaries; this bound is generous
+    # enough for a cold cache but still fails a hang instead of hanging.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # This action installs with `--profile minimal`, so rustfmt and clippy
+          # are NOT present unless asked for. check.sh runs both first, meaning a
+          # missing component fails the job in its opening seconds.
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run the canonical check pipeline
+        # Invoked via `bash` so this does not depend on the script's executable
+        # bit (which is easy to lose across checkouts / editors).
+        run: bash scripts/check.sh
