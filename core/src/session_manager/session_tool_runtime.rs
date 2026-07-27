@@ -409,14 +409,17 @@ impl SessionManager {
             requires_tools_permission: spec.requires_tools_permission,
             requires_network_permission: spec.requires_network_permission,
         };
-        let _ = tx.send(StreamEvent::PermissionRequested {
-            request: request.clone(),
-        });
 
         let outcome = match self
             .permission_runtime
             .await_permission_decision(
                 &request,
+                || {
+                    tx.send(StreamEvent::PermissionRequested {
+                        request: request.clone(),
+                    })
+                    .is_ok()
+                },
                 cancel_flag,
                 Duration::from_millis(PERMISSION_POLL_MS),
             )

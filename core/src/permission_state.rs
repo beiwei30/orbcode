@@ -95,6 +95,7 @@ impl PermissionRuntimeState {
     pub(crate) async fn await_permission_decision(
         &self,
         request: &PermissionRequest,
+        notify_registered: impl FnOnce() -> bool,
         cancel_flag: Arc<AtomicBool>,
         poll_interval: Duration,
     ) -> Option<PermissionDecision> {
@@ -102,6 +103,11 @@ impl PermissionRuntimeState {
         {
             let mut pending = self.pending_permissions.lock().await;
             pending.insert(request.request_id.clone(), sender);
+        }
+        if !notify_registered() {
+            let mut pending = self.pending_permissions.lock().await;
+            pending.remove(&request.request_id);
+            return None;
         }
 
         loop {
@@ -327,6 +333,40 @@ impl PermissionRuntimeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn permission_request_is_registered_before_notification() {
+        let runtime = PermissionRuntimeState::new();
+        let runtime_for_notification = runtime.clone();
+        let request = PermissionRequest {
+            request_id: "permission-request".to_string(),
+            session_id: "session".to_string(),
+            tool_use_id: "tool-use".to_string(),
+            tool_name: "bash".to_string(),
+            tool_input: r#"{"command":"printf hi"}"#.to_string(),
+            requires_tools_permission: true,
+            requires_network_permission: false,
+        };
+
+        let decision = runtime
+            .await_permission_decision(
+                &request,
+                || {
+                    let pending = runtime_for_notification
+                        .pending_permissions
+                        .try_lock()
+                        .expect("pending permissions lock");
+                    assert!(pending.contains_key(&request.request_id));
+                    false
+                },
+                Arc::new(AtomicBool::new(false)),
+                Duration::from_millis(1),
+            )
+            .await;
+
+        assert_eq!(decision, None);
+        assert!(runtime.pending_permissions.lock().await.is_empty());
+    }
 
     #[tokio::test]
     async fn remembered_rules_compact_overlapping_bash_prefixes() {
