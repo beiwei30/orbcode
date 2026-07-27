@@ -150,10 +150,10 @@ impl PtyTui {
             text.contains("\u{1b}[J")
                 && text.contains("\u{1b}[?7l")
                 && text.contains("\u{1b}[?7h")
-                && text.contains("Claude Code")
+                && text.contains("Orb Code")
         });
         assert!(
-            output.contains("\u{1b}[J") && output.contains("Claude Code"),
+            output.contains("\u{1b}[J") && output.contains("Orb Code"),
             "TUI did not clear and paint visible content. Output:\n{output}"
         );
         output
