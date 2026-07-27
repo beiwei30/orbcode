@@ -89,7 +89,12 @@ jobs:
 
       - name: Install bubblewrap (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04's AppArmor gate prevents bubblewrap from initializing
+          # its network namespace on GitHub-hosted runners.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Cross-platform smoke tests (path normalization + sandbox host validation)
         shell: bash
