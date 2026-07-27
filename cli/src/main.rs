@@ -234,32 +234,40 @@ async fn main() -> Result<()> {
             allowed_origins,
         } => {
             if let Some(path) = socket {
-                let token = cli_token.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                let config = orbcode_app_server_transport::StdioTransportConfig {
-                    auth_token: Some(token.clone()),
-                    ..Default::default()
-                };
-                let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
-                let path_for_info = path.display().to_string();
-                let token_for_info = token;
-                let info_task = tokio::spawn(async move {
-                    if ready_rx.await.is_ok() {
-                        print_serve_connection_info(serde_json::json!({
-                            "transport": "socket",
-                            "path": path_for_info,
-                            "auth_token": &token_for_info,
-                        }));
-                    }
-                });
-                orbcode_app_server_transport::run_unix_socket_transport_with_ready(
-                    &path,
-                    app_server,
-                    config,
-                    Some(ready_tx),
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("transport error: {e}"))?;
-                info_task.abort();
+                #[cfg(not(unix))]
+                {
+                    let _ = path;
+                    invalid_cli_input("--socket is only supported on Unix");
+                }
+                #[cfg(unix)]
+                {
+                    let token = cli_token.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    let config = orbcode_app_server_transport::StdioTransportConfig {
+                        auth_token: Some(token.clone()),
+                        ..Default::default()
+                    };
+                    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+                    let path_for_info = path.display().to_string();
+                    let token_for_info = token;
+                    let info_task = tokio::spawn(async move {
+                        if ready_rx.await.is_ok() {
+                            print_serve_connection_info(serde_json::json!({
+                                "transport": "socket",
+                                "path": path_for_info,
+                                "auth_token": &token_for_info,
+                            }));
+                        }
+                    });
+                    orbcode_app_server_transport::run_unix_socket_transport_with_ready(
+                        &path,
+                        app_server,
+                        config,
+                        Some(ready_tx),
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("transport error: {e}"))?;
+                    info_task.abort();
+                }
             } else if let Some(addr_str) = websocket {
                 let addr: std::net::SocketAddr = addr_str
                     .parse()
@@ -340,6 +348,14 @@ async fn connect_remote_client(endpoint: &str, token: &str) -> Result<AppClient>
             .await
             .map_err(|e| anyhow::anyhow!("remote websocket connect: {e}"))
     } else {
+        #[cfg(not(unix))]
+        {
+            let _ = token;
+            return Err(anyhow::anyhow!(
+                "Unix socket transport is not supported on this platform"
+            ));
+        }
+        #[cfg(unix)]
         AppClient::connect_socket(std::path::Path::new(endpoint), token)
             .await
             .map_err(|e| anyhow::anyhow!("remote socket connect: {e}"))
