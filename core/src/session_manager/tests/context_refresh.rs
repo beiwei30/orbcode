@@ -170,7 +170,7 @@ async fn skill_addition_reflected_between_tool_rounds() {
         "#tool:bash {}",
         serde_json::json!({
             "command": format!(
-                "mkdir -p {} && printf '---\\nname: test-dynamic-skill\\ndescription: dynamically added skill\\n---\\nskill body' > {}",
+                "mkdir -p {} && printf '%s' '---\\nname: test-dynamic-skill\\ndescription: dynamically added skill\\n---\\nskill body' > {}",
                 skill_dir.display(),
                 skill_path.display()
             )
