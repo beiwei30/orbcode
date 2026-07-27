@@ -820,8 +820,10 @@ async fn permissions_slash_command_explains_uneditable_sources() {
         transcript.contains("matching active source(s): env/CLI"),
         "{transcript}"
     );
+    let normalized_transcript = transcript.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        transcript.contains("Env/CLI and project-local or managed settings are read-only here"),
+        normalized_transcript
+            .contains("Env/CLI and project-local or managed settings are read-only here"),
         "{transcript}"
     );
 }

@@ -196,7 +196,9 @@ fn collapsed_activity_group_uses_spinner_when_active() {
         })
         .collect::<Vec<_>>();
 
-    assert!(rendered[0].starts_with("⏺ Searching for 1 pattern, reading 1 file..."));
+    assert!(rendered[0].starts_with(&platform_tool_line(
+        "Searching for 1 pattern, reading 1 file..."
+    )));
 }
 
 #[test]
@@ -1452,9 +1454,9 @@ fn expanded_group_inserts_blank_lines_between_summary_and_nested_items() {
         "  Read 1 file, listed 1 directory (ctrl+o to collapse)"
     );
     assert_eq!(rendered[1], "");
-    assert_eq!(rendered[2], "⏺ Bash(ls -la)");
+    assert_eq!(rendered[2], platform_tool_line("Bash(ls -la)"));
     assert_eq!(rendered[3], "");
-    assert_eq!(rendered[4], "⏺ Read(Cargo.toml)");
+    assert_eq!(rendered[4], platform_tool_line("Read(Cargo.toml)"));
 }
 
 #[test]

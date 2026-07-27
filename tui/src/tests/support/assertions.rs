@@ -13,6 +13,10 @@ pub fn plain_text_lines(lines: &[StyledLine]) -> Vec<String> {
     lines.iter().map(plain_text_line).collect()
 }
 
+pub fn platform_tool_line(text: &str) -> String {
+    format!("{} {text}", black_circle_glyph())
+}
+
 pub fn committed_transcript_fixture_text(state: &TuiState, transcript_width: usize) -> String {
     let cells = render_committed_transcript_cells(
         &state.messages,
@@ -25,5 +29,6 @@ pub fn committed_transcript_fixture_text(state: &TuiState, transcript_width: usi
 }
 
 pub fn assert_fixture(actual: &str, fixture: &str) {
-    assert_eq!(actual.trim_end(), fixture.trim_end());
+    let platform_fixture = fixture.replace("⏺", black_circle_glyph());
+    assert_eq!(actual.trim_end(), platform_fixture.trim_end());
 }

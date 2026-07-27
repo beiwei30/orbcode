@@ -1008,7 +1008,16 @@ async fn branch_slash_command_creates_git_branch_when_name_given() {
         .expect("git init");
     assert!(git_init.status.success(), "git init failed");
     let git_commit = tokio::process::Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "initial"])
+        .args([
+            "-c",
+            "user.name=Orb Code Tests",
+            "-c",
+            "user.email=orbcode-tests@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ])
         .current_dir(&cwd)
         .output()
         .await

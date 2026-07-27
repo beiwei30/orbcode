@@ -137,7 +137,10 @@ fn completed_bash_card_uses_inline_expand_hint_for_truncated_output() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Bash(printf 'a\\nb\\nc\\nd\\ne\\n')");
+    assert_eq!(
+        rendered[0],
+        platform_tool_line("Bash(printf 'a\\nb\\nc\\nd\\ne\\n')")
+    );
     assert_eq!(rendered[1], "  └ a");
     assert_eq!(rendered[2], "    b");
     assert_eq!(rendered[3], "    c");
@@ -183,7 +186,7 @@ fn expanded_completed_bash_card_omits_progress_and_uses_connector_first_only() {
     let (card, _) = build_tool_cell(&messages, 0, &cwd).unwrap();
     let rendered = plain_text_lines(&render_tool_cell_lines(&card, true, None, 90, &cwd));
 
-    assert_eq!(rendered[0], "⏺ Bash(printf paths)");
+    assert_eq!(rendered[0], platform_tool_line("Bash(printf paths)"));
     assert_eq!(rendered[1], "  └ src/main.tsx");
     assert_eq!(rendered[2], "    src/tools/TaskGetTool/TaskGetTool.ts");
     assert_eq!(rendered[3], "    src/tools/TaskGetTool/prompt.ts");
@@ -233,7 +236,7 @@ fn expanded_bash_card_renders_runtime_metadata() {
     let (card, _) = build_tool_cell(&messages, 0, &cwd).unwrap();
     let rendered = plain_text_lines(&render_tool_cell_lines(&card, true, None, 90, &cwd));
 
-    assert_eq!(rendered[0], "⏺ Bash(printf ok)");
+    assert_eq!(rendered[0], platform_tool_line("Bash(printf ok)"));
     assert_eq!(rendered[1], "  └ ok");
     assert!(!rendered.iter().any(|line| line.contains("Duration:")));
     assert!(!rendered.iter().any(|line| line.contains("Timeout:")));
@@ -298,7 +301,7 @@ fn expanded_bash_card_renders_git_workspace_impact() {
 
     assert_eq!(
         rendered[0],
-        "⏺ Bash(git checkout -b feature-x && touch new.rs)"
+        platform_tool_line("Bash(git checkout -b feature-x && touch new.rs)")
     );
     assert_eq!(rendered[1], "  └ Switched to a new branch 'feature-x'");
     assert!(
@@ -462,7 +465,7 @@ fn failed_bash_card_keeps_expand_hint_on_last_tree_child() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Bash(bad command)");
+    assert_eq!(rendered[0], platform_tool_line("Bash(bad command)"));
     assert_eq!(
         rendered[1],
         "  │ tool execution failed: command `bad command` exited with 2"
@@ -508,7 +511,7 @@ fn failed_bash_card_dedupes_single_line_permission_denial() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Bash(echo hello)");
+    assert_eq!(rendered[0], platform_tool_line("Bash(echo hello)"));
     assert_eq!(
         rendered
             .iter()
@@ -597,7 +600,7 @@ fn expanded_active_bash_card_uses_running_state_without_detail_fields() {
     })
     .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Bash(ls -la)");
+    assert_eq!(rendered[0], platform_tool_line("Bash(ls -la)"));
     assert!(rendered[1].contains("Running"), "{rendered:#?}");
     assert!(
         !rendered.iter().any(|line| line.contains("Description:")),
@@ -644,7 +647,7 @@ fn completed_read_card_uses_line_count_without_duplicate_path_details() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Read(README.md)");
+    assert_eq!(rendered[0], platform_tool_line("Read(README.md)"));
     assert_eq!(rendered[1], "  └ Read 3 lines");
     assert!(
         !rendered.iter().any(|line| line.contains("Read /Users/")),
@@ -703,7 +706,7 @@ fn completed_read_card_uses_metadata_for_empty_output_line_count() {
 
     assert_eq!(
         rendered[0],
-        "⏺ Read(/tmp/orbcode-line-offset-ui/no-final-newline.txt)"
+        platform_tool_line("Read(/tmp/orbcode-line-offset-ui/no-final-newline.txt)")
     );
     assert_eq!(rendered[1], "  └ Read 0 lines");
 }
@@ -752,7 +755,7 @@ fn expanded_completed_read_card_renders_progress_in_body_tree() {
         &cwd,
     ));
 
-    assert_eq!(rendered[0], "⏺ Read(mcp/src/lib.rs)");
+    assert_eq!(rendered[0], platform_tool_line("Read(mcp/src/lib.rs)"));
     assert_eq!(rendered[1], "  └ Read 3 lines");
     assert_eq!(rendered[2], "    PreToolUse hook completed in 112 ms...");
     assert_eq!(rendered.len(), 3, "{rendered:#?}");
@@ -803,7 +806,10 @@ fn expanded_failed_read_card_renders_details_and_progress_in_body_tree() {
         &cwd,
     ));
 
-    assert_eq!(rendered[0], "⏺ Read(orbcode/tui/src/lib.rs)");
+    assert_eq!(
+        rendered[0],
+        platform_tool_line("Read(orbcode/tui/src/lib.rs)")
+    );
     assert!(
         rendered[1].starts_with("  │ tool execution failed: File content"),
         "{rendered:#?}"
@@ -850,7 +856,7 @@ fn active_read_card_uses_reading_state_without_path_detail_fields() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(rendered[0], "⏺ Read(tui/src/lib.rs)");
+    assert_eq!(rendered[0], platform_tool_line("Read(tui/src/lib.rs)"));
     assert_eq!(rendered[1], "  └ Reading…");
     assert_eq!(rendered.len(), 2, "{rendered:#?}");
 }
@@ -1681,7 +1687,10 @@ fn collapsed_edit_card_uses_metadata_diff_context_and_line_numbers() {
     let (card, _) = build_tool_cell(&messages, 0, &cwd).unwrap();
     let rendered = plain_text_lines(&render_tool_cell_lines(&card, false, None, 100, &cwd));
 
-    assert_eq!(rendered[0], "⏺ Update(plans/rust-refactor-plan.md)");
+    assert_eq!(
+        rendered[0],
+        platform_tool_line("Update(plans/rust-refactor-plan.md)")
+    );
     assert!(
         rendered
             .iter()
@@ -1734,7 +1743,7 @@ fn expanded_edit_card_shows_diff_preview() {
     let (card, _) = build_tool_cell(&messages, 0, &cwd).unwrap();
     let rendered = plain_text_lines(&render_tool_cell_lines(&card, true, None, 90, &cwd));
 
-    assert_eq!(rendered[0], "⏺ Update(src/lib.rs)");
+    assert_eq!(rendered[0], platform_tool_line("Update(src/lib.rs)"));
     assert!(
         rendered.iter().any(|line| line.contains("1 -old line 1")),
         "expanded diff should show numbered removed lines: {rendered:?}"
