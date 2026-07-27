@@ -13,6 +13,7 @@
 mod error;
 #[cfg(feature = "in-process")]
 mod in_process;
+#[cfg(unix)]
 mod ndjson_transport;
 mod transport;
 mod websocket_transport;
@@ -20,6 +21,7 @@ mod websocket_transport;
 pub use error::ClientError;
 #[cfg(feature = "in-process")]
 pub use in_process::InProcessTransport;
+#[cfg(unix)]
 pub use ndjson_transport::NdjsonTransport;
 pub use transport::ClientTransport;
 pub use websocket_transport::WebSocketTransport;
@@ -131,7 +133,16 @@ impl AppClient {
         path: &std::path::Path,
         auth_token: &str,
     ) -> Result<Self, ClientError> {
+        #[cfg(not(unix))]
+        {
+            let _ = (path, auth_token);
+            return Err(ClientError::Transport(
+                "Unix socket transport is not supported on this platform".into(),
+            ));
+        }
+        #[cfg(unix)]
         let transport = NdjsonTransport::connect(path, auth_token).await?;
+        #[cfg(unix)]
         Self::from_transport(Box::new(transport)).await
     }
 
