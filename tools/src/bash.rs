@@ -1075,7 +1075,7 @@ fn shell_command_args(command: &str) -> Vec<OsString> {
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn shell_program() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string())
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
 #[cfg(target_os = "windows")]
