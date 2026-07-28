@@ -139,7 +139,7 @@ pub(super) use crate::tool_cell::live_state::{
     LIVE_TOOL_PROGRESS_MESSAGE_LIMIT, LiveToolActivity, LiveToolCells,
 };
 pub(super) use crate::tool_cell::render::{
-    render_live_tool_activity_lines, render_tool_cell_lines,
+    black_circle_glyph, render_live_tool_activity_lines, render_tool_cell_lines,
 };
 pub(super) use crate::tool_cell::summary::{
     BASH_EXPANDED_OUTPUT_DETAIL_LIMIT, format_tool_activity_title, format_tool_result_summary,

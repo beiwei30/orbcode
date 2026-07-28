@@ -576,7 +576,7 @@ async fn grep_falls_back_when_ripgrep_exits_nonzero() {
 
 #[tokio::test]
 async fn glob_records_ripgrep_metadata_for_results() {
-    let _engine = SearchEngineLock::ripgrep();
+    let _engine = SearchEngineLock::simulate_rg_success("lib.rs\n");
     let registry = ToolRegistry::foundation();
     let context = test_context("glob-metadata").await;
     std::fs::create_dir_all(context.cwd.join("src")).expect("create src");

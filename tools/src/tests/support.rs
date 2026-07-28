@@ -384,6 +384,19 @@ impl<'a> SearchEngineLock<'a> {
         }
     }
 
+    pub(super) fn simulate_rg_success(stdout: &'static str) -> SearchEngineLock<'static> {
+        let guard = Self::acquire();
+        crate::grep_tool::set_force_fallback_for_tests(false);
+        crate::grep_tool::set_simulated_ripgrep_for_tests(Some(
+            crate::grep_tool::SimulatedRipgrep::Success(stdout),
+        ));
+        SearchEngineLock {
+            _guard: guard,
+            fallback: false,
+            simulated: true,
+        }
+    }
+
     pub(super) fn simulate_rg_exit(code: i32) -> SearchEngineLock<'static> {
         let guard = Self::acquire();
         crate::grep_tool::set_force_fallback_for_tests(false);

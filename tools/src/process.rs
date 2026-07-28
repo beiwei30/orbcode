@@ -87,6 +87,7 @@ pub(crate) async fn terminate_child_process(
 async fn terminate_process_group(pid: u32) {
     let _ = Command::new("kill")
         .arg("-TERM")
+        .arg("--")
         .arg(format!("-{pid}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())

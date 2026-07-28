@@ -39,14 +39,15 @@ pub(crate) fn set_force_fallback_for_tests(force: bool) {
     FORCE_FALLBACK_TEST_FLAG.store(force, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Deterministically simulate a ripgrep run outcome in tests so the fallback
-/// triggers (timeout, non-1 exit code) can be exercised without depending on a
-/// real `rg` binary or wall-clock timing. While a simulation is active the probe
-/// reports ripgrep as available so the rg code path is taken, and
+/// Deterministically simulate ripgrep outcomes in tests without depending on a
+/// real `rg` binary or wall-clock timing. This covers the success path and
+/// fallback triggers (timeout, non-1 exit code). While a simulation is active
+/// the probe reports ripgrep as available so the rg code path is taken, and
 /// [`run_ripgrep`] returns the synthetic outcome instead of spawning `rg`.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SimulatedRipgrep {
+    Success(&'static str),
     Timeout,
     Exit(i32),
 }
@@ -185,6 +186,13 @@ pub(crate) async fn run_ripgrep(
     #[cfg(test)]
     if let Some(sim) = simulated_ripgrep() {
         return Ok(match sim {
+            SimulatedRipgrep::Success(stdout) => RipgrepRunOutcome {
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                eagain_retried: false,
+                timed_out: false,
+            },
             SimulatedRipgrep::Timeout => RipgrepRunOutcome {
                 stdout: String::new(),
                 stderr: format!(

@@ -63,8 +63,8 @@ impl InProcessTransport {
         // Two-tier Processor -> Router channels:
         // - Lossless (unbounded): responses, server-requests, terminal notifications
         // - Best-effort (bounded): deltas, progress, non-terminal notifications
-        let (lossless_tx, mut lossless_rx) = mpsc::unbounded_channel::<ServerMessage>();
-        let (best_effort_tx, mut best_effort_rx) =
+        let (lossless_tx, lossless_rx) = mpsc::unbounded_channel::<ServerMessage>();
+        let (best_effort_tx, best_effort_rx) =
             mpsc::channel::<ServerMessage>(CHANNEL_SINK_CAPACITY);
 
         // Pending request map.
@@ -99,20 +99,13 @@ impl InProcessTransport {
             let pending = Arc::clone(&pending);
             let notif_tx = notification_tx.clone();
             let srv_req_tx = server_request_tx.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        msg = lossless_rx.recv() => {
-                            let Some(msg) = msg else { break };
-                            route_message(msg, &pending, &notif_tx, &srv_req_tx, true).await;
-                        }
-                        msg = best_effort_rx.recv() => {
-                            let Some(msg) = msg else { break };
-                            route_message(msg, &pending, &notif_tx, &srv_req_tx, false).await;
-                        }
-                    }
-                }
-            })
+            tokio::spawn(route_messages(
+                lossless_rx,
+                best_effort_rx,
+                pending,
+                notif_tx,
+                srv_req_tx,
+            ))
         };
 
         Self {
@@ -220,6 +213,36 @@ impl ClientTransport for InProcessTransport {
     }
 }
 
+async fn route_messages(
+    mut lossless_rx: mpsc::UnboundedReceiver<ServerMessage>,
+    mut best_effort_rx: mpsc::Receiver<ServerMessage>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<ServerResponseEnvelope>>>>,
+    notif_tx: mpsc::Sender<ServerNotificationEnvelope>,
+    srv_req_tx: mpsc::Sender<ServerRequestEnvelope>,
+) {
+    let mut lossless_open = true;
+    let mut best_effort_open = true;
+    while lossless_open || best_effort_open {
+        tokio::select! {
+            biased;
+            msg = best_effort_rx.recv(), if best_effort_open => {
+                if let Some(msg) = msg {
+                    route_message(msg, &pending, &notif_tx, &srv_req_tx, false).await;
+                } else {
+                    best_effort_open = false;
+                }
+            }
+            msg = lossless_rx.recv(), if lossless_open => {
+                if let Some(msg) = msg {
+                    route_message(msg, &pending, &notif_tx, &srv_req_tx, true).await;
+                } else {
+                    lossless_open = false;
+                }
+            }
+        }
+    }
+}
+
 /// Route a single server message to the appropriate consumer.
 /// When `lossless` is true, notifications use `.send().await` for guaranteed
 /// delivery; otherwise they use `try_send` and may be dropped.
@@ -287,6 +310,33 @@ mod tests {
                 }
             }),
         })
+    }
+
+    #[tokio::test]
+    async fn queued_delta_is_routed_before_terminal_notification() {
+        for _ in 0..128 {
+            let pending = Arc::new(Mutex::new(HashMap::new()));
+            let (lossless_tx, lossless_rx) = mpsc::unbounded_channel();
+            let (best_effort_tx, best_effort_rx) = mpsc::channel(1);
+            let (notif_tx, mut notif_rx) = mpsc::channel(2);
+            let (srv_req_tx, _srv_req_rx) = mpsc::channel(1);
+
+            best_effort_tx
+                .try_send(make_delta_notification(0))
+                .expect("queue delta");
+            lossless_tx
+                .send(make_terminal_notification())
+                .expect("queue terminal");
+            drop(best_effort_tx);
+            drop(lossless_tx);
+
+            route_messages(lossless_rx, best_effort_rx, pending, notif_tx, srv_req_tx).await;
+
+            let first = notif_rx.recv().await.expect("delta notification");
+            let second = notif_rx.recv().await.expect("terminal notification");
+            assert_eq!(first.params["event"]["event"], "assistant_delta");
+            assert_eq!(second.params["event"]["event"], "turn_finished");
+        }
     }
 
     /// Regression test: when the notification fan-out queue is full,
