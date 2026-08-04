@@ -37,8 +37,8 @@ pub use orbcode_config::{
     SandboxLocalSettings, SandboxSettingsUpdate,
 };
 pub use orbcode_core::{
-    CompactDecision, CompactSessionResult, ContextDiagnosticsReport, ContextTokenSource,
-    ContextUsageOverview, CostOverview, PermissionContext, PermissionDecision,
+    BillingBasis, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
+    ContextTokenSource, ContextUsageOverview, CostOverview, PermissionContext, PermissionDecision,
     ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, UsageOverview, WorkflowCommand,
     WorkflowSource, format_cost,
 };

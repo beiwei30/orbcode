@@ -351,7 +351,12 @@ fn anthropic_model_capabilities(canonical: &str) -> (u32, u32, u32, bool) {
 }
 
 fn openai_model_capabilities(canonical: &str) -> (u32, u32, u32, bool) {
-    if canonical.contains("o3") || canonical.contains("o4") {
+    if canonical.contains("gpt-5-6-sol") || canonical.contains("gpt-5.6-sol") {
+        // ChatGPT/Codex subscription route metadata pinned from the local
+        // official Codex model catalog. The public API may expose a larger
+        // context; Orbcode must honor the contract of the endpoint it uses.
+        (272_000, 128_000, 128_000, true)
+    } else if canonical.contains("o3") || canonical.contains("o4") {
         (200_000, 100_000, 100_000, false)
     } else if canonical.contains("gpt-4")
         && !canonical.contains("gpt-4o")
@@ -371,7 +376,9 @@ fn supports_vision_for_model(canonical: &str, provider: ProviderId) -> bool {
         ProviderId::Gemini => canonical.contains("claude") || canonical.contains("gemini"),
         ProviderId::Grok => canonical.contains("claude") || canonical.contains("grok"),
         ProviderId::OpenAi => {
-            canonical.contains("gpt-4o")
+            canonical.contains("gpt-5-6-sol")
+                || canonical.contains("gpt-5.6-sol")
+                || canonical.contains("gpt-4o")
                 || canonical.contains("gpt-4-turbo")
                 || canonical.contains("gpt-4-1")
                 || canonical.contains("o3")
@@ -807,6 +814,13 @@ mod tests {
 
     #[test]
     fn model_capabilities_openai_known_models() {
+        let sol = model_capabilities("gpt-5.6-sol", ProviderId::OpenAi);
+        assert_eq!(sol.context_window, 272_000);
+        assert_eq!(sol.max_output_tokens, 128_000);
+        assert_eq!(sol.max_output_tokens_upper_limit, 128_000);
+        assert!(sol.supports_thinking);
+        assert!(sol.supports_vision);
+
         let o3 = model_capabilities("o3", ProviderId::OpenAi);
         assert_eq!(o3.context_window, 200_000);
         assert_eq!(o3.max_output_tokens, 100_000);

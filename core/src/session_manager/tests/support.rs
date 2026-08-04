@@ -322,6 +322,8 @@ async fn build_test_session_manager() -> SessionManager {
         .await
         .expect("create mcp registry");
     SessionManager::new(config, tools, mcp)
+        .await
+        .expect("create session manager")
 }
 
 pub(super) async fn test_manager_with_overrides(

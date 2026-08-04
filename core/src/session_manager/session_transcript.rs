@@ -222,6 +222,8 @@ impl SessionManager {
         session_id: &str,
         message: TranscriptMessage,
     ) -> Result<(), CoreError> {
+        let message =
+            self.with_message_cost_attribution(message, self.effective_config().default_provider);
         // Serialize the read-parent + write per session so overlapping turn
         // drivers cannot both observe the same last message and fork the
         // `parent_uuid` chain (e.g. an interrupted turn still draining while the

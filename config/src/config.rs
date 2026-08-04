@@ -258,7 +258,11 @@ impl AppConfig {
         tokio::fs::create_dir_all(&current_project_dir).await?;
         tokio::fs::create_dir_all(&projects_dir).await?;
 
-        let default_provider = resolve_default_provider(overrides.default_provider, &settings);
+        let default_provider = resolve_default_provider(
+            overrides.default_provider,
+            &settings,
+            &overrides.env_overrides,
+        );
 
         let fallback_provider = overrides
             .fallback_provider
@@ -610,21 +614,18 @@ impl AppConfig {
             .filter(|value| !value.is_empty())
     }
 
-    pub fn provider_proxy_url(&self) -> Option<String> {
-        for key in [
-            "CLAUDE_CODE_PROXY",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "HTTP_PROXY",
-            "http_proxy",
-        ] {
-            if let Some(value) = self.resolve_env(key)
-                && !value.trim().is_empty()
-            {
-                return Some(value.trim().to_string());
+    pub fn outbound_proxy_config(&self) -> crate::OutboundProxyConfig {
+        crate::OutboundProxyConfig::from_sources(&self.settings.env, |key| {
+            match self.env_overrides.get(key) {
+                Some(value) if value.trim().is_empty() => None,
+                Some(value) => Some(value.clone()),
+                None => env::var(key).ok(),
             }
-        }
-        None
+        })
+    }
+
+    pub fn outbound_proxy_route(&self, request_url: &str) -> crate::OutboundProxyRoute {
+        self.outbound_proxy_config().resolve(request_url)
     }
 
     pub fn api_timeout(&self) -> Option<std::time::Duration> {
@@ -786,6 +787,10 @@ impl AppConfig {
             _ => self.resolve_env("ANTHROPIC_MODEL"),
         };
         provider_env_model.or_else(|| self.settings.model.clone())
+    }
+
+    pub fn provider_model_is_explicit(&self) -> bool {
+        self.provider_model_setting().is_some()
     }
 
     pub fn resolve_model_setting(&self, provider: ProviderId, setting: Option<&str>) -> String {

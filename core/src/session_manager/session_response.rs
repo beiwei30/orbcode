@@ -94,6 +94,10 @@ impl SessionManager {
                 .unwrap_or_else(|| "end_turn".to_string()),
         )
         .with_usage(tool_round_response.response.usage.clone());
+        let assistant_message = self.with_message_cost_attribution(
+            assistant_message,
+            tool_round_response.response.provider,
+        );
         if !has_tool_use && !assistant_message_has_visible_content(&assistant_message) {
             if self
                 .last_message_is_successful_workflow_tool_result(session_id)

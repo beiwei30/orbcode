@@ -56,31 +56,49 @@ pub fn transcript_entries(
             entries.push(entry);
             entries
         }
-        MessageRole::Assistant => vec![json!({
-            "parentUuid": parent_uuid,
-            "isSidechain": false,
-            "message": {
-                "id": format!("orbcode-{}", message.id),
-                "type": "message",
-                "role": "assistant",
-                "content": serialize_assistant_content(message),
-                "model": anthropic_model,
-                "stop_reason": message
-                    .stop_reason
-                    .clone()
-                    .unwrap_or_else(|| "end_turn".to_string()),
-                "stop_sequence": Value::Null,
-                "usage": message.usage,
-            },
-            "type": "assistant",
-            "uuid": message.id,
-            "timestamp": timestamp,
-            "userType": "external",
-            "entrypoint": TRANSCRIPT_ENTRYPOINT,
-            "cwd": cwd.display().to_string(),
-            "sessionId": session_id,
-            "version": TRANSCRIPT_VERSION,
-        })],
+        MessageRole::Assistant => {
+            let model = message
+                .cost_attribution
+                .as_ref()
+                .map_or(anthropic_model, |attribution| attribution.model.as_str());
+            let mut entry = json!({
+                "parentUuid": parent_uuid,
+                "isSidechain": false,
+                "message": {
+                    "id": format!("orbcode-{}", message.id),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": serialize_assistant_content(message),
+                    "model": model,
+                    "stop_reason": message
+                        .stop_reason
+                        .clone()
+                        .unwrap_or_else(|| "end_turn".to_string()),
+                    "stop_sequence": Value::Null,
+                    "usage": message.usage,
+                },
+                "type": "assistant",
+                "uuid": message.id,
+                "timestamp": timestamp,
+                "userType": "external",
+                "entrypoint": TRANSCRIPT_ENTRYPOINT,
+                "cwd": cwd.display().to_string(),
+                "sessionId": session_id,
+                "version": TRANSCRIPT_VERSION,
+            });
+            if let Some(attribution) = message.cost_attribution.as_ref() {
+                entry["provider"] = Value::String(attribution.provider.as_str().to_string());
+                entry["billingBasis"] = Value::String(
+                    if attribution.subscription {
+                        "subscription"
+                    } else {
+                        "api"
+                    }
+                    .to_string(),
+                );
+            }
+            vec![entry]
+        }
         MessageRole::System => vec![json!({
             "parentUuid": parent_uuid,
             "isSidechain": false,
@@ -269,6 +287,7 @@ mod tests {
             usage: None,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             is_synthetic: false,
+            cost_attribution: None,
         }
     }
 

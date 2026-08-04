@@ -12,7 +12,7 @@ impl OpenAiProvider {
     pub(super) fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
             id: ProviderId::OpenAi,
-            summary: "OpenAI-compatible streaming adapter for Chat Completions endpoints.",
+            summary: "OpenAI Chat Completions and ChatGPT/Codex Responses streaming adapter.",
         }
     }
 }
@@ -63,7 +63,9 @@ impl ModelProvider for OpenAiProvider {
 
 fn should_use_openai_stub(request: &ProviderRequest) -> bool {
     request.base_url.starts_with("stub://")
-        || (request.api_key.is_none() && !is_local_openai_base_url(&request.base_url))
+        || (request.api_key.is_none()
+            && request.auth_token.is_none()
+            && !is_local_openai_base_url(&request.base_url))
 }
 
 fn is_local_openai_base_url(base_url: &str) -> bool {

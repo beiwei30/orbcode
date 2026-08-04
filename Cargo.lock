@@ -1764,17 +1764,23 @@ dependencies = [
 name = "orbcode-config"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "chrono",
  "directories",
  "orbcode-protocol",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
  "tree-sitter",
  "tree-sitter-bash",
+ "url",
+ "uuid",
  "walkdir",
+ "wiremock",
 ]
 
 [[package]]

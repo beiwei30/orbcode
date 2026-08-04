@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
             input,
             session,
         } => commands::run_tool(&client, session, name, input.unwrap_or_default()).await?,
-        Command::Auth { command } => commands::run_auth(&client, command).await?,
+        Command::Auth { command } => commands::run_auth(app_server, &client, command).await?,
         Command::Mcp { command } => commands::run_mcp(app_server, &client, command).await?,
         Command::Doctor { command } => commands::run_doctor(&client, command).await?,
         Command::Advanced => commands::print_advanced_capabilities(&client).await?,

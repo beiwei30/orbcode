@@ -487,6 +487,7 @@ impl SessionManager {
             );
             let stream_result = execute_stream_with_retry_and_fallback(
                 config,
+                &self.auth,
                 request,
                 &mut stream_sink,
                 ProviderCancellationToken::from_flag(cancel_flag.clone()),
@@ -520,7 +521,8 @@ impl SessionManager {
                         TranscriptMessage::new(MessageRole::Assistant, response.content.clone())
                             .with_usage(response.usage.clone()),
                     )
-                };
+                }
+                .map(|message| self.with_message_cost_attribution(message, response.provider));
                 if let Some(message) = partial.clone() {
                     let _ = self.append_message(session_id, message).await;
                 } else if response.usage.total_tokens > 0 {
@@ -529,6 +531,8 @@ impl SessionManager {
                     let cost_message = TranscriptMessage::new(MessageRole::Assistant, "")
                         .with_usage(response.usage.clone())
                         .with_synthetic(true);
+                    let cost_message =
+                        self.with_message_cost_attribution(cost_message, response.provider);
                     self.accumulate_live_cost(session_id, &cost_message).await;
                 }
                 if self.active_turns.is_active(session_id, turn_id).await

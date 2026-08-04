@@ -1,8 +1,8 @@
-use orbcode_config::AppConfig;
+use orbcode_config::{AppConfig, AuthManager, OutboundProxyRoute};
 use orbcode_model_provider::{
-    AttemptDiscardDisposition, ProviderCancellationToken, ProviderCompletion, ProviderErrorKind,
-    ProviderRequest, ProviderStreamEvent, ProviderStreamSink, default_jitter_factor, provider_for,
-    retry_delay_ms_with_base,
+    AttemptDiscardDisposition, OpenAiWireMode, ProviderCancellationToken, ProviderCompletion,
+    ProviderErrorKind, ProviderRequest, ProviderStreamEvent, ProviderStreamSink,
+    default_jitter_factor, provider_for, retry_delay_ms_with_base,
 };
 use orbcode_protocol::{MessageRole, ProviderId, StreamErrorCategory, TranscriptBlock};
 
@@ -10,12 +10,14 @@ use crate::{CoreError, ProviderFailure, config_provider::AppConfigProviderReques
 
 pub async fn execute_stream_with_retry_and_fallback(
     config: &AppConfig,
+    auth: &AuthManager,
     request: ProviderRequest,
     sink: &mut dyn ProviderStreamSink,
     cancellation: ProviderCancellationToken,
 ) -> Result<ProviderCompletion, CoreError> {
     match try_provider_stream(
         config,
+        auth,
         config.default_provider,
         None,
         config.max_retries,
@@ -66,6 +68,7 @@ pub async fn execute_stream_with_retry_and_fallback(
                 }
                 return try_provider_stream(
                         config,
+                        auth,
                         fallback_provider,
                         Some(primary_error.provider),
                         config.max_retries,
@@ -168,6 +171,7 @@ struct ProviderAttemptFailure {
 
 async fn try_provider_stream(
     config: &AppConfig,
+    auth: &AuthManager,
     provider_id: ProviderId,
     fallback_from: Option<ProviderId>,
     max_retries: usize,
@@ -177,11 +181,27 @@ async fn try_provider_stream(
 ) -> Result<ProviderCompletion, ProviderAttemptFailure> {
     let provider = provider_for(provider_id);
     let mut attempts = 0;
+    let mut recovered_from_unauthorized = false;
 
     loop {
         attempts += 1;
         let mut provider_request = request.clone();
         config.configure_provider_request(provider_id, &mut provider_request);
+        if let Err(message) =
+            configure_chatgpt_request(config, auth, provider_id, &mut provider_request).await
+        {
+            return Err(ProviderAttemptFailure {
+                provider: provider_id,
+                kind: ProviderErrorKind::Fatal,
+                category: StreamErrorCategory::Auth,
+                attempts,
+                message,
+                suggestion: Some(
+                    "run `orbcode auth login --provider openai --method chatgpt` again".to_string(),
+                ),
+                started_content: false,
+            });
+        }
         if fallback_from.is_some() {
             strip_thinking_blocks_for_fallback(&mut provider_request);
         }
@@ -206,6 +226,50 @@ async fn try_provider_stream(
                 completion.provider = provider_id;
                 completion.fallback_from = fallback_from;
                 return Ok(completion);
+            }
+            Err(error)
+                if provider_id == ProviderId::OpenAi
+                    && provider_request.options.openai_wire_mode == OpenAiWireMode::Responses
+                    && error.status == Some(401)
+                    && !attempt_sink.started_content
+                    && !recovered_from_unauthorized =>
+            {
+                recovered_from_unauthorized = true;
+                match auth.refresh_chatgpt_oauth().await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return Err(ProviderAttemptFailure {
+                            provider: provider_id,
+                            kind: ProviderErrorKind::Fatal,
+                            category: StreamErrorCategory::Auth,
+                            attempts,
+                            message:
+                                "ChatGPT access token was rejected and the saved login disappeared"
+                                    .to_string(),
+                            suggestion: Some(
+                                "run `orbcode auth login --provider openai --method chatgpt` again"
+                                    .to_string(),
+                            ),
+                            started_content: false,
+                        });
+                    }
+                    Err(refresh_error) => {
+                        return Err(ProviderAttemptFailure {
+                            provider: provider_id,
+                            kind: ProviderErrorKind::Fatal,
+                            category: StreamErrorCategory::Auth,
+                            attempts,
+                            message: format!(
+                                "ChatGPT access token was rejected and refresh failed: {refresh_error}"
+                            ),
+                            suggestion: Some(
+                                "run `orbcode auth login --provider openai --method chatgpt` again"
+                                    .to_string(),
+                            ),
+                            started_content: false,
+                        });
+                    }
+                }
             }
             Err(error)
                 if error.kind == ProviderErrorKind::Retryable
@@ -241,18 +305,91 @@ async fn try_provider_stream(
                 }
             }
             Err(error) => {
+                let suggestion =
+                    if provider_request.options.openai_wire_mode == OpenAiWireMode::Responses {
+                        chatgpt_error_suggestion(error.status, &error.message).or(error.suggestion)
+                    } else {
+                        error.suggestion
+                    };
                 return Err(ProviderAttemptFailure {
                     provider: provider_id,
                     kind: error.kind,
                     category: error.category,
                     attempts,
                     message: error.message,
-                    suggestion: error.suggestion,
+                    suggestion,
                     started_content: attempt_sink.started_content,
                 });
             }
         }
     }
+}
+
+fn chatgpt_error_suggestion(status: Option<u16>, message: &str) -> Option<String> {
+    let normalized = message.to_ascii_lowercase();
+    if status == Some(401) {
+        return Some(
+            "run `orbcode auth login --provider openai --method chatgpt` again".to_string(),
+        );
+    }
+    if status == Some(403) {
+        return Some(
+            "verify that this ChatGPT account and workspace include Codex access, then sign in again"
+                .to_string(),
+        );
+    }
+    if normalized.contains("insufficient_quota") || normalized.contains("usage_not_included") {
+        return Some(
+            "this ChatGPT plan does not currently include the requested Codex usage or model; check plan limits or choose an available model"
+                .to_string(),
+        );
+    }
+    if status == Some(429) {
+        return Some(
+            "the ChatGPT subscription usage limit was reached; wait for its reset window or choose another provider"
+                .to_string(),
+        );
+    }
+    None
+}
+
+async fn configure_chatgpt_request(
+    config: &AppConfig,
+    auth: &AuthManager,
+    provider: ProviderId,
+    request: &mut ProviderRequest,
+) -> Result<(), String> {
+    if provider != ProviderId::OpenAi || request.api_key.is_some() {
+        return Ok(());
+    }
+    let credentials = auth
+        .resolve_chatgpt_oauth()
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(credentials) = credentials else {
+        return Ok(());
+    };
+    request.base_url = auth.chatgpt_codex_base_url().to_string();
+    if request.options.proxy_resolved_from_config {
+        match config.outbound_proxy_route(&request.base_url) {
+            OutboundProxyRoute::Direct => {
+                request.options.proxy = None;
+                request.options.proxy_no_proxy = None;
+            }
+            OutboundProxyRoute::Proxy { url, no_proxy } => {
+                request.options.proxy = Some(url);
+                request.options.proxy_no_proxy = no_proxy;
+            }
+        }
+    }
+    request.api_key = None;
+    request.auth_token = Some(credentials.access_token);
+    request.options.openai_wire_mode = OpenAiWireMode::Responses;
+    request.options.openai_account_id = credentials.account_id;
+    if !config.provider_model_is_explicit() {
+        request.model = "gpt-5.6-sol".to_string();
+    }
+    Ok(())
 }
 
 struct AttemptStreamSink<'a> {
@@ -322,7 +459,8 @@ impl ProviderStreamSink for AttemptStreamSink<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbcode_model_provider::ProviderRequest;
+    use orbcode_config::{AppConfigOverrides, sealed_provider_env_overrides};
+    use orbcode_model_provider::{OpenAiWireMode, ProviderRequest};
     use orbcode_protocol::{TranscriptMessage, TurnContext};
 
     fn make_request_with_thinking() -> ProviderRequest {
@@ -360,6 +498,59 @@ mod tests {
             effort: None,
             options: orbcode_model_provider::ProviderRequestOptions::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn chatgpt_credentials_select_responses_endpoint_and_subscription_default_model() {
+        let home = tempfile::tempdir().expect("home");
+        let cwd = tempfile::tempdir().expect("cwd");
+        std::fs::write(
+            home.path().join("auth.json"),
+            format!(
+                r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":"account-123","email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
+                chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
+            ),
+        )
+        .expect("auth store");
+        std::fs::write(
+            home.path().join("settings.json"),
+            r#"{"env":{"https_proxy":"http://settings-proxy.invalid:9000"}}"#,
+        )
+        .expect("settings");
+        let config = AppConfig::load(
+            cwd.path(),
+            AppConfigOverrides {
+                home_dir: Some(home.path().to_path_buf()),
+                default_provider: Some(ProviderId::OpenAi),
+                env_overrides: sealed_provider_env_overrides(),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("config");
+        let auth = AuthManager::new(home.path().to_path_buf());
+        let mut request = make_request_with_thinking();
+        request.api_key = None;
+        request.auth_token = None;
+        request.base_url = "http://plain-endpoint.invalid".to_string();
+        request.options.proxy_resolved_from_config = true;
+
+        configure_chatgpt_request(&config, &auth, ProviderId::OpenAi, &mut request)
+            .await
+            .expect("configure");
+
+        assert_eq!(request.model, "gpt-5.6-sol");
+        assert_eq!(request.base_url, orbcode_config::CHATGPT_CODEX_BASE_URL);
+        assert_eq!(request.auth_token.as_deref(), Some("access"));
+        assert_eq!(request.options.openai_wire_mode, OpenAiWireMode::Responses);
+        assert_eq!(
+            request.options.proxy.as_deref(),
+            Some("http://settings-proxy.invalid:9000")
+        );
+        assert_eq!(
+            request.options.openai_account_id.as_deref(),
+            Some("account-123")
+        );
     }
 
     #[test]
@@ -408,5 +599,24 @@ mod tests {
 
         assert_eq!(request.messages[1].role, MessageRole::User);
         assert_eq!(request.messages[1].content, "follow up");
+    }
+
+    #[test]
+    fn chatgpt_errors_have_subscription_specific_recovery_hints() {
+        assert!(
+            chatgpt_error_suggestion(Some(403), "forbidden")
+                .expect("403 hint")
+                .contains("workspace")
+        );
+        assert!(
+            chatgpt_error_suggestion(Some(429), "rate limited")
+                .expect("429 hint")
+                .contains("subscription usage limit")
+        );
+        assert!(
+            chatgpt_error_suggestion(Some(400), "usage_not_included")
+                .expect("entitlement hint")
+                .contains("plan")
+        );
     }
 }

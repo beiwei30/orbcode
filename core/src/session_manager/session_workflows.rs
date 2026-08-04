@@ -1699,6 +1699,8 @@ mod tests {
             .await
             .expect("load mcp");
         SessionManager::new(config, ToolRegistry::foundation(), mcp)
+            .await
+            .expect("create session manager")
     }
 
     fn parse_plan(name: &str, json: &str) -> WorkflowPlan {

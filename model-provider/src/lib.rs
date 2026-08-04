@@ -28,7 +28,8 @@ pub use http::{
     build_openai_http_request, build_provider_http_client, count_tokens_anthropic,
     count_tokens_anthropic_with_haiku_fallback, count_tokens_bedrock,
     count_tokens_via_haiku_fallback, extract_http_error_message, openai_chat_completions_url,
-    provider_transport_error, stream_anthropic_request, stream_openai_request,
+    openai_responses_url, provider_transport_error, stream_anthropic_request,
+    stream_openai_request,
 };
 pub use model::{AttemptDiscardDisposition, ModelProvider, ProviderStreamSink};
 pub use orbcode_protocol::StreamErrorCategory;
@@ -39,16 +40,17 @@ pub use rate_limit::{
 };
 pub use request::{
     build_anthropic_count_tokens_request_body, build_anthropic_request_body,
-    build_bedrock_count_tokens_request_body, build_openai_request_body, debug_request_summary,
-    debug_response_summary, provider_request_debug_snapshot, provider_visible_messages_value,
-    render_pre_user_instructions, strip_search_extra_tools_fields,
+    build_bedrock_count_tokens_request_body, build_openai_request_body,
+    build_openai_responses_request_body, debug_request_summary, debug_response_summary,
+    provider_request_debug_snapshot, provider_visible_messages_value, render_pre_user_instructions,
+    strip_search_extra_tools_fields,
 };
 pub use stream::{
-    AnthropicStreamReader, OpenAiStreamReader, decode_stream_line,
+    AnthropicStreamReader, OpenAiResponsesStreamReader, OpenAiStreamReader, decode_stream_line,
     provider_stream_event_from_sse_frame,
 };
 pub use types::{
-    ProviderCancellationToken, ProviderCompletion, ProviderContentBlockDelta,
+    OpenAiWireMode, ProviderCancellationToken, ProviderCompletion, ProviderContentBlockDelta,
     ProviderContentBlockStart, ProviderDescriptor, ProviderRequest, ProviderRequestDebugSnapshot,
     ProviderRequestOptions, ProviderResponse, ProviderStreamEvent,
 };

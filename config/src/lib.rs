@@ -8,10 +8,12 @@ mod keybindings;
 mod layers;
 mod memory;
 mod model_resolver;
+mod openai_oauth;
 mod output_styles;
 mod permission_rules;
 mod plugins;
 mod policy;
+mod proxy;
 mod runtime_state;
 mod settings_resolution;
 mod token_accounting;
@@ -25,8 +27,8 @@ pub use agents::{
     built_in_agent_definitions, load_agent_definitions, load_agent_definitions_with_warnings,
 };
 pub use auth::{
-    AuthManager, AuthMethod, AuthOverview, AuthStatusEntry, ClaudeAiOAuth, load_claude_ai_oauth,
-    parse_forced_login_method,
+    AuthManager, AuthMethod, AuthOverview, AuthStatusEntry, ClaudeAiOAuth, load_chatgpt_oauth,
+    load_claude_ai_oauth, parse_forced_login_method,
 };
 pub use claude_home::resolve_env_value_with;
 pub use claude_home::{
@@ -58,6 +60,10 @@ pub use model_resolver::{
     ModelCapabilities, ModelCapability, ModelFamily, ProviderModelResolution, canonical_model_name,
     model_capabilities,
 };
+pub use openai_oauth::{
+    CHATGPT_CODEX_BASE_URL, ChatGptBrowserLoginSession, ChatGptDeviceLoginSession,
+    ChatGptOAuthCredentials, OpenAiOAuthOptions,
+};
 pub use output_styles::{
     DEFAULT_OUTPUT_STYLE_NAME, OutputStyleDefinition, OutputStyleLoadOutcome,
     OutputStyleLoadWarning, OutputStyleSource, OutputStyleWarningKind, ResolvedOutputStyle,
@@ -81,6 +87,7 @@ pub use policy::{
     PolicyLockError, SettingsLayer, SettingsLayerError, SettingsLayers, SettingsSource,
     StrictPluginOnly,
 };
+pub use proxy::{OutboundProxyConfig, OutboundProxyRoute};
 pub use runtime_state::{RuntimeModelOverride, RuntimeSessionState};
 pub use token_accounting::{
     AUTOCOMPACT_BUFFER_TOKENS, COMPACT_MAX_OUTPUT_TOKENS, ERROR_THRESHOLD_BUFFER_TOKENS,

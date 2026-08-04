@@ -161,6 +161,7 @@ impl SessionManager {
             let stream_result = tokio::select! {
             response = execute_stream_with_retry_and_fallback(
                 &self.config,
+                &self.auth,
                 request,
                 &mut stream_sink,
                 ProviderCancellationToken::from_flag(cancel_flag.clone()),

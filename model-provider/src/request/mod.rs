@@ -1,5 +1,6 @@
 pub(crate) mod anthropic;
 mod openai;
+mod openai_responses;
 
 use orbcode_protocol::{MessageRole, ProviderId, TranscriptBlock, TranscriptMessage};
 use serde_json::Value;
@@ -11,6 +12,7 @@ pub use anthropic::{
     build_bedrock_count_tokens_request_body, strip_search_extra_tools_fields,
 };
 pub use openai::build_openai_request_body;
+pub use openai_responses::build_openai_responses_request_body;
 
 use anthropic::{anthropic_message, anthropic_messages, anthropic_user_context_message};
 use openai::openai_message;
@@ -28,7 +30,10 @@ pub fn provider_request_debug_snapshot(
     let previous_turn_messages = previous_turn_messages(request);
     let previous_turn = provider_visible_messages_value(provider, &previous_turn_messages);
     let body = match provider {
-        ProviderId::OpenAi => build_openai_request_body(request),
+        ProviderId::OpenAi => match request.options.openai_wire_mode {
+            crate::OpenAiWireMode::ChatCompletions => build_openai_request_body(request),
+            crate::OpenAiWireMode::Responses => build_openai_responses_request_body(request),
+        },
         ProviderId::Anthropic | ProviderId::Gemini | ProviderId::Grok => {
             build_anthropic_request_body(request)
         }

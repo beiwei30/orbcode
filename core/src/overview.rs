@@ -483,6 +483,7 @@ pub(crate) fn build_usage_overview(
     provider: ProviderId,
     context_window: u32,
     max_output_tokens: u32,
+    billing_basis: crate::BillingBasis,
 ) -> UsageOverview {
     let mut total_usage = TokenUsage::default();
     let mut assistant_message_count = 0;
@@ -495,7 +496,30 @@ pub(crate) fn build_usage_overview(
         }
         if let Some(usage) = message.usage.clone() {
             usage_message_count += 1;
-            cost_tracker.add_usage(api_model, &usage, context_window, max_output_tokens);
+            let (usage_model, usage_billing_basis) = message.cost_attribution.as_ref().map_or(
+                (api_model, billing_basis),
+                |attribution| {
+                    (
+                        attribution.model.as_str(),
+                        if attribution.subscription {
+                            crate::BillingBasis::Subscription
+                        } else {
+                            crate::BillingBasis::Api
+                        },
+                    )
+                },
+            );
+            match usage_billing_basis {
+                crate::BillingBasis::Subscription => cost_tracker.add_subscription_usage(
+                    usage_model,
+                    &usage,
+                    context_window,
+                    max_output_tokens,
+                ),
+                crate::BillingBasis::Api | crate::BillingBasis::Mixed => {
+                    cost_tracker.add_usage(usage_model, &usage, context_window, max_output_tokens);
+                }
+            }
             accumulate_token_usage(&mut total_usage, usage);
         }
     }
@@ -665,6 +689,7 @@ mod tests {
             ProviderId::Anthropic,
             200_000,
             16_384,
+            crate::BillingBasis::Api,
         );
 
         assert_eq!(overview.message_count, 4);
@@ -714,10 +739,42 @@ mod tests {
             ProviderId::OpenAi,
             128_000,
             4_096,
+            crate::BillingBasis::Api,
         );
 
         assert!(overview.cost.has_unknown_model_cost);
         assert!(overview.cost.total_cost_usd > 0.0);
+    }
+
+    #[test]
+    fn build_usage_overview_marks_subscription_as_not_api_priced() {
+        let usage = TokenUsage {
+            input_tokens: 1_000,
+            output_tokens: 500,
+            ..Default::default()
+        };
+        let session = session_with_messages(vec![assistant_message_with_usage(usage)]);
+
+        let overview = build_usage_overview(
+            session,
+            "gpt-5.6-sol".to_string(),
+            "gpt-5.6-sol",
+            ProviderId::OpenAi,
+            272_000,
+            128_000,
+            crate::BillingBasis::Subscription,
+        );
+
+        assert_eq!(overview.cost.total_cost_usd, 0.0);
+        assert!(!overview.cost.has_unknown_model_cost);
+        assert_eq!(
+            overview.cost.billing_basis,
+            crate::BillingBasis::Subscription
+        );
+        assert_eq!(
+            overview.cost.model_usage["gpt-5.6-sol"].billing_basis,
+            crate::BillingBasis::Subscription
+        );
     }
 
     #[test]
@@ -730,6 +787,7 @@ mod tests {
             ProviderId::Anthropic,
             200_000,
             16_384,
+            crate::BillingBasis::Api,
         );
 
         assert_eq!(overview.cost.total_cost_usd, 0.0);

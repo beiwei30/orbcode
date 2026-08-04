@@ -59,6 +59,8 @@ pub struct TranscriptRecord {
     pub request_id: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(rename = "billingBasis", default)]
+    pub billing_basis: Option<String>,
     #[serde(default)]
     pub message: Option<RecordMessage>,
 

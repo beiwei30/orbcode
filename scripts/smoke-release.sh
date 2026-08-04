@@ -98,7 +98,7 @@ fi
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
-isolated_env=(env -u ORBCODE_HOME -u CLAUDE_CODE_USE_OPENAI)
+isolated_env=(env -u ORBCODE_HOME -u PROVIDER_TYPE -u ORBCODE_PROVIDER -u CLAUDE_CODE_USE_OPENAI)
 
 echo "==> --help lists packaged CLI smoke commands"
 help_out="$("${binary}" --help)"
@@ -111,7 +111,7 @@ doctor_out="$(
     "${isolated_env[@]}" \
         CLAUDE_CONFIG_DIR="${scratch}/doctor-home" \
         ANTHROPIC_BASE_URL="stub://anthropic" \
-        ORBCODE_PROVIDER="anthropic" \
+        PROVIDER_TYPE="anthropic" \
         "${binary}" doctor 2>&1
 )" || {
     echo "ERROR: orbcode doctor exited non-zero" >&2
@@ -143,7 +143,7 @@ providers_out="$(
     "${isolated_env[@]}" \
         CLAUDE_CONFIG_DIR="${scratch}/providers-home" \
         ANTHROPIC_BASE_URL="stub://anthropic" \
-        ORBCODE_PROVIDER="anthropic" \
+        PROVIDER_TYPE="anthropic" \
         "${binary}" providers 2>&1
 )" || {
     echo "ERROR: orbcode providers exited non-zero" >&2
@@ -214,10 +214,10 @@ tui_out="${scratch}/tui.out"
 tui_err="${scratch}/tui.err"
 set +e
 (
-    unset ORBCODE_HOME CLAUDE_CODE_USE_OPENAI
+    unset ORBCODE_HOME PROVIDER_TYPE ORBCODE_PROVIDER CLAUDE_CODE_USE_OPENAI
     export CLAUDE_CONFIG_DIR="${scratch}/tui-home"
     export ANTHROPIC_BASE_URL="stub://anthropic"
-    export ORBCODE_PROVIDER="anthropic"
+    export PROVIDER_TYPE="anthropic"
     run_with_timeout 60 "${binary}" tui
 ) </dev/null >"${tui_out}" 2>"${tui_err}"
 tui_code=$?

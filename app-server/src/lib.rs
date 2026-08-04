@@ -33,12 +33,13 @@ pub use orbcode_app_server_protocol::{
 };
 pub use orbcode_config::{
     AgentDefinition, AgentLoadWarning, AgentSource, AgentWarningKind, AppConfigOverrides,
-    AuthMethod, AuthOverview, AuthStatusEntry, ContextWindowOptions, DiscoveredHook,
-    EditorModeSetting, HookDiscovery, HookDiscoveryWarning, MaxOutputTokenOptions, ModelOption,
-    OutputStyleOption, PermissionMode, PermissionRuleSettingKind, ResolvedKeybindings,
-    SandboxFilesystemLocalSettings, SandboxLocalSettings, SandboxNetworkLocalSettings,
-    SandboxSettingsUpdate, ThemeSetting, TokenWarningOptions, calculate_token_warning_state,
-    parse_tool_rule_list, sealed_provider_env_overrides,
+    AuthMethod, AuthOverview, AuthStatusEntry, ChatGptBrowserLoginSession,
+    ChatGptDeviceLoginSession, ContextWindowOptions, DiscoveredHook, EditorModeSetting,
+    HookDiscovery, HookDiscoveryWarning, MaxOutputTokenOptions, ModelOption, OutputStyleOption,
+    PermissionMode, PermissionRuleSettingKind, ResolvedKeybindings, SandboxFilesystemLocalSettings,
+    SandboxLocalSettings, SandboxNetworkLocalSettings, SandboxSettingsUpdate, ThemeSetting,
+    TokenWarningOptions, calculate_token_warning_state, parse_tool_rule_list,
+    sealed_provider_env_overrides,
 };
 use orbcode_config::{AppConfig, AuthManager, load_plugin_registry, plugin_mcp_config_sources};
 use orbcode_config::{
@@ -47,12 +48,12 @@ use orbcode_config::{
 };
 use orbcode_core::SessionManager;
 pub use orbcode_core::{
-    CompactDecision, CompactSessionResult, ContextCategoryBreakdown, ContextDiagnosticsReport,
-    ContextTokenSource, ContextUsageOverview, CoreError, CostOverview, CostSummary, ModelUsage,
-    PermissionContext, PermissionDecision, PermissionRule, ProviderDescriptor,
-    ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, UsageOverview, WorkflowCommand,
-    WorkflowSource, format_cost, mcp_permission_target, normalize_permission_rule_for_edit,
-    suggested_bash_permission_rules,
+    BillingBasis, CompactDecision, CompactSessionResult, ContextCategoryBreakdown,
+    ContextDiagnosticsReport, ContextTokenSource, ContextUsageOverview, CoreError, CostOverview,
+    CostSummary, ModelUsage, PermissionContext, PermissionDecision, PermissionRule,
+    ProviderDescriptor, ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview,
+    UsageOverview, WorkflowCommand, WorkflowSource, format_cost, mcp_permission_target,
+    normalize_permission_rule_for_edit, suggested_bash_permission_rules,
 };
 pub use orbcode_mcp::{
     McpAuth, McpDiagnosticStatus, McpOAuthBrowserLoginInput, McpOAuthDeviceLoginInput,
@@ -141,16 +142,17 @@ impl AppServer {
             mcp.retain_policy_allowed(|server_id| policy.mcp_server_allowed(server_id))
                 .await;
         }
-        let mut sessions = SessionManager::new(config, tools.clone(), mcp.clone());
-        sessions.refresh_agent_definitions().await;
-        sessions.refresh_output_styles().await;
-        let forced_login_method = sessions
-            .config()
+        let forced_login_method = config
             .forced_login_method()
             .and_then(orbcode_config::parse_forced_login_method);
-        let auth = AuthManager::new(sessions.config().home_dir.clone())
-            .with_env_overrides(sessions.config().env_overrides.clone())
+        let auth = AuthManager::new(config.home_dir.clone())
+            .with_env_overrides(config.env_overrides.clone())
+            .with_openai_proxy_config(config.outbound_proxy_config())
             .with_forced_login_method(forced_login_method);
+        let mut sessions =
+            SessionManager::new_with_auth(config, tools.clone(), mcp.clone(), auth.clone()).await?;
+        sessions.refresh_agent_definitions().await;
+        sessions.refresh_output_styles().await;
         let background = BackgroundManager::new(sessions.config().home_dir.clone());
         let _ = background_agent::reconcile_orphaned_agents(&sessions.config().home_dir).await;
         let read_state = Arc::new(orbcode_tools::FileReadState::with_persistence(

@@ -20,7 +20,7 @@ fn consecutive_bash_calls_propagate_cwd() {
         .current_dir(workspace.path())
         .env("CLAUDE_CONFIG_DIR", home.path())
         .env("ANTHROPIC_BASE_URL", "stub://anthropic")
-        .env("ORBCODE_PROVIDER", "anthropic")
+        .env("PROVIDER_TYPE", "anthropic")
         .env("ORBCODE_ALLOW_TOOLS", "true")
         .env_remove("ORBCODE_HOME")
         .env_remove("CLAUDE_CODE_USE_OPENAI")
