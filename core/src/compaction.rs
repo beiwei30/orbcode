@@ -8,7 +8,8 @@ use orbcode_protocol::{
 };
 
 use orbcode_model_provider::{
-    ProviderResponse, ProviderStreamAccumulator, ProviderStreamEvent, ProviderStreamSink,
+    AttemptDiscardDisposition, ProviderResponse, ProviderStreamAccumulator, ProviderStreamEvent,
+    ProviderStreamSink,
 };
 
 /// Visible text substituted for tool-result block content cleared by
@@ -89,9 +90,9 @@ impl ProviderStreamSink for CompactProviderStreamSink {
         provider: ProviderId,
         fallback_provider: ProviderId,
         _reason: &str,
-    ) -> Result<(), orbcode_model_provider::ProviderError> {
+    ) -> Result<AttemptDiscardDisposition, orbcode_model_provider::ProviderError> {
         self.accumulator = ProviderStreamAccumulator::new(fallback_provider, Some(provider));
-        Ok(())
+        Ok(AttemptDiscardDisposition::SafeToFallback)
     }
 }
 

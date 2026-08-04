@@ -500,7 +500,54 @@ pub(super) fn start_error_after_content_anthropic_server() -> (String, thread::J
     (format!("http://{address}"), handle)
 }
 
-pub(super) fn start_error_after_tool_use_anthropic_server() -> (String, thread::JoinHandle<()>) {
+pub(super) fn start_error_after_thinking_anthropic_server() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind thinking stream error server");
+    let address = listener
+        .local_addr()
+        .expect("thinking stream error server addr");
+
+    let handle = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("accept thinking stream error request");
+            let _ = stream.set_read_timeout(Some(StdDuration::from_millis(200)));
+            let request = read_test_http_request(&mut stream);
+            if is_anthropic_count_tokens_request(&request) {
+                write_anthropic_count_tokens_response(&mut stream);
+                continue;
+            }
+            let body = concat!(
+                "event: message_start\n",
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
+                "event: content_block_start\n",
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+                "event: content_block_delta\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"considering fallback\"}}\n\n",
+                "event: error\n",
+                "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server overloaded after thinking\"}}\n\n",
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write thinking stream error response");
+            let _ = stream.flush();
+            return;
+        }
+        panic!("thinking stream error server did not receive a streaming request");
+    });
+
+    (format!("http://{address}"), handle)
+}
+
+pub(super) fn start_error_after_tool_use_anthropic_server(
+    command: String,
+    marker_path: std::path::PathBuf,
+) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind tool stream error server");
     let address = listener
         .local_addr()
@@ -515,33 +562,114 @@ pub(super) fn start_error_after_tool_use_anthropic_server() -> (String, thread::
                 write_anthropic_count_tokens_response(&mut stream);
                 continue;
             }
-            let body = concat!(
-                "event: message_start\n",
-                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
-                "event: content_block_start\n",
-                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool-stream-error\",\"name\":\"bash\",\"input\":{}}}\n\n",
-                "event: content_block_delta\n",
-                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"printf should-not-commit\\\"}\"}}\n\n",
-                "event: content_block_stop\n",
-                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            let tool_input = serde_json::to_string(&serde_json::json!({
+                "command": command,
+            }))
+            .expect("serialize streamed tool input");
+            let input_delta = serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": tool_input,
+                },
+            });
+            let before_error = format!(
+                concat!(
+                    "event: message_start\n",
+                    "data: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":0}}}}}}\n\n",
+                    "event: content_block_start\n",
+                    "data: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"tool-stream-error\",\"name\":\"bash\",\"input\":{{}}}}}}\n\n",
+                    "event: content_block_delta\n",
+                    "data: {}\n\n",
+                    "event: content_block_stop\n",
+                    "data: {{\"type\":\"content_block_stop\",\"index\":0}}\n\n",
+                ),
+                input_delta,
+            );
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
+                )
+                .expect("write tool stream response headers");
+            stream
+                .write_all(before_error.as_bytes())
+                .expect("write streamed tool use");
+            stream.flush().expect("flush streamed tool use");
+
+            for _ in 0..300 {
+                if marker_path.exists() {
+                    break;
+                }
+                thread::sleep(StdDuration::from_millis(10));
+            }
+            assert!(
+                marker_path.exists(),
+                "streamed tool must produce its external marker before the provider fails"
+            );
+
+            let error = concat!(
+                "event: message_delta\n",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null},\"usage\":{\"output_tokens\":2}}\n\n",
                 "event: error\n",
                 "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server overloaded after tool use\"}}\n\n",
             );
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body,
-            );
             stream
-                .write_all(response.as_bytes())
-                .expect("write tool stream error response");
-            let _ = stream.flush();
+                .write_all(error.as_bytes())
+                .expect("write error after streamed tool side effect");
+            stream.flush().expect("flush streamed provider error");
             return;
         }
         panic!("tool stream error server did not receive a streaming request");
     });
 
     (format!("http://{address}"), handle)
+}
+
+pub(super) fn start_recording_openai_error_server() -> (
+    String,
+    Arc<AtomicUsize>,
+    std_mpsc::Sender<()>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fallback recorder");
+    listener
+        .set_nonblocking(true)
+        .expect("set fallback recorder nonblocking");
+    let address = listener.local_addr().expect("fallback recorder addr");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let server_requests = requests.clone();
+    let (shutdown_tx, shutdown_rx) = std_mpsc::channel();
+
+    let handle = thread::spawn(move || {
+        loop {
+            if shutdown_rx.try_recv().is_ok() {
+                return;
+            }
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(StdDuration::from_millis(200)));
+                    let _request = read_test_http_request(&mut stream);
+                    server_requests.fetch_add(1, Ordering::SeqCst);
+                    let body = r#"{"error":{"message":"fallback recorder contacted"}}"#;
+                    let response = format!(
+                        "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body,
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(StdDuration::from_millis(5));
+                }
+                Err(_) => return,
+            }
+        }
+    });
+
+    (format!("http://{address}"), requests, shutdown_tx, handle)
 }
 
 fn read_test_http_request(stream: &mut std::net::TcpStream) -> String {

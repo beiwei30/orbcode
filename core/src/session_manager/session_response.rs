@@ -1,5 +1,8 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use orbcode_protocol::{
     MessageRole, StreamEvent, ToolUseCompletionKind, TranscriptBlock, TranscriptMessage,
@@ -343,7 +346,8 @@ impl SessionManager {
                                     session_id,
                                     streamed_tool_executions.into_values(),
                                     tx,
-                                );
+                                )
+                                .await;
                                 return Err(error);
                             }
                         }
@@ -366,7 +370,8 @@ impl SessionManager {
                                     session_id,
                                     streamed_tool_executions.into_values(),
                                     tx,
-                                );
+                                )
+                                .await;
                                 return Err(error);
                             }
                         }
@@ -378,7 +383,8 @@ impl SessionManager {
                         session_id,
                         streamed_tool_executions.into_values(),
                         tx,
-                    );
+                    )
+                    .await;
                     if matches!(outcome, SequentialToolRoundOutcome::Cancelled { .. }) {
                         return Ok(outcome);
                     }
@@ -392,13 +398,14 @@ impl SessionManager {
             session_id,
             streamed_tool_executions.into_values(),
             tx,
-        );
+        )
+        .await;
         self.flush_tool_result_context_queue(session_id, tx).await?;
         self.flush_queued_user_commands(session_id, tx).await?;
         Ok(SequentialToolRoundOutcome::Continue)
     }
 
-    pub(super) fn interrupt_streamed_tool_executions<I>(
+    pub(super) async fn interrupt_streamed_tool_executions<I>(
         &self,
         session_id: &str,
         streamed_tool_executions: I,
@@ -407,10 +414,13 @@ impl SessionManager {
         I: IntoIterator<Item = StreamedToolUseExecution>,
     {
         for execution in streamed_tool_executions {
+            let tool_use_id = execution.tool_use_id.clone();
+            let tool_name = execution.tool_name.clone();
+            execution.interrupt().await;
             self.emit_tool_use_completed(
                 session_id,
-                &execution.tool_use_id,
-                &execution.tool_name,
+                &tool_use_id,
+                &tool_name,
                 ToolUseCompletionKind::Interrupted,
                 tx,
             );
@@ -461,15 +471,35 @@ impl SessionManager {
         let manager = self.clone();
         let session_id = session_id.to_string();
         let tx = tx.clone();
+        let execution_cancel_flag = Arc::new(AtomicBool::new(false));
+        let tool_cancel_flag = execution_cancel_flag.clone();
         let handle = tokio::spawn(async move {
-            ToolRuntime::new(&manager.tools, &manager)
-                .execute_streamed_tool_use(&session_id, ready_item, permissions, &tx, cancel_flag)
-                .await
+            let watched_turn_flag = cancel_flag.clone();
+            let watched_tool_flag = tool_cancel_flag.clone();
+            let cancellation_forwarder = tokio::spawn(async move {
+                while !watched_turn_flag.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                watched_tool_flag.store(true, Ordering::SeqCst);
+            });
+            let result = ToolRuntime::new(&manager.tools, &manager)
+                .execute_streamed_tool_use(
+                    &session_id,
+                    ready_item,
+                    permissions,
+                    &tx,
+                    tool_cancel_flag,
+                )
+                .await;
+            cancellation_forwarder.abort();
+            let _ = cancellation_forwarder.await;
+            result
         });
-        Some(StreamedToolUseExecution::new(
+        Some(StreamedToolUseExecution::new_cancellable(
             tool_use_id,
             tool_name,
             handle,
+            execution_cancel_flag,
         ))
     }
 

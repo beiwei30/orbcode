@@ -115,9 +115,9 @@ pub(crate) fn lookup(url: &str, context: Option<&crate::ToolContext>) -> Option<
     let key = scoped_key(url, context);
     let now = now_ms();
     let mut state = lock_cache();
-    let expired = match state.entries.get(&key) {
-        Some(entry) => now.saturating_sub(entry.inserted_at_ms) >= CACHE_TTL_MS,
-        None => return None,
+    let expired = {
+        let entry = state.entries.get(&key)?;
+        now.saturating_sub(entry.inserted_at_ms) >= CACHE_TTL_MS
     };
     if expired {
         state.entries.remove(&key);

@@ -18,6 +18,8 @@ mod tool_progress;
 mod tool_runtime;
 mod turn_loop;
 
+use std::path::PathBuf;
+
 pub use compaction::CompactSessionResult;
 pub use model_cost::{
     CostSummary, CostTracker, ModelCosts, ModelUsage, calculate_usd_cost, format_cost,
@@ -85,6 +87,15 @@ pub enum CoreError {
     ActiveTurn(String),
     #[error("no active turn for session: {0}")]
     NoActiveTurn(String),
+    #[error("workflow run already active in this process: {0}")]
+    ActiveWorkflow(String),
+    #[error("corrupt workflow journal {path} at line {line}: {source}")]
+    WorkflowJournalCorrupt {
+        path: PathBuf,
+        line: usize,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("{0}")]
     PermissionDenied(String),
     #[error("{0}")]

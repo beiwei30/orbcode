@@ -94,9 +94,11 @@ pub(crate) struct StreamedToolUseExecution {
     pub(crate) tool_use_id: String,
     pub(crate) tool_name: String,
     handle: Option<JoinHandle<Result<BufferedToolUseCompletion, CoreError>>>,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl StreamedToolUseExecution {
+    #[cfg(test)]
     pub(crate) fn new(
         tool_use_id: String,
         tool_name: String,
@@ -106,6 +108,21 @@ impl StreamedToolUseExecution {
             tool_use_id,
             tool_name,
             handle: Some(handle),
+            cancel_flag: None,
+        }
+    }
+
+    pub(crate) fn new_cancellable(
+        tool_use_id: String,
+        tool_name: String,
+        handle: JoinHandle<Result<BufferedToolUseCompletion, CoreError>>,
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            tool_use_id,
+            tool_name,
+            handle: Some(handle),
+            cancel_flag: Some(cancel_flag),
         }
     }
 
@@ -117,6 +134,20 @@ impl StreamedToolUseExecution {
         handle
             .await
             .map_err(|error| CoreError::Tool(format!("streamed tool execution failed: {error}")))?
+    }
+
+    pub(crate) async fn interrupt(mut self) {
+        let handle = self
+            .handle
+            .take()
+            .expect("streamed tool execution handle should be present");
+        if let Some(cancel_flag) = &self.cancel_flag {
+            cancel_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = handle.await;
+        } else {
+            handle.abort();
+            let _ = handle.await;
+        }
     }
 }
 

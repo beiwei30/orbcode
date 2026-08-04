@@ -2,8 +2,8 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use async_trait::async_trait;
 use orbcode_model_provider::{
-    ProviderContentBlockDelta, ProviderContentBlockStart, ProviderError, ProviderStreamEvent,
-    ProviderStreamSink,
+    AttemptDiscardDisposition, ProviderContentBlockDelta, ProviderContentBlockStart, ProviderError,
+    ProviderStreamEvent, ProviderStreamSink,
 };
 use orbcode_protocol::{ProviderId, StreamEvent, TranscriptBlock, TranscriptMessage};
 use orbcode_session_store::{agent_tool_use_progress_record, attach_agent_id};
@@ -165,7 +165,7 @@ impl ProviderStreamSink for SessionProviderStreamSink<'_> {
         provider: ProviderId,
         fallback_provider: ProviderId,
         reason: &str,
-    ) -> Result<(), orbcode_model_provider::ProviderError> {
+    ) -> Result<AttemptDiscardDisposition, orbcode_model_provider::ProviderError> {
         // Preserve partial usage from the discarded attempt so the budget
         // tracks actual provider spend even when the response is thrown away.
         let discarded_response = self.tool_round_stream.response_snapshot();
@@ -179,11 +179,14 @@ impl ProviderStreamSink for SessionProviderStreamSink<'_> {
         }
 
         let streamed_tool_executions = std::mem::take(&mut self.streamed_tool_executions);
-        self.manager.interrupt_streamed_tool_executions(
-            self.session_id,
-            streamed_tool_executions,
-            self.tx,
-        );
+        let disposition = if streamed_tool_executions.is_empty() {
+            AttemptDiscardDisposition::SafeToFallback
+        } else {
+            AttemptDiscardDisposition::ToolExecutionStarted
+        };
+        self.manager
+            .interrupt_streamed_tool_executions(self.session_id, streamed_tool_executions, self.tx)
+            .await;
         let _ = self.tx.send(StreamEvent::AssistantMessageDiscarded {
             session_id: self.session_id.to_string(),
             provider,
@@ -192,7 +195,7 @@ impl ProviderStreamSink for SessionProviderStreamSink<'_> {
         });
         self.tool_round_stream = ToolRoundStreamCollector::new(fallback_provider, Some(provider));
         self.assistant_started = false;
-        Ok(())
+        Ok(disposition)
     }
 }
 
@@ -316,8 +319,8 @@ impl ProviderStreamSink for AgentProviderStreamSink<'_> {
         provider: ProviderId,
         fallback_provider: ProviderId,
         _reason: &str,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<AttemptDiscardDisposition, ProviderError> {
         self.tool_round_stream = ToolRoundStreamCollector::new(fallback_provider, Some(provider));
-        Ok(())
+        Ok(AttemptDiscardDisposition::SafeToFallback)
     }
 }
