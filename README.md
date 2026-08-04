@@ -39,7 +39,9 @@ interchangeably against the same state with nothing to migrate.
 - [Configuration](#configuration)
   - [Home directory](#home-directory)
   - [Settings layering](#settings-layering)
+  - [`settings.json` recipes](#settingsjson-recipes)
   - [Environment variables](#environment-variables)
+  - [Outbound proxies](#outbound-proxies)
   - [Project files](#project-files)
 - [MCP servers](#mcp-servers)
 - [Compatibility with the TypeScript CLI](#compatibility-with-the-typescript-cli)
@@ -90,6 +92,24 @@ orbcode --continue                          # resume the latest session in the T
 orbcode doctor                              # environment health check
 ```
 
+OpenAI can also use a ChatGPT/Codex subscription without an OpenAI API key:
+
+```bash
+orbcode auth login --provider openai --method chatgpt
+# On a headless host:
+orbcode auth login --provider openai --method chatgpt --device-code
+
+orbcode auth status
+env -u OPENAI_API_KEY -u ORBCODE_OPENAI_API_KEY \
+  orbcode --provider openai prompt "reply OK"
+```
+
+This is a separate, experimental auth path backed by the ChatGPT Codex
+Responses endpoint. Credentials are stored in `<home>/auth.json`; Orb Code does
+not read or modify `~/.codex/auth.json`. An explicit OpenAI API key takes
+precedence over the saved ChatGPT login. Use
+`orbcode auth logout --provider openai` to remove stored OpenAI credentials.
+
 Tool execution is **off by default**: with no permission configuration, the
 model can talk but cannot run `Bash` or edit files. Turn it on per invocation
 with a permission preset or an explicit flag:
@@ -135,7 +155,8 @@ the throwaway-home and tracing patterns.
 | Feature | Maturity | Notes |
 | --- | --- | --- |
 | Anthropic | Stable | Default provider. Streaming, thinking + interleaved thinking, server-side token counting, API key or OAuth token. |
-| OpenAI-compatible | Beta | Chat Completions streaming with `effort`; works against any compatible endpoint via `OPENAI_BASE_URL`. No server-side token counting. |
+| OpenAI-compatible API key | Beta | Chat Completions streaming with `effort`; works against compatible endpoints via `OPENAI_BASE_URL`. No server-side token counting. |
+| ChatGPT/Codex subscription | Experimental | Browser PKCE or device-code login, token refresh, and Responses streaming with reasoning and function calls. Uses the fixed ChatGPT Codex backend; `OPENAI_BASE_URL` is intentionally ignored. Subscription tokens are counted but not assigned API-dollar prices. |
 | Gemini, Grok | Not implemented | Accepted as `--provider` values, but every request fails with a `unsupported_provider` error and a suggestion. Do not select them. |
 | Retry, fallback, rate-limit handling | Stable | `--max-retries`, `--fallback-provider`, normalized provider error categories, retry-after handling. |
 | Model resolution | Stable | Settings, `ANTHROPIC_MODEL`-style env vars, and family aliases (`opus`/`sonnet`/`haiku`). Note there is **no `--model` flag**; use `/model`, settings, or env. |
@@ -291,7 +312,7 @@ subcommand.
 | `context` | Current context snapshot (memory files, directories, git state). |
 | `tools` | Tool registry with permission and network requirements. |
 | `tool <TOOL_NAME> [INPUT] [--session ID]` | Invoke one tool directly with a JSON input. |
-| `auth status` / `auth login` / `auth logout` | Provider auth metadata. `login --provider <p> [--method api-key\|o-auth-device] [--token T] [--env-var VAR]`. |
+| `auth status` / `auth login` / `auth logout` | Provider auth metadata. OpenAI subscription login: `login --provider openai --method chatgpt [--device-code]`; token/env inputs remain available for `api-key` and `o-auth-device`. |
 | `mcp <...>` | MCP registry: `servers`, `capabilities`, `add`, `remove`, `diagnose`, `tools`, `call`, `resources`, `read`, `prompts`, `prompt`, `trust`, `distrust`, `untrust`, `auth {status,login,device-login,browser-login,logout}`. |
 | `doctor [cleanup-orphans]` | Health checks. `cleanup-orphans --dry-run \| --yes [--stale-running-days N]` prunes orphaned child-session metadata. |
 | `advanced` | Which advanced capability slices are implemented vs deferred. |
@@ -422,15 +443,122 @@ Lowest to highest precedence:
 `--settings` applies on top as a per-invocation overlay. Mutations to
 managed-locked keys are rejected rather than silently ignored.
 
+### `settings.json` recipes
+
+For a user-wide configuration, edit `<home>/settings.json` (normally
+`~/.orbcode/settings.json` after opting into an Orb Code home). Project and
+local settings use the same schema. Do not commit API keys in project settings;
+prefer the process environment, a secret manager, or the user-only settings
+file with owner-only permissions.
+
+#### ChatGPT/Codex subscription
+
+After signing in once, the recommended configuration needs only the provider:
+
+```json
+{
+  "env": {
+    "PROVIDER_TYPE": "openai"
+  }
+}
+```
+
+```bash
+orbcode auth login --provider openai --method chatgpt
+```
+
+No API key belongs in `settings.json`; OAuth credentials live in
+`<home>/auth.json`. When `model` is omitted, this subscription path currently
+defaults to `gpt-5.6-sol`. To deliberately pin it instead:
+
+```json
+{
+  "model": "gpt-5.6-sol",
+  "env": {
+    "PROVIDER_TYPE": "openai"
+  }
+}
+```
+
+#### OpenAI API key
+
+Keep the key outside a versioned settings file:
+
+```bash
+export OPENAI_API_KEY="your-key"
+```
+
+Then select OpenAI and, optionally, an OpenAI-compatible model/base URL:
+
+```json
+{
+  "model": "gpt-4o",
+  "env": {
+    "PROVIDER_TYPE": "openai"
+  }
+}
+```
+
+`ORBCODE_OPENAI_API_KEY` is also accepted. An explicit API key takes precedence
+over a stored ChatGPT subscription login.
+
+#### Anthropic
+
+Anthropic is the default, so `PROVIDER_TYPE` may be omitted. An explicit setup
+looks like this:
+
+```bash
+export ANTHROPIC_API_KEY="your-key"
+```
+
+```json
+{
+  "model": "sonnet",
+  "env": {
+    "PROVIDER_TYPE": "anthropic"
+  }
+}
+```
+
+`ORBCODE_ANTHROPIC_API_KEY` is also accepted. Model values may be family aliases
+such as `sonnet`, `opus`, or `haiku`, or a concrete provider model ID.
+
+#### Provider and proxy in one file
+
+An explicit proxy can be combined with either provider configuration:
+
+```json
+{
+  "env": {
+    "PROVIDER_TYPE": "openai",
+    "http_proxy": "http://127.0.0.1:7890",
+    "https_proxy": "http://127.0.0.1:7890",
+    "no_proxy": "localhost,127.0.0.1,::1"
+  }
+}
+```
+
+On macOS these proxy fields are optional: when no higher-priority proxy is
+configured, Orb Code discovers the static HTTP/HTTPS system proxy. See
+[Outbound proxies](#outbound-proxies) for the complete precedence and PAC
+limitation.
+
+`PROVIDER_TYPE` accepts `openai` and `anthropic`; when omitted or invalid, the
+default is `anthropic`. The `--provider` CLI option has highest precedence,
+followed by `PROVIDER_TYPE` (process environment before settings). The older
+process-only `ORBCODE_PROVIDER` and boolean `CLAUDE_CODE_USE_OPENAI=true` forms
+remain lower-priority compatibility fallbacks.
+
 ### Environment variables
 
-Orb Code's own variables use the `ORBCODE_` prefix. Every variable that also
-exists in the TypeScript CLI is accepted under **both** names, canonical first.
-The full table lives in `config/src/env_compat.rs`; the ones you are most
-likely to set:
+Provider selection uses the neutral `PROVIDER_TYPE` key; other Orb Code-specific
+variables use the `ORBCODE_` prefix. Every variable that also exists in the
+TypeScript CLI is accepted under **both** names, canonical first. The full table
+lives in `config/src/env_compat.rs`; the ones you are most likely to set:
 
 | Canonical | Also accepted | Purpose |
 | --- | --- | --- |
+| `PROVIDER_TYPE` | `ORBCODE_PROVIDER`; `CLAUDE_CODE_USE_OPENAI=true` | Default provider: `anthropic` or `openai`; defaults to `anthropic`. |
 | `ORBCODE_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | Anthropic API key. |
 | `ORBCODE_ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_AUTH_TOKEN` | Anthropic bearer token. |
 | `ORBCODE_OAUTH_TOKEN` | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token. |
@@ -441,7 +569,6 @@ likely to set:
 | `ORBCODE_MAX_CONTEXT_TOKENS` | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Context window cap. |
 | `ORBCODE_AUTO_COMPACT_WINDOW` | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Auto-compaction threshold. |
 | `ORBCODE_API_TIMEOUT_MS` / `ORBCODE_API_MAX_RETRIES` | `API_TIMEOUT_MS` / `API_MAX_RETRIES` | HTTP timeout and retry budget. |
-| `ORBCODE_PROXY` | `CLAUDE_CODE_PROXY`, `ANTHROPIC_PROXY_URL` | HTTP proxy. |
 | `ORBCODE_WEB_ALLOWED_DOMAINS` / `ORBCODE_WEB_BLOCKED_DOMAINS` | `CLAUDE_CODE_WEB_*` | Web tool domain filters. |
 
 Orb-Code-only switches without a TypeScript counterpart include
@@ -451,6 +578,46 @@ Orb-Code-only switches without a TypeScript counterpart include
 `CLAUDE_CONFIG_DIR` keeps its name outright. Diagnostic and test-only variables
 (TUI traces, doctor probes, golden regeneration) are listed under
 [Debugging and tracing](#debugging-and-tracing).
+
+For ChatGPT subscription auth, no API-key environment variable is required.
+If `ORBCODE_OPENAI_API_KEY` or `OPENAI_API_KEY` is set, that API-key path wins.
+Without an explicit OpenAI model, the subscription path defaults to
+`gpt-5.6-sol`; an explicit model setting is sent as-is and can still be rejected
+by the account's plan or model availability.
+
+### Outbound proxies
+
+The recommended explicit proxy configuration is the `env` block in the active
+`settings.json`:
+
+```json
+{
+  "env": {
+    "http_proxy": "http://127.0.0.1:7890",
+    "https_proxy": "http://127.0.0.1:7890",
+    "no_proxy": "localhost,127.0.0.1,::1"
+  }
+}
+```
+
+Provider requests and ChatGPT login/token refresh use the same destination-aware
+selection order:
+
+1. Merged `settings.json` `env.https_proxy` / `env.http_proxy` (lowercase only).
+2. Process `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` variables, including their
+   lowercase forms.
+3. Legacy process-only `ORBCODE_PROXY`, `CLAUDE_CODE_PROXY`, or
+   `ANTHROPIC_PROXY_URL` compatibility variables.
+4. Static HTTP/HTTPS proxy and exception rules reported by macOS System
+   Configuration.
+5. Direct connection.
+
+HTTPS destinations fall back to `http_proxy` when no HTTPS-specific proxy is
+set. Loopback destinations always connect directly; explicit proxies honor the
+matching `no_proxy`/`NO_PROXY`, and macOS proxy exceptions include wildcard and
+IP CIDR entries. PAC JavaScript is not evaluated; when macOS reports an active
+PAC configuration Orb Code connects directly unless a higher-priority explicit
+or process proxy is configured.
 
 ### Project files
 

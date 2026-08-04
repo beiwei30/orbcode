@@ -1,7 +1,10 @@
-use orbcode_config::AppConfig;
+use orbcode_config::{
+    AppConfig, CHATGPT_CODEX_BASE_URL, ChatGptOAuthCredentials, load_chatgpt_oauth,
+};
+use orbcode_core::apply_provider_request_options;
 use orbcode_model_provider::{
-    ProviderCancellationToken, ProviderError, ProviderRequest, ProviderRequestOptions,
-    StreamErrorCategory, probe_provider, suggestion_for,
+    OpenAiWireMode, ProviderCancellationToken, ProviderError, ProviderRequest,
+    ProviderRequestOptions, StreamErrorCategory, probe_provider, suggestion_for,
 };
 use orbcode_protocol::{ProviderId, TurnContext};
 
@@ -94,7 +97,7 @@ fn probe_enabled(config: &AppConfig) -> bool {
 }
 
 async fn probe_one(config: &AppConfig, provider: ProviderId) -> ProbeOutcome {
-    let request = build_probe_request(config, provider);
+    let request = build_probe_request(config, provider).await;
     if request.api_key.is_none() && request.auth_token.is_none() {
         return ProbeOutcome::MissingCredentials;
     }
@@ -106,9 +109,9 @@ async fn probe_one(config: &AppConfig, provider: ProviderId) -> ProbeOutcome {
 }
 
 /// Build a minimal probe request for `provider` from config. The credential
-/// precedence mirrors the session request path, but only reads config — it does
-/// not depend on `core`'s internal request builder.
-fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequest {
+/// precedence mirrors the session request path. Transport and provider options
+/// reuse core's shared config application after the final endpoint is selected.
+async fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequest {
     let mut request = ProviderRequest {
         session_id: "doctor-probe".to_string(),
         prompt: "ping".to_string(),
@@ -145,12 +148,36 @@ fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequ
             }
         }
         ProviderId::OpenAi => {
-            request.model = config.provider_model_resolution(provider).request_model;
-            request.base_url = config.openai_base_url();
             request.api_key = config.openai_api_key();
+            if request.api_key.is_some() {
+                request.model = config.provider_model_resolution(provider).request_model;
+                request.base_url = config.openai_base_url();
+            } else if let Some(credentials) = load_chatgpt_oauth(&config.home_dir)
+                .await
+                .filter(ChatGptOAuthCredentials::is_usable)
+            {
+                request.model = if config.provider_model_is_explicit() {
+                    config.provider_model_resolution(provider).request_model
+                } else {
+                    "gpt-5.6-sol".to_string()
+                };
+                request.base_url = CHATGPT_CODEX_BASE_URL.to_string();
+                request.auth_token = Some(credentials.access_token);
+                request.options.openai_account_id = credentials.account_id;
+                request.options.openai_wire_mode = OpenAiWireMode::Responses;
+                request.options.max_output_tokens = Some(16);
+            } else {
+                request.model = config.provider_model_resolution(provider).request_model;
+                request.base_url = config.openai_base_url();
+            }
         }
         _ => {}
     }
+
+    // Resolve transport options after the final endpoint is selected. This is
+    // especially important for ChatGPT subscription probes, whose fixed Codex
+    // URL can take a different proxy/no_proxy route than OPENAI_BASE_URL.
+    apply_provider_request_options(config, provider, &mut request);
 
     request
 }
@@ -295,8 +322,8 @@ mod tests {
         assert!(detail.contains("ANTHROPIC_API_KEY"));
     }
 
-    #[test]
-    fn build_probe_request_has_no_credentials_when_config_is_empty() {
+    #[tokio::test]
+    async fn build_probe_request_has_no_credentials_when_config_is_empty() {
         let mut config = config();
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
@@ -305,22 +332,88 @@ mod tests {
         ] {
             config.env_overrides.insert(key.to_string(), String::new());
         }
-        let request = build_probe_request(&config, ProviderId::Anthropic);
+        let request = build_probe_request(&config, ProviderId::Anthropic).await;
         assert!(request.api_key.is_none());
         assert!(request.auth_token.is_none());
         assert_eq!(request.options.max_output_tokens, Some(1));
     }
 
-    #[test]
-    fn build_probe_request_prefers_auth_token_for_anthropic() {
+    #[tokio::test]
+    async fn build_probe_request_prefers_auth_token_for_anthropic() {
         let mut config = config();
         config.env_overrides.insert(
             "ANTHROPIC_AUTH_TOKEN".to_string(),
             "external-token".to_string(),
         );
-        let request = build_probe_request(&config, ProviderId::Anthropic);
+        let request = build_probe_request(&config, ProviderId::Anthropic).await;
         assert_eq!(request.auth_token.as_deref(), Some("external-token"));
         assert!(request.api_key.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_probe_request_uses_chatgpt_responses_credentials() {
+        let home = tempfile::tempdir().expect("home");
+        std::fs::write(
+            home.path().join("auth.json"),
+            r#"{"entries":[{"provider":"openai","method":"chatgpt","source":{"kind":"chatgpt_oauth","credentials":{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":4102444800000,"account_id":"account-123","email":null,"plan_type":"plus"}},"updated_at":"2026-08-03T00:00:00Z"}]}"#,
+        )
+        .expect("auth store");
+        let mut config = config();
+        config.home_dir = home.path().to_path_buf();
+        config.default_provider = ProviderId::OpenAi;
+        config
+            .env_overrides
+            .insert("OPENAI_API_KEY".to_string(), String::new());
+        config.settings.env.extend([
+            (
+                "https_proxy".to_string(),
+                "http://proxy.invalid:9000".to_string(),
+            ),
+            ("no_proxy".to_string(), "internal.example".to_string()),
+            ("ORBCODE_API_TIMEOUT_MS".to_string(), "12345".to_string()),
+            ("ORBCODE_API_MAX_RETRIES".to_string(), "4".to_string()),
+            (
+                "ORBCODE_USER_AGENT".to_string(),
+                "orbcode/doctor-test".to_string(),
+            ),
+            (
+                "ORBCODE_CUSTOM_HEADERS".to_string(),
+                "X-Cc-Test: yes".to_string(),
+            ),
+        ]);
+
+        let request = build_probe_request(&config, ProviderId::OpenAi).await;
+        assert_eq!(request.model, "gpt-5.6-sol");
+        assert_eq!(request.base_url, CHATGPT_CODEX_BASE_URL);
+        assert_eq!(request.auth_token.as_deref(), Some("access"));
+        assert_eq!(request.options.max_output_tokens, Some(16));
+        assert_eq!(
+            request.options.openai_account_id.as_deref(),
+            Some("account-123")
+        );
+        assert_eq!(request.options.openai_wire_mode, OpenAiWireMode::Responses);
+        assert_eq!(
+            request.options.proxy.as_deref(),
+            Some("http://proxy.invalid:9000")
+        );
+        assert_eq!(
+            request.options.proxy_no_proxy.as_deref(),
+            Some("internal.example,localhost,127.0.0.1,::1")
+        );
+        assert!(request.options.proxy_resolved_from_config);
+        assert_eq!(
+            request.options.timeout,
+            Some(std::time::Duration::from_millis(12345))
+        );
+        assert_eq!(request.options.max_retries, Some(4));
+        assert_eq!(
+            request.options.user_agent.as_deref(),
+            Some("orbcode/doctor-test")
+        );
+        assert_eq!(
+            request.options.custom_headers,
+            vec![("X-Cc-Test".to_string(), "yes".to_string())]
+        );
     }
 
     #[tokio::test]

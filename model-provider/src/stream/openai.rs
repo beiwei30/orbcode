@@ -11,7 +11,7 @@ use crate::{
     ProviderStreamEvent, classify_provider_error, sanitize_provider_error_message,
 };
 
-use super::decode_stream_line;
+use super::decode_provider_stream_line;
 
 // --- OpenAI SSE typed structs ---
 
@@ -138,7 +138,7 @@ impl OpenAiStreamReader {
         let mut events = Vec::new();
         if !self.pending_bytes.is_empty() {
             let line_bytes = std::mem::take(&mut self.pending_bytes);
-            let line = decode_stream_line(&line_bytes)?;
+            let line = decode_provider_stream_line(&line_bytes, ProviderId::OpenAi, "OpenAI")?;
             match self.consume_line_events(&line) {
                 Ok(line_events) => events.extend(line_events),
                 Err(error) => {
@@ -171,7 +171,7 @@ impl OpenAiStreamReader {
                 .pending_bytes
                 .drain(..=newline_index)
                 .collect::<Vec<_>>();
-            let line = decode_stream_line(&line_bytes)?;
+            let line = decode_provider_stream_line(&line_bytes, ProviderId::OpenAi, "OpenAI")?;
             match self.consume_line_events(&line) {
                 Ok(line_events) => events.extend(line_events),
                 Err(error) => {

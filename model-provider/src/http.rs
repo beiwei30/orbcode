@@ -27,6 +27,7 @@ pub use anthropic::{
     count_tokens_anthropic_with_haiku_fallback, count_tokens_bedrock,
     count_tokens_via_haiku_fallback, stream_anthropic_request,
 };
+pub use openai::openai_responses_url;
 pub use openai::{build_openai_http_request, openai_chat_completions_url, stream_openai_request};
 
 /// Build the shared HTTP client. With no per-request transport options this
@@ -41,23 +42,39 @@ pub fn build_anthropic_http_client() -> Result<reqwest::Client, ProviderError> {
 pub fn build_provider_http_client(
     options: &ProviderRequestOptions,
 ) -> Result<reqwest::Client, ProviderError> {
-    let mut builder = reqwest::Client::builder().http1_only();
+    // Proxy selection is resolved by orbcode-config so provider and OAuth
+    // traffic share one precedence order. Disable reqwest's implicit process
+    // environment lookup before applying that resolved route.
+    let mut builder = reqwest::Client::builder().http1_only().no_proxy();
+    if options.openai_wire_mode == crate::OpenAiWireMode::Responses {
+        // Never forward a ChatGPT bearer token or account header to a redirect
+        // target. The Codex endpoint is fixed and should not redirect.
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
     if let Some(timeout) = options.timeout {
         builder = builder.timeout(timeout);
     }
     if let Some(proxy_url) = options.proxy.as_deref().filter(|value| !value.is_empty()) {
-        let proxy = reqwest::Proxy::all(proxy_url).map_err(|error| ProviderError {
+        let mut proxy = reqwest::Proxy::all(proxy_url).map_err(|_| ProviderError {
             kind: ProviderErrorKind::Fatal,
             category: StreamErrorCategory::Other,
             provider: None,
             status: None,
-            message: format!("invalid proxy URL `{proxy_url}`: {error}"),
+            message: "invalid configured proxy URL".to_string(),
             suggestion: Some(
-                "set HTTPS_PROXY/HTTP_PROXY (or the `proxy` setting) to a URL such as `http://host:port`."
+                "set settings.json env.https_proxy/env.http_proxy or HTTPS_PROXY/HTTP_PROXY to a URL such as `http://host:port`."
                     .to_string(),
             ),
             rate_limit: None,
         })?;
+        if let Some(no_proxy) = options
+            .proxy_no_proxy
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .and_then(reqwest::NoProxy::from_string)
+        {
+            proxy = proxy.no_proxy(Some(no_proxy));
+        }
         builder = builder.proxy(proxy);
     }
     if let Some(user_agent) = options

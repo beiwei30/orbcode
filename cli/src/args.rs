@@ -237,6 +237,8 @@ impl From<CliMcpTransport> for McpTransport {
 pub(crate) enum CliAuthMethod {
     ApiKey,
     OAuthDevice,
+    #[value(name = "chatgpt", alias = "chat-gpt")]
+    ChatGpt,
 }
 
 impl From<CliAuthMethod> for AuthMethod {
@@ -244,6 +246,7 @@ impl From<CliAuthMethod> for AuthMethod {
         match value {
             CliAuthMethod::ApiKey => AuthMethod::ApiKey,
             CliAuthMethod::OAuthDevice => AuthMethod::OAuthDevice,
+            CliAuthMethod::ChatGpt => AuthMethod::ChatGpt,
         }
     }
 }
@@ -564,6 +567,9 @@ pub(crate) enum AuthCommand {
         token: Option<String>,
         #[arg(long = "env-var")]
         env_var: Option<String>,
+        /// Use the headless ChatGPT device-code flow instead of a browser callback.
+        #[arg(long, default_value_t = false)]
+        device_code: bool,
     },
     /// Remove persisted auth metadata for one provider or for all providers.
     Logout {

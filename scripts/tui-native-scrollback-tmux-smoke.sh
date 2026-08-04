@@ -189,7 +189,7 @@ set -euo pipefail
 export ORBCODE_HOME="${scratch}/home"
 export HOME="${scratch}/home"
 export ANTHROPIC_BASE_URL="stub://anthropic"
-export ORBCODE_PROVIDER="anthropic"
+export PROVIDER_TYPE="anthropic"
 export RUST_LOG="warn"
 export TERM="xterm-256color"
 export ORBCODE_TUI_RENDER_METRICS=1
@@ -204,7 +204,7 @@ set -euo pipefail
 export ORBCODE_HOME="${scratch}/home"
 export HOME="${scratch}/home"
 export ANTHROPIC_BASE_URL="stub://anthropic"
-export ORBCODE_PROVIDER="anthropic"
+export PROVIDER_TYPE="anthropic"
 export RUST_LOG="warn"
 export TERM="xterm-256color"
 export ORBCODE_TUI_RENDER_METRICS=1
@@ -223,7 +223,7 @@ set -euo pipefail
 export ORBCODE_HOME="${scratch}/home"
 export HOME="${scratch}/home"
 export ANTHROPIC_BASE_URL="stub://anthropic"
-export ORBCODE_PROVIDER="anthropic"
+export PROVIDER_TYPE="anthropic"
 export RUST_LOG="warn"
 export TERM="xterm-256color"
 export ORBCODE_TUI_PTY_SMOKE_EXIT_AFTER_FIRST_FRAME=1
@@ -275,7 +275,7 @@ set -euo pipefail
 export ORBCODE_HOME="${scratch}/home"
 export HOME="${scratch}/home"
 export ANTHROPIC_BASE_URL="stub://anthropic"
-export ORBCODE_PROVIDER="anthropic"
+export PROVIDER_TYPE="anthropic"
 export RUST_LOG="warn"
 export TERM="xterm-256color"
 cd "${scratch}/cwd"

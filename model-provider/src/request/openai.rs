@@ -35,7 +35,7 @@ pub fn build_openai_request_body(request: &ProviderRequest) -> Value {
     body
 }
 
-fn openai_reasoning_effort(effort: orbcode_protocol::EffortLevel) -> &'static str {
+pub(super) fn openai_reasoning_effort(effort: orbcode_protocol::EffortLevel) -> &'static str {
     match effort {
         orbcode_protocol::EffortLevel::Low => "low",
         orbcode_protocol::EffortLevel::Medium => "medium",
@@ -183,7 +183,7 @@ fn openai_assistant_message(message: &TranscriptMessage) -> Vec<Value> {
     vec![message]
 }
 
-fn compact_json_string(input: &str) -> String {
+pub(super) fn compact_json_string(input: &str) -> String {
     serde_json::from_str::<Value>(input)
         .and_then(|value| serde_json::to_string(&value))
         .unwrap_or_else(|_| input.to_string())
@@ -200,7 +200,7 @@ fn openai_tool(tool: &ProviderToolDefinition) -> Value {
     })
 }
 
-fn sanitize_openai_json_schema(schema: Value) -> Value {
+pub(super) fn sanitize_openai_json_schema(schema: Value) -> Value {
     match schema {
         Value::Object(mut object) => {
             if let Some(value) = object.remove("const") {

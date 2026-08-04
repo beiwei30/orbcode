@@ -3,8 +3,8 @@ use std::fmt::Write as _;
 
 use chrono::Utc;
 use orbcode_protocol::{
-    MessageRole, TranscriptBlock, TranscriptMessage, blocks_have_renderable_content,
-    visible_content_from_blocks,
+    MessageCostAttribution, MessageRole, ProviderId, TranscriptBlock, TranscriptMessage,
+    blocks_have_renderable_content, visible_content_from_blocks,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -94,6 +94,31 @@ pub(crate) fn transcript_message_from_record(
         .and_then(parse_timestamp)
         .unwrap_or_else(Utc::now);
 
+    let cost_attribution = record
+        .provider
+        .as_deref()
+        .and_then(ProviderId::parse)
+        .zip(
+            record
+                .message
+                .as_ref()
+                .and_then(|message| message.model.clone()),
+        )
+        .zip(record.billing_basis.as_deref())
+        .and_then(|((provider, model), billing_basis)| match billing_basis {
+            "api" => Some(MessageCostAttribution {
+                provider,
+                model,
+                subscription: false,
+            }),
+            "subscription" => Some(MessageCostAttribution {
+                provider,
+                model,
+                subscription: true,
+            }),
+            _ => None,
+        });
+
     Some(TranscriptMessage {
         id,
         role,
@@ -110,6 +135,7 @@ pub(crate) fn transcript_message_from_record(
             .and_then(|usage| serde_json::from_value(usage.clone()).ok()),
         created_at,
         is_synthetic: false,
+        cost_attribution,
     })
 }
 

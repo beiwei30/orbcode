@@ -666,28 +666,27 @@ fn token_accounting_options_read_settings_env() {
 }
 
 #[tokio::test]
-async fn load_honors_settings_env_openai_provider_flag() {
+async fn load_honors_settings_env_provider_type() {
     let home = tempfile::tempdir().expect("home");
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(
         home.path().join("settings.json"),
-        r#"{"env":{"CLAUDE_CODE_USE_OPENAI":"true"}}"#,
+        r#"{"env":{"PROVIDER_TYPE":"openai"}}"#,
     )
     .expect("settings");
 
-    let mut config = AppConfig::load(
+    let config = AppConfig::load(
         workspace.path(),
         AppConfigOverrides {
             home_dir: Some(home.path().to_path_buf()),
+            // Seal provider/model process variables before load so the
+            // settings-level PROVIDER_TYPE assertion is deterministic.
+            env_overrides: sealed_provider_env_overrides(),
             ..AppConfigOverrides::default()
         },
     )
     .await
     .expect("load config");
-    // Seal off provider-related shell env so a developer's local
-    // `ANTHROPIC_MODEL` / `OPENAI_*` does not leak into the asserts
-    // below.
-    config.env_overrides = sealed_provider_env_overrides();
 
     assert_eq!(config.default_provider, ProviderId::OpenAi);
     assert_eq!(config.model_display_name(), "Sonnet");

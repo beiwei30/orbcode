@@ -140,15 +140,25 @@ fn provider_specific_family_env_overrides_builtin_default() {
 
 #[test]
 fn openai_provider_resolves_family_defaults() {
-    let h = Harness::new(r#"{"model":"sonnet","env":{"CLAUDE_CODE_USE_OPENAI":"true"}}"#);
+    let h = Harness::new(r#"{"model":"sonnet","env":{"PROVIDER_TYPE":"openai"}}"#);
     let out = stdout(&h.run(&["providers"]));
     assert!(
         out.contains("provider=openai"),
-        "CLAUDE_CODE_USE_OPENAI must select openai as default provider: {out}"
+        "PROVIDER_TYPE=openai must select openai as default provider: {out}"
     );
     assert!(
         out.contains("effort"),
         "openai provider must report effort capability: {out}"
+    );
+}
+
+#[test]
+fn process_provider_type_overrides_settings_provider_type() {
+    let h = Harness::new(r#"{"env":{"PROVIDER_TYPE":"anthropic"}}"#);
+    let out = stdout(&h.run_with_env(&["providers"], &[("PROVIDER_TYPE", "openai")]));
+    assert!(
+        out.contains("provider=openai"),
+        "process PROVIDER_TYPE must override settings PROVIDER_TYPE: {out}"
     );
 }
 

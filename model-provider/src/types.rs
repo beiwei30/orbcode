@@ -11,6 +11,13 @@ use orbcode_protocol::{
 use serde_json::{Map, Value};
 use tokio::time::{Duration, sleep};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenAiWireMode {
+    #[default]
+    ChatCompletions,
+    Responses,
+}
+
 #[derive(Clone, Debug)]
 pub struct ProviderRequest {
     pub session_id: String,
@@ -64,8 +71,20 @@ pub struct ProviderRequestOptions {
     /// retry loop continues to live in `core::retry` — this is the
     /// per-attempt cap for transient transport failures.
     pub max_retries: Option<u32>,
-    /// HTTPS proxy URL applied when the HTTP client is built.
+    /// Outbound proxy URL applied when the HTTP client is built.
     pub proxy: Option<String>,
+    /// Optional bypass list attached to the selected concrete proxy.
+    pub proxy_no_proxy: Option<String>,
+    /// Tracks whether `proxy` and `proxy_no_proxy` were selected by
+    /// `orbcode-config`. Core uses this to recalculate destination-aware system
+    /// routes after a fallback or fixed endpoint changes the request URL.
+    #[doc(hidden)]
+    pub proxy_resolved_from_config: bool,
+    /// Selects the OpenAI wire contract. API-key and compatible endpoints keep
+    /// the historical Chat Completions default; ChatGPT OAuth uses Responses.
+    pub openai_wire_mode: OpenAiWireMode,
+    /// ChatGPT workspace/account header used only with the Responses mode.
+    pub openai_account_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

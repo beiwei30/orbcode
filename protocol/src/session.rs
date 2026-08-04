@@ -60,6 +60,17 @@ pub struct TranscriptMessage {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_synthetic: bool,
+    /// Cost provenance is persisted by the transcript codec, but intentionally
+    /// omitted from app-server and stream-json message payloads.
+    #[serde(skip)]
+    pub cost_attribution: Option<MessageCostAttribution>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageCostAttribution {
+    pub provider: ProviderId,
+    pub model: String,
+    pub subscription: bool,
 }
 
 impl TranscriptMessage {
@@ -94,6 +105,7 @@ impl TranscriptMessage {
             usage: None,
             created_at: Utc::now(),
             is_synthetic: false,
+            cost_attribution: None,
         }
     }
 
@@ -109,6 +121,20 @@ impl TranscriptMessage {
 
     pub fn with_synthetic(mut self, synthetic: bool) -> Self {
         self.is_synthetic = synthetic;
+        self
+    }
+
+    pub fn with_cost_attribution(
+        mut self,
+        provider: ProviderId,
+        model: impl Into<String>,
+        subscription: bool,
+    ) -> Self {
+        self.cost_attribution = Some(MessageCostAttribution {
+            provider,
+            model: model.into(),
+            subscription,
+        });
         self
     }
 }

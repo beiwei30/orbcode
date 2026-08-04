@@ -860,12 +860,25 @@ fn provider_http_client_applies_proxy_and_timeout_options() {
     use crate::build_provider_http_client;
     let options = ProviderRequestOptions {
         proxy: Some("http://proxy.invalid:8080".to_string()),
+        proxy_no_proxy: Some("localhost,127.0.0.1".to_string()),
         timeout: Some(std::time::Duration::from_secs(7)),
         user_agent: Some("orbcode/proxy-test".to_string()),
         ..ProviderRequestOptions::default()
     };
     build_provider_http_client(&options)
         .expect("client builder accepts proxy/timeout/user-agent options");
+}
+
+#[test]
+fn provider_http_client_does_not_echo_invalid_proxy_credentials() {
+    use crate::build_provider_http_client;
+    let options = ProviderRequestOptions {
+        proxy: Some("http://proxy-user:proxy-secret@[invalid".to_string()),
+        ..ProviderRequestOptions::default()
+    };
+    let error = build_provider_http_client(&options).expect_err("proxy URL is invalid");
+    assert_eq!(error.message, "invalid configured proxy URL");
+    assert!(!error.message.contains("proxy-secret"));
 }
 
 #[tokio::test]

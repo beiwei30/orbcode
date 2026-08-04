@@ -17,7 +17,7 @@ fn bash_prompt_persists_local_shell_task_record() {
         .current_dir(workspace.path())
         .env("CLAUDE_CONFIG_DIR", home.path())
         .env("ANTHROPIC_BASE_URL", "stub://anthropic")
-        .env("ORBCODE_PROVIDER", "anthropic")
+        .env("PROVIDER_TYPE", "anthropic")
         .env("ORBCODE_ALLOW_TOOLS", "true")
         .env_remove("ORBCODE_HOME")
         .env_remove("CLAUDE_CODE_USE_OPENAI")
