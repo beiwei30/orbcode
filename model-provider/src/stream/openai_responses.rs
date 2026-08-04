@@ -44,6 +44,7 @@ pub struct OpenAiResponsesStreamReader {
     thinking_block: Option<usize>,
     text_block: Option<usize>,
     tool_blocks: HashMap<String, ToolBlock>,
+    pending_tool_arguments: HashMap<String, Vec<String>>,
     open_blocks: BTreeSet<usize>,
 }
 
@@ -65,6 +66,7 @@ impl OpenAiResponsesStreamReader {
             thinking_block: None,
             text_block: None,
             tool_blocks: HashMap::new(),
+            pending_tool_arguments: HashMap::new(),
             open_blocks: BTreeSet::new(),
         }
     }
@@ -178,15 +180,20 @@ impl OpenAiResponsesStreamReader {
                     .item_id
                     .or(event.call_id)
                     .unwrap_or_else(|| "function-call".to_string());
-                let index = self.ensure_tool_block(&item_id, None, None, &mut events);
                 if let Some(delta) = event.delta.filter(|delta| !delta.is_empty()) {
                     if let Some(tool) = self.tool_blocks.get_mut(&item_id) {
                         tool.arguments_seen = true;
+                        let index = tool.index;
+                        events.push(ProviderStreamEvent::ContentBlockDelta {
+                            index,
+                            delta: ProviderContentBlockDelta::InputJson(delta),
+                        });
+                    } else {
+                        self.pending_tool_arguments
+                            .entry(item_id)
+                            .or_default()
+                            .push(delta);
                     }
-                    events.push(ProviderStreamEvent::ContentBlockDelta {
-                        index,
-                        delta: ProviderContentBlockDelta::InputJson(delta),
-                    });
                 }
             }
             "response.output_item.done" => {
@@ -259,6 +266,7 @@ impl OpenAiResponsesStreamReader {
                 let call_id = item.get("call_id").and_then(Value::as_str);
                 let name = item.get("name").and_then(Value::as_str);
                 let index = self.ensure_tool_block(item_id, call_id, name, events);
+                self.flush_pending_tool_arguments(item_id, index, events);
                 let arguments_seen = self
                     .tool_blocks
                     .get(item_id)
@@ -312,6 +320,28 @@ impl OpenAiResponsesStreamReader {
             },
         });
         index
+    }
+
+    fn flush_pending_tool_arguments(
+        &mut self,
+        item_id: &str,
+        index: usize,
+        events: &mut Vec<ProviderStreamEvent>,
+    ) {
+        let Some(deltas) = self.pending_tool_arguments.remove(item_id) else {
+            return;
+        };
+        if let Some(tool) = self.tool_blocks.get_mut(item_id) {
+            tool.arguments_seen = true;
+        }
+        events.extend(
+            deltas
+                .into_iter()
+                .map(|delta| ProviderStreamEvent::ContentBlockDelta {
+                    index,
+                    delta: ProviderContentBlockDelta::InputJson(delta),
+                }),
+        );
     }
 
     fn ensure_text_block(&mut self, events: &mut Vec<ProviderStreamEvent>) -> usize {
@@ -473,6 +503,62 @@ mod tests {
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::ContentBlockDelta { delta: ProviderContentBlockDelta::Signature(value), .. } if value == "opaque")));
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::ContentBlockStart { block: ProviderContentBlockStart::ToolUse { id, name, .. }, .. } if id == "call-1" && name == "Read")));
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::MessageDelta { stop_reason: Some(reason), usage } if reason == "tool_use" && usage.input_tokens == 8 && usage.cache_read_input_tokens == 2)));
+    }
+
+    #[test]
+    fn buffers_tool_arguments_until_function_call_metadata_arrives() {
+        let mut reader = OpenAiResponsesStreamReader::new();
+        let before_item = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-1\",\"delta\":\"{\\\"path\\\":\"}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-1\",\"delta\":\"\\\"a\\\"}\"}\n\n"
+        );
+        let events = reader
+            .push_chunk_events(before_item.as_bytes())
+            .expect("argument deltas");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            ProviderStreamEvent::MessageStart { .. }
+        ));
+
+        let item = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item-1\",\"call_id\":\"call-1\",\"name\":\"Read\"}}\n\n"
+        );
+        let events = reader
+            .push_chunk_events(item.as_bytes())
+            .expect("function call item");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[0],
+            ProviderStreamEvent::ContentBlockStart {
+                block: ProviderContentBlockStart::ToolUse { id, name, .. },
+                ..
+            } if id == "call-1" && name == "Read"
+        ));
+        assert!(matches!(
+            &events[1],
+            ProviderStreamEvent::ContentBlockDelta {
+                delta: ProviderContentBlockDelta::InputJson(delta),
+                ..
+            } if delta == "{\"path\":"
+        ));
+        assert!(matches!(
+            &events[2],
+            ProviderStreamEvent::ContentBlockDelta {
+                delta: ProviderContentBlockDelta::InputJson(delta),
+                ..
+            } if delta == "\"a\"}"
+        ));
+
+        reader
+            .push_chunk_events(b"data: {\"type\":\"response.completed\",\"response\":{}}\n\n")
+            .expect("completed");
+        reader.finish_events().expect("finished");
     }
 
     #[test]
