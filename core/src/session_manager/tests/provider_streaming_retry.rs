@@ -1,4 +1,5 @@
 use orbcode_protocol::{MessageRole, TranscriptBlock, TranscriptMessage};
+use tempfile::tempdir;
 
 use super::support::*;
 use super::*;
@@ -295,8 +296,65 @@ async fn stream_error_after_content_falls_back_with_discarded_primary_tombstone(
 }
 
 #[tokio::test]
-async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
-    let (base_url, server_handle) = start_error_after_tool_use_anthropic_server();
+async fn stream_error_after_thinking_before_tool_execution_still_falls_back() {
+    let (base_url, server_handle) = start_error_after_thinking_anthropic_server();
+    let mut manager = test_manager_with_overrides(AppConfigOverrides {
+        fallback_provider: Some(ProviderId::OpenAi),
+        max_retries: Some(0),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    set_anthropic_server_env(&mut manager, base_url);
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn(&session.session_id, "stream error after thinking")
+        .await
+        .expect("submit turn");
+
+    let mut saw_thinking = false;
+    let mut saw_discard = false;
+    let mut fallback_finish = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::ThinkingDelta { delta, .. } => {
+                saw_thinking |= delta == "considering fallback";
+            }
+            StreamEvent::AssistantMessageDiscarded { reason, .. } => {
+                saw_discard |= reason.contains("server overloaded after thinking");
+            }
+            StreamEvent::Error { message, .. } => {
+                panic!("pre-effect thinking failure should fall back: {message}")
+            }
+            StreamEvent::TurnFinished {
+                provider,
+                fallback_from,
+                ..
+            } => {
+                fallback_finish = Some((provider, fallback_from));
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    server_handle.join().expect("thinking error server joins");
+    assert!(saw_thinking);
+    assert!(saw_discard);
+    assert_eq!(
+        fallback_finish,
+        Some((ProviderId::OpenAi, Some(ProviderId::Anthropic)))
+    );
+}
+
+#[tokio::test]
+async fn stream_error_after_streamed_tool_use_suppresses_fallback_after_completed_side_effect() {
+    let temp = tempdir().expect("tempdir");
+    let marker_path = temp.path().join("provider-effect-marker");
+    let command = format!("printf 'primary\\n' >> \"{}\"", marker_path.display());
+    let (base_url, server_handle) =
+        start_error_after_tool_use_anthropic_server(command, marker_path.clone());
+    let (fallback_base_url, fallback_requests, fallback_shutdown, fallback_handle) =
+        start_recording_openai_error_server();
     let mut manager = test_manager_with_overrides(AppConfigOverrides {
         fallback_provider: Some(ProviderId::OpenAi),
         max_retries: Some(0),
@@ -305,6 +363,7 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
     })
     .await;
     set_anthropic_server_env(&mut manager, base_url);
+    set_openai_server_env(&mut manager, fallback_base_url);
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
     let mut rx = manager
@@ -312,14 +371,13 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
         .await
         .expect("submit turn");
 
-    let (started_index, interrupted_index, tombstone_index, saw_tool_result, turn_finished) =
+    let (started_index, terminal_events, tombstone_index, saw_tool_result, error_message) =
         tokio::time::timeout(StdDuration::from_secs(3), async {
             let mut index = 0_usize;
             let mut started_index = None;
-            let mut interrupted_index = None;
+            let mut terminal_events = Vec::new();
             let mut tombstone_index = None;
             let mut saw_tool_result = false;
-            let mut turn_finished = None;
 
             while let Some(event) = rx.recv().await {
                 match event {
@@ -331,9 +389,7 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
                     StreamEvent::ToolUseCompleted {
                         tool_use_id, kind, ..
                     } if tool_use_id == "tool-stream-error" => {
-                        if kind == ToolUseCompletionKind::Interrupted {
-                            interrupted_index = Some(index);
-                        }
+                        terminal_events.push((index, kind));
                     }
                     StreamEvent::UserMessage { message } => {
                         saw_tool_result |= message.blocks.iter().any(|block| {
@@ -360,24 +416,17 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
                         }
                     }
                     StreamEvent::Error { message, .. } => {
-                        panic!(
-                            "fallback should finish instead of surfacing stream error: {message}"
-                        );
-                    }
-                    StreamEvent::TurnFinished {
-                        provider,
-                        fallback_from,
-                        ..
-                    } => {
-                        turn_finished = Some((provider, fallback_from));
                         return (
                             started_index,
-                            interrupted_index,
+                            terminal_events,
                             tombstone_index,
                             saw_tool_result,
-                            turn_finished,
+                            Some(message),
                         );
                     }
+                    StreamEvent::TurnFinished { .. } => panic!(
+                        "a fallback turn must not finish after streamed tool execution started"
+                    ),
                     _ => {}
                 }
                 index += 1;
@@ -385,27 +434,47 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
 
             (
                 started_index,
-                interrupted_index,
+                terminal_events,
                 tombstone_index,
                 saw_tool_result,
-                turn_finished,
+                None,
             )
         })
         .await
-        .expect("stream error fallback should finish promptly");
+        .expect("post-effect provider failure should surface promptly");
 
     server_handle
         .join()
         .expect("tool stream error server joins");
+    let _ = fallback_shutdown.send(());
+    fallback_handle.join().expect("fallback recorder joins");
     let started_index = started_index.expect("streamed tool started");
-    let interrupted_index = interrupted_index.expect("streamed tool interrupted");
     let tombstone_index = tombstone_index.expect("discarded primary tombstone emitted");
-    assert!(started_index < interrupted_index);
-    assert!(interrupted_index < tombstone_index);
+    assert_eq!(
+        terminal_events.len(),
+        1,
+        "tool must have one terminal event"
+    );
+    let (terminal_index, terminal_kind) = terminal_events[0];
+    assert_eq!(terminal_kind, ToolUseCompletionKind::Interrupted);
+    assert!(started_index < terminal_index);
+    assert!(terminal_index < tombstone_index);
     assert!(!saw_tool_result);
     assert_eq!(
-        turn_finished,
-        Some((ProviderId::OpenAi, Some(ProviderId::Anthropic)))
+        fallback_requests.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "fallback provider must not be contacted after the effect barrier"
+    );
+    assert!(
+        error_message
+            .expect("provider error")
+            .contains("tool may already have produced side effects"),
+        "the surfaced error must explain why fallback was suppressed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&marker_path).expect("read side-effect marker"),
+        "primary\n",
+        "the completed external side effect must occur exactly once"
     );
 
     let next_request = manager
@@ -443,6 +512,91 @@ async fn stream_error_after_streamed_tool_use_interrupts_started_tool() {
             })
         }),
         "discarded primary tool_result must not be provider-visible"
+    );
+
+    let (total_cost, _) = manager.live_cost_total(&session_id).await;
+    assert!(
+        total_cost > 0.0,
+        "failed primary usage must remain accounted after fallback suppression"
+    );
+}
+
+#[tokio::test]
+async fn stream_error_after_started_slow_tool_interrupts_and_drains_without_fallback() {
+    let temp = tempdir().expect("tempdir");
+    let marker_path = temp.path().join("slow-tool-started");
+    let command = format!(
+        "printf 'started\\n' > \"{}\"; sleep 30",
+        marker_path.display()
+    );
+    let (base_url, server_handle) =
+        start_error_after_tool_use_anthropic_server(command, marker_path.clone());
+    let (fallback_base_url, fallback_requests, fallback_shutdown, fallback_handle) =
+        start_recording_openai_error_server();
+    let mut manager = test_manager_with_overrides(AppConfigOverrides {
+        fallback_provider: Some(ProviderId::OpenAi),
+        max_retries: Some(0),
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    set_anthropic_server_env(&mut manager, base_url);
+    set_openai_server_env(&mut manager, fallback_base_url);
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn(&session.session_id, "stream error after slow tool")
+        .await
+        .expect("submit turn");
+
+    let (started_index, terminal_indices, error_index) =
+        tokio::time::timeout(StdDuration::from_secs(5), async {
+            let mut index = 0_usize;
+            let mut started_index = None;
+            let mut terminal_indices = Vec::new();
+            while let Some(event) = rx.recv().await {
+                match event {
+                    StreamEvent::ToolUseStarted { tool_use_id, .. }
+                        if tool_use_id == "tool-stream-error" =>
+                    {
+                        started_index = Some(index);
+                    }
+                    StreamEvent::ToolUseCompleted {
+                        tool_use_id, kind, ..
+                    } if tool_use_id == "tool-stream-error" => {
+                        assert_eq!(kind, ToolUseCompletionKind::Interrupted);
+                        terminal_indices.push(index);
+                    }
+                    StreamEvent::Error { message, .. } => {
+                        assert!(message.contains("tool may already have produced side effects"));
+                        return (started_index, terminal_indices, Some(index));
+                    }
+                    StreamEvent::TurnFinished { .. } => {
+                        panic!("slow post-effect tool failure must not fall back")
+                    }
+                    _ => {}
+                }
+                index += 1;
+            }
+            (started_index, terminal_indices, None)
+        })
+        .await
+        .expect("slow streamed tool must be interrupted and drained promptly");
+
+    server_handle.join().expect("primary server joins");
+    let _ = fallback_shutdown.send(());
+    fallback_handle.join().expect("fallback recorder joins");
+    let started_index = started_index.expect("slow streamed tool started");
+    let error_index = error_index.expect("provider error surfaced");
+    assert_eq!(terminal_indices.len(), 1);
+    assert!(started_index < terminal_indices[0]);
+    assert!(terminal_indices[0] < error_index);
+    assert_eq!(
+        fallback_requests.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(marker_path).expect("read slow tool marker"),
+        "started\n"
     );
 }
 

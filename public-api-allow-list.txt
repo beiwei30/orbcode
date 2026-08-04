@@ -442,6 +442,7 @@ model-provider	pub_use	http::openai_responses_url
 model-provider	pub_use	http::provider_transport_error
 model-provider	pub_use	http::stream_anthropic_request
 model-provider	pub_use	http::stream_openai_request
+model-provider	pub_use	model::AttemptDiscardDisposition
 model-provider	pub_use	model::ModelProvider
 model-provider	pub_use	model::ProviderStreamSink
 model-provider	pub_use	orbcode_protocol::StreamErrorCategory

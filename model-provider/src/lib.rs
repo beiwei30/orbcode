@@ -31,7 +31,7 @@ pub use http::{
     openai_responses_url, provider_transport_error, stream_anthropic_request,
     stream_openai_request,
 };
-pub use model::{ModelProvider, ProviderStreamSink};
+pub use model::{AttemptDiscardDisposition, ModelProvider, ProviderStreamSink};
 pub use orbcode_protocol::StreamErrorCategory;
 pub use probe::{ProbeResult, ProviderProbeReport, probe_provider};
 pub use rate_limit::{

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -23,7 +23,7 @@ use orbcode_tools::{
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::AsyncWriteExt,
-    sync::{Semaphore, broadcast, mpsc},
+    sync::{Mutex, Semaphore, broadcast, mpsc},
 };
 use uuid::Uuid;
 
@@ -187,6 +187,98 @@ struct WorkflowJournal {
     completed_outputs: HashMap<String, String>,
 }
 
+#[derive(Clone)]
+struct WorkflowJournalWriter {
+    path: PathBuf,
+    append_guard: Arc<Mutex<()>>,
+    #[cfg(test)]
+    split_writes: bool,
+}
+
+impl WorkflowJournalWriter {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            append_guard: Arc::new(Mutex::new(())),
+            #[cfg(test)]
+            split_writes: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    async fn append(&self, event: WorkflowJournalEvent) -> Result<(), CoreError> {
+        let _guard = self.append_guard.lock().await;
+        if let Some(parent) = self.path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let mut line = serde_json::to_string(&event)?;
+        line.push('\n');
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .await?;
+
+        #[cfg(test)]
+        if self.split_writes {
+            let midpoint = line.len() / 2;
+            file.write_all(&line.as_bytes()[..midpoint]).await?;
+            tokio::task::yield_now().await;
+            file.write_all(&line.as_bytes()[midpoint..]).await?;
+        } else {
+            file.write_all(line.as_bytes()).await?;
+        }
+        #[cfg(not(test))]
+        file.write_all(line.as_bytes()).await?;
+
+        file.flush().await?;
+        Ok(())
+    }
+}
+
+fn active_workflow_runs() -> &'static StdMutex<HashSet<String>> {
+    static ACTIVE: OnceLock<StdMutex<HashSet<String>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| StdMutex::new(HashSet::new()))
+}
+
+struct ActiveWorkflowRunReservation {
+    run_id: String,
+}
+
+impl ActiveWorkflowRunReservation {
+    fn try_acquire(run_id: &str) -> Result<Self, CoreError> {
+        let mut active = active_workflow_runs()
+            .lock()
+            .expect("active workflow registry mutex");
+        if !active.insert(run_id.to_string()) {
+            return Err(CoreError::ActiveWorkflow(run_id.to_string()));
+        }
+        Ok(Self {
+            run_id: run_id.to_string(),
+        })
+    }
+
+    fn is_active(run_id: &str) -> bool {
+        active_workflow_runs()
+            .lock()
+            .expect("active workflow registry mutex")
+            .contains(run_id)
+    }
+}
+
+impl Drop for ActiveWorkflowRunReservation {
+    fn drop(&mut self) {
+        active_workflow_runs()
+            .lock()
+            .expect("active workflow registry mutex")
+            .remove(&self.run_id);
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Default)]
 struct FakeWorkflowAgentExecutor {
@@ -223,6 +315,9 @@ impl FakeWorkflowAgentExecutor {
         if let Some(rest) = agent.prompt.strip_prefix("delay:") {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
             return Ok(rest.to_string());
+        }
+        if let Some(label) = agent.prompt.strip_prefix("large:") {
+            return Ok(format!("{label}:{}", label.repeat(32 * 1024)));
         }
         Ok(agent.prompt.clone())
     }
@@ -321,17 +416,21 @@ impl SessionManager {
     }
 
     pub async fn resume_workflow(&self, run_id: &str) -> Result<String, CoreError> {
+        if ActiveWorkflowRunReservation::is_active(run_id) {
+            return Err(CoreError::ActiveWorkflow(run_id.to_string()));
+        }
         let config = self.effective_config();
         let run_dir = workflow_run_dir(&config.home_dir, run_id);
         let run: WorkflowRunRecord = read_json(&run_dir.join("run.json")).await?;
         let spec: WorkflowSpec = read_json(&run_dir.join("workflow.json")).await?;
+        let journal = load_journal(&run_dir.join("journal.jsonl")).await?;
         let description = fallback_description(&run.workflow_name, &spec);
         let plan = validate_workflow_spec(run.workflow_name.clone(), description, spec)?;
         self.spawn_workflow_run(
             &run.session_id,
             plan,
             run.arguments,
-            Some(run_id.to_string()),
+            Some((run_id.to_string(), journal)),
             None,
         )
         .await
@@ -342,14 +441,24 @@ impl SessionManager {
         session_id: &str,
         plan: WorkflowPlan,
         arguments: String,
-        resume_run_id: Option<String>,
+        resume: Option<(String, WorkflowJournal)>,
         progress_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
     ) -> Result<String, CoreError> {
         let config = self.effective_config();
+        let (run_id, journal) = resume.unwrap_or_else(|| {
+            (
+                format!("workflow-{}", Uuid::new_v4().simple()),
+                WorkflowJournal::default(),
+            )
+        });
+        // Workflow workers are process-owned. Reserve the run before any
+        // durable or cancellation-registry mutation so a concurrent start or
+        // resume cannot replace the live worker's state. There is intentionally
+        // no cross-process lease: orbcode has no supported multi-process owner
+        // contract for one workflow run.
+        let reservation = ActiveWorkflowRunReservation::try_acquire(&run_id)?;
         self.persist_workflow_parent_session_context(session_id)
             .await?;
-        let run_id =
-            resume_run_id.unwrap_or_else(|| format!("workflow-{}", Uuid::new_v4().simple()));
         let run_dir = workflow_run_dir(&config.home_dir, &run_id);
         tokio::fs::create_dir_all(&run_dir).await?;
         write_json(&run_dir.join("workflow.json"), &plan.spec).await?;
@@ -401,6 +510,7 @@ impl SessionManager {
         let home_dir = config.home_dir.clone();
         let run_id_for_task = run_id.clone();
         tokio::spawn(async move {
+            let _reservation = reservation;
             let result = manager
                 .execute_workflow_run(
                     &home_dir,
@@ -411,6 +521,7 @@ impl SessionManager {
                     cancel_flag,
                     progress_tx,
                     Some(progress_broadcast_tx),
+                    journal,
                 )
                 .await;
             if let Err(error) = result {
@@ -449,13 +560,13 @@ impl SessionManager {
         cancel_flag: Arc<AtomicBool>,
         progress_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
         progress_broadcast_tx: Option<broadcast::Sender<StreamEvent>>,
+        journal: WorkflowJournal,
     ) -> Result<(), CoreError> {
         let run_dir = workflow_run_dir(home_dir, run_id);
         let journal_path = run_dir.join("journal.jsonl");
-        let journal = load_journal(&journal_path).await?;
-        append_journal(
-            &journal_path,
-            WorkflowJournalEvent {
+        let journal_writer = WorkflowJournalWriter::new(journal_path);
+        journal_writer
+            .append(WorkflowJournalEvent {
                 timestamp: Utc::now().to_rfc3339(),
                 event: "run_started".to_string(),
                 step_key: None,
@@ -463,9 +574,8 @@ impl SessionManager {
                 message: Some(plan.name.clone()),
                 output: None,
                 child_session_id: None,
-            },
-        )
-        .await?;
+            })
+            .await?;
 
         let semaphore = Arc::new(Semaphore::new(plan.max_concurrency));
         let mut ctx = WorkflowExecutionContext {
@@ -477,7 +587,7 @@ impl SessionManager {
             arguments,
             cancel_flag,
             semaphore,
-            journal_path,
+            journal_writer,
             completed_outputs: journal.completed_outputs,
             progress_tx,
             progress_broadcast_tx,
@@ -508,7 +618,7 @@ struct WorkflowExecutionContext {
     arguments: String,
     cancel_flag: Arc<AtomicBool>,
     semaphore: Arc<Semaphore>,
-    journal_path: PathBuf,
+    journal_writer: WorkflowJournalWriter,
     completed_outputs: HashMap<String, String>,
     progress_tx: Option<mpsc::UnboundedSender<StreamEvent>>,
     progress_broadcast_tx: Option<broadcast::Sender<StreamEvent>>,
@@ -699,7 +809,7 @@ impl WorkflowExecutionContext {
             arguments: self.arguments.clone(),
             cancel_flag: self.cancel_flag.clone(),
             semaphore: self.semaphore.clone(),
-            journal_path: self.journal_path.clone(),
+            journal_writer: self.journal_writer.clone(),
             completed_outputs: self.completed_outputs.clone(),
             progress_tx: self.progress_tx.clone(),
             progress_broadcast_tx: self.progress_broadcast_tx.clone(),
@@ -1064,7 +1174,7 @@ impl WorkflowExecutionContext {
             output,
             child_session_id,
         };
-        append_journal(&self.journal_path, journal_event.clone()).await?;
+        self.journal_writer.append(journal_event.clone()).await?;
         self.emit_background_task_snapshot(Some(&journal_event))
             .await;
         Ok(())
@@ -1143,7 +1253,7 @@ impl WorkflowExecutionContext {
             output: result.clone(),
             child_session_id: None,
         };
-        append_journal(&self.journal_path, finished_event.clone()).await?;
+        self.journal_writer.append(finished_event.clone()).await?;
 
         if let Some(mut record) = read_background_task_record(&self.home_dir, &self.run_id).await? {
             record.status = status.as_background_status();
@@ -1530,10 +1640,17 @@ async fn load_journal(path: &Path) -> Result<WorkflowJournal, CoreError> {
     }
     let contents = tokio::fs::read_to_string(path).await?;
     let mut journal = WorkflowJournal::default();
-    for line in contents.lines() {
-        let Ok(event) = serde_json::from_str::<WorkflowJournalEvent>(line) else {
+    for (index, line) in contents.lines().enumerate() {
+        if line.trim().is_empty() {
             continue;
-        };
+        }
+        let event = serde_json::from_str::<WorkflowJournalEvent>(line).map_err(|source| {
+            CoreError::WorkflowJournalCorrupt {
+                path: path.to_path_buf(),
+                line: index + 1,
+                source,
+            }
+        })?;
         if event.event == "step_completed"
             && let (Some(key), Some(output)) = (event.step_key, event.output)
         {
@@ -1541,22 +1658,6 @@ async fn load_journal(path: &Path) -> Result<WorkflowJournal, CoreError> {
         }
     }
     Ok(journal)
-}
-
-async fn append_journal(path: &Path, event: WorkflowJournalEvent) -> Result<(), CoreError> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let mut line = serde_json::to_string(&event)?;
-    line.push('\n');
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
-    file.write_all(line.as_bytes()).await?;
-    file.flush().await?;
-    Ok(())
 }
 
 async fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, CoreError> {
@@ -1634,7 +1735,7 @@ mod tests {
             arguments: "arg-one arg-two".to_string(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             semaphore: Arc::new(Semaphore::new(plan.max_concurrency)),
-            journal_path: run_dir.join("journal.jsonl"),
+            journal_writer: WorkflowJournalWriter::new(run_dir.join("journal.jsonl")),
             completed_outputs,
             progress_tx: None,
             progress_broadcast_tx: None,
@@ -1693,6 +1794,226 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).expect("journal event"))
             .collect()
+    }
+
+    fn journal_event(
+        event: &str,
+        step_key: Option<String>,
+        output: Option<String>,
+    ) -> WorkflowJournalEvent {
+        WorkflowJournalEvent {
+            timestamp: Utc::now().to_rfc3339(),
+            event: event.to_string(),
+            step_key,
+            kind: None,
+            message: None,
+            output,
+            child_session_id: None,
+        }
+    }
+
+    async fn write_resume_fixture(home: &Path, run_id: &str, plan: &WorkflowPlan) -> PathBuf {
+        let run_dir = workflow_run_dir(home, run_id);
+        tokio::fs::create_dir_all(&run_dir)
+            .await
+            .expect("create resume fixture run dir");
+        write_json(&run_dir.join("workflow.json"), &plan.spec)
+            .await
+            .expect("write workflow fixture");
+        let now = Utc::now().to_rfc3339();
+        write_json(
+            &run_dir.join("run.json"),
+            &WorkflowRunRecord {
+                run_id: run_id.to_string(),
+                session_id: "session-resume".to_string(),
+                workflow_name: plan.name.clone(),
+                arguments: String::new(),
+                status: WorkflowRunStatus::Running,
+                created_at: now.clone(),
+                updated_at: now,
+                finished_at: None,
+                result: None,
+                error: None,
+            },
+        )
+        .await
+        .expect("write run fixture");
+        run_dir
+    }
+
+    #[tokio::test]
+    async fn journal_writer_serializes_controlled_split_writes() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("journal.jsonl");
+        let mut writer = WorkflowJournalWriter::new(path.clone());
+        writer.split_writes = true;
+        let mut tasks = tokio::task::JoinSet::new();
+        for index in 0..32 {
+            let writer = writer.clone();
+            tasks.spawn(async move {
+                let key = format!("step.{index}");
+                let output = format!("output-{index}:{}", index.to_string().repeat(4096));
+                writer
+                    .append(journal_event("step_completed", Some(key), Some(output)))
+                    .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result
+                .expect("join split writer task")
+                .expect("append event");
+        }
+
+        let events = read_journal_events(&path).await;
+        assert_eq!(events.len(), 32);
+        let keys = events
+            .iter()
+            .filter_map(|event| event.step_key.as_deref())
+            .collect::<HashSet<_>>();
+        assert_eq!(keys.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn load_journal_accepts_unknown_events_and_additive_fields() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("journal.jsonl");
+        tokio::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-08-04T00:00:00Z\",\"event\":\"future_event\",",
+                "\"step_key\":null,\"message\":null,\"output\":null,\"future_field\":true}\n",
+                "{\"timestamp\":\"2026-08-04T00:00:01Z\",\"event\":\"step_completed\",",
+                "\"step_key\":\"step.0\",\"message\":null,\"output\":\"cached\",",
+                "\"future_object\":{\"version\":2}}\n",
+            ),
+        )
+        .await
+        .expect("write forward-compatible journal");
+
+        let journal = load_journal(&path).await.expect("load journal");
+        assert_eq!(
+            journal.completed_outputs.get("step.0").map(String::as_str),
+            Some("cached")
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_journal_blocks_resume_before_run_state_changes() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let manager = test_manager(&home, &cwd).await;
+        let plan = parse_plan(
+            "corrupt-resume",
+            r#"{"schema_version":1,"steps":[
+                {"agent":{"description":"must-not-run","prompt":"must-not-run"}}
+            ]}"#,
+        );
+        let run_id = "workflow-corrupt-resume";
+        let run_dir = write_resume_fixture(&home, run_id, &plan).await;
+        let journal_path = run_dir.join("journal.jsonl");
+        let first = serde_json::to_string(&journal_event(
+            "step_started",
+            Some("step.0".to_string()),
+            None,
+        ))
+        .expect("serialize first event");
+        tokio::fs::write(
+            &journal_path,
+            format!("{first}\n{{\"event\":\"step_completed\""),
+        )
+        .await
+        .expect("write torn journal");
+        let run_before = tokio::fs::read(run_dir.join("run.json"))
+            .await
+            .expect("read run before resume");
+        let journal_before = tokio::fs::read(&journal_path)
+            .await
+            .expect("read journal before resume");
+
+        let error = manager
+            .resume_workflow(run_id)
+            .await
+            .expect_err("corrupt journal must block resume");
+        match error {
+            CoreError::WorkflowJournalCorrupt { path, line, .. } => {
+                assert_eq!(path, journal_path);
+                assert_eq!(line, 2);
+            }
+            other => panic!("unexpected resume error: {other}"),
+        }
+        assert_eq!(
+            tokio::fs::read(run_dir.join("run.json")).await.unwrap(),
+            run_before
+        );
+        assert_eq!(
+            tokio::fs::read(&journal_path).await.unwrap(),
+            journal_before
+        );
+        assert!(
+            read_background_task_record(&home, run_id)
+                .await
+                .expect("read background task")
+                .is_none(),
+            "resume must not spawn or register work after journal corruption"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_resume_preserves_original_worker_and_durable_state() {
+        let temp = tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let cwd = temp.path().join("cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let manager = test_manager(&home, &cwd).await;
+        let plan = parse_plan(
+            "duplicate-resume",
+            r#"{"schema_version":1,"steps":[{"log":{"message":"unchanged"}}]}"#,
+        );
+        let run_id = "workflow-duplicate-resume";
+        let run_dir = write_resume_fixture(&home, run_id, &plan).await;
+        let journal_path = run_dir.join("journal.jsonl");
+        tokio::fs::write(
+            &journal_path,
+            format!(
+                "{}\n",
+                serde_json::to_string(&journal_event("run_started", None, None)).unwrap()
+            ),
+        )
+        .await
+        .expect("write journal fixture");
+        let run_before = tokio::fs::read(run_dir.join("run.json")).await.unwrap();
+        let journal_before = tokio::fs::read(&journal_path).await.unwrap();
+
+        let reservation = ActiveWorkflowRunReservation::try_acquire(run_id)
+            .expect("reserve original workflow worker");
+        let original_cancel_flag = Arc::new(AtomicBool::new(false));
+        register_background_task_cancel_flag(run_id, original_cancel_flag.clone());
+
+        let error = manager
+            .resume_workflow(run_id)
+            .await
+            .expect_err("duplicate resume must be rejected");
+        assert!(matches!(error, CoreError::ActiveWorkflow(id) if id == run_id));
+        assert!(orbcode_tools::cancel_background_task(run_id));
+        assert!(
+            original_cancel_flag.load(Ordering::SeqCst),
+            "duplicate resume must not replace the original cancellation handle"
+        );
+        assert_eq!(
+            tokio::fs::read(run_dir.join("run.json")).await.unwrap(),
+            run_before
+        );
+        assert_eq!(
+            tokio::fs::read(&journal_path).await.unwrap(),
+            journal_before
+        );
+
+        unregister_background_task_cancel_flag(run_id);
+        drop(reservation);
     }
 
     #[test]
@@ -1972,7 +2293,7 @@ mod tests {
             ]}}]}"#,
         );
         let (_temp, mut ctx, _fake) = test_context(&plan, HashMap::new()).await;
-        let journal_path = ctx.journal_path.clone();
+        let journal_path = ctx.journal_writer.path().to_path_buf();
 
         let output = ctx
             .run_steps(&plan.steps, "step".to_string(), None, false)
@@ -2190,6 +2511,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nested_parallel_large_outputs_round_trip_and_resume_without_agent_calls() {
+        let plan = parse_plan(
+            "parallel-journal-integrity",
+            r#"{"schema_version":1,"max_concurrency":4,"steps":[{"parallel":{"steps":[
+                {"agent":{"description":"a","prompt":"large:a"}},
+                {"parallel":{"steps":[
+                    {"agent":{"description":"b","prompt":"large:b"}},
+                    {"agent":{"description":"c","prompt":"large:c"}}
+                ]}},
+                {"agent":{"description":"d","prompt":"large:d"}}
+            ]}}]}"#,
+        );
+        let (_temp, mut ctx, first_fake) = test_context(&plan, HashMap::new()).await;
+        ctx.journal_writer.split_writes = true;
+        let journal_path = ctx.journal_writer.path().to_path_buf();
+
+        let first_output = ctx
+            .run_steps(&plan.steps, "step".to_string(), None, false)
+            .await
+            .expect("run nested parallel workflow");
+        assert_eq!(first_fake.call_prompts().len(), 4);
+        for label in ['a', 'b', 'c', 'd'] {
+            assert!(
+                first_output.contains(&format!("{label}:")),
+                "missing distinct output for {label}"
+            );
+        }
+
+        let events = read_journal_events(&journal_path).await;
+        for key in [
+            "step.0",
+            "step.0.0",
+            "step.0.1",
+            "step.0.1.0",
+            "step.0.1.1",
+            "step.0.2",
+        ] {
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| {
+                        event.event == "step_started" && event.step_key.as_deref() == Some(key)
+                    })
+                    .count(),
+                1,
+                "{key} must have exactly one step_started event"
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| {
+                        event.event == "step_completed" && event.step_key.as_deref() == Some(key)
+                    })
+                    .count(),
+                1,
+                "{key} must have exactly one terminal event"
+            );
+        }
+
+        let journal = load_journal(&journal_path).await.expect("reload journal");
+        for (key, label) in [
+            ("step.0.0", "a:"),
+            ("step.0.1.0", "b:"),
+            ("step.0.1.1", "c:"),
+            ("step.0.2", "d:"),
+        ] {
+            assert!(
+                journal
+                    .completed_outputs
+                    .get(key)
+                    .is_some_and(|output| output.starts_with(label)),
+                "completed output for {key} must map to {label}"
+            );
+        }
+
+        let resume_fake = FakeWorkflowAgentExecutor::default();
+        ctx.completed_outputs = journal.completed_outputs;
+        ctx.fake_agents = Some(resume_fake.clone());
+        let resumed_output = ctx
+            .run_steps(&plan.steps, "step".to_string(), None, false)
+            .await
+            .expect("resume nested parallel workflow");
+        assert_eq!(resumed_output, first_output);
+        assert!(
+            resume_fake.call_prompts().is_empty(),
+            "resume must make zero agent calls for completed steps"
+        );
+    }
+
+    #[tokio::test]
     async fn cancel_orphaned_run_children_cancels_this_runs_running_children() {
         let plan = parse_plan(
             "sweep",
@@ -2244,12 +2655,9 @@ mod tests {
         // The journal event must be the canonical `step_cancelled` carrying the
         // recovered step key, so the workflow-detail projection transitions the
         // step out of Running (an `agent_cancelled` with no step_key is skipped).
-        let journal = tokio::fs::read_to_string(&ctx.journal_path)
-            .await
-            .unwrap_or_default();
-        let cancelled_event = journal
-            .lines()
-            .filter_map(|line| serde_json::from_str::<WorkflowJournalEvent>(line).ok())
+        let events = read_journal_events(ctx.journal_writer.path()).await;
+        let cancelled_event = events
+            .iter()
             .find(|event| event.event == "step_cancelled")
             .expect("sweep must write a step_cancelled journal event");
         assert_eq!(

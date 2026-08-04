@@ -1,8 +1,8 @@
 use orbcode_config::{AppConfig, AuthManager, OutboundProxyRoute};
 use orbcode_model_provider::{
-    OpenAiWireMode, ProviderCancellationToken, ProviderCompletion, ProviderErrorKind,
-    ProviderRequest, ProviderStreamEvent, ProviderStreamSink, default_jitter_factor, provider_for,
-    retry_delay_ms_with_base,
+    AttemptDiscardDisposition, OpenAiWireMode, ProviderCancellationToken, ProviderCompletion,
+    ProviderErrorKind, ProviderRequest, ProviderStreamEvent, ProviderStreamSink,
+    default_jitter_factor, provider_for, retry_delay_ms_with_base,
 };
 use orbcode_protocol::{MessageRole, ProviderId, StreamErrorCategory, TranscriptBlock};
 
@@ -33,7 +33,8 @@ pub async fn execute_stream_with_retry_and_fallback(
                 && let Some(fallback_provider) = config.fallback_provider
             {
                 if primary_error.started_content {
-                    sink.discard_attempt(
+                    let disposition = sink
+                        .discard_attempt(
                         primary_error.provider,
                         fallback_provider,
                         &primary_error.message,
@@ -49,6 +50,21 @@ pub async fn execute_stream_with_retry_and_fallback(
                             suggestion: primary_error.suggestion.clone(),
                         })
                     })?;
+                    if disposition == AttemptDiscardDisposition::ToolExecutionStarted {
+                        return Err(CoreError::ProviderFailed(ProviderFailure {
+                            message: format!(
+                                "primary provider {} failed after {} attempt(s) [{}]: {}{}; fallback to {} suppressed because streamed tool execution started and the tool may already have produced side effects",
+                                primary_error.provider,
+                                primary_error.attempts,
+                                primary_error.category.label(),
+                                primary_error.message,
+                                format_suggestion(primary_error.suggestion.as_deref()),
+                                fallback_provider,
+                            ),
+                            category: primary_error.category,
+                            suggestion: primary_error.suggestion,
+                        }));
+                    }
                 }
                 return try_provider_stream(
                         config,

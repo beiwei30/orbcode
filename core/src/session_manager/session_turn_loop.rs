@@ -501,7 +501,8 @@ impl SessionManager {
             let response = &tool_round_response.response;
 
             if cancel_flag.load(Ordering::SeqCst) {
-                self.interrupt_streamed_tool_executions(session_id, streamed_tool_executions, tx);
+                self.interrupt_streamed_tool_executions(session_id, streamed_tool_executions, tx)
+                    .await;
                 // Preserve the streamed blocks (thinking + tool_use), not just
                 // `response.content`: building the partial from `content` alone
                 // drops thinking/tool_use blocks the model already streamed.
@@ -614,7 +615,8 @@ impl SessionManager {
                         }
                     }
                 }
-                self.interrupt_streamed_tool_executions(session_id, streamed_tool_executions, tx);
+                self.interrupt_streamed_tool_executions(session_id, streamed_tool_executions, tx)
+                    .await;
                 let stop_failure_name = if is_context_size_error {
                     "prompt_too_long"
                 } else {

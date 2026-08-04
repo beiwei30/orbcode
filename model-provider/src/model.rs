@@ -6,6 +6,12 @@ use crate::{
     ProviderResponse, ProviderStreamAccumulator, ProviderStreamEvent,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptDiscardDisposition {
+    SafeToFallback,
+    ToolExecutionStarted,
+}
+
 #[async_trait]
 pub trait ProviderStreamSink: Send {
     async fn emit(&mut self, event: ProviderStreamEvent) -> Result<(), ProviderError>;
@@ -15,8 +21,8 @@ pub trait ProviderStreamSink: Send {
         _provider: ProviderId,
         _fallback_provider: ProviderId,
         _reason: &str,
-    ) -> Result<(), ProviderError> {
-        Ok(())
+    ) -> Result<AttemptDiscardDisposition, ProviderError> {
+        Ok(AttemptDiscardDisposition::SafeToFallback)
     }
 }
 
@@ -72,8 +78,8 @@ impl ProviderStreamSink for CollectingProviderStreamSink {
         provider: ProviderId,
         fallback_provider: ProviderId,
         _reason: &str,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<AttemptDiscardDisposition, ProviderError> {
         self.accumulator = ProviderStreamAccumulator::new(fallback_provider, Some(provider));
-        Ok(())
+        Ok(AttemptDiscardDisposition::SafeToFallback)
     }
 }
