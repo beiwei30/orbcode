@@ -184,6 +184,49 @@ fn render_usage_overview_summarizes_session_tokens() {
 }
 
 #[test]
+fn render_usage_overview_labels_subscription_usage_consistently() {
+    let mut model_usage = std::collections::HashMap::new();
+    model_usage.insert(
+        "gpt-5.6-sol".to_string(),
+        ModelUsage {
+            input_tokens: 10_000,
+            output_tokens: 1_000,
+            billing_basis: orbcode_app_server::BillingBasis::Subscription,
+            ..ModelUsage::default()
+        },
+    );
+    let overview = UsageOverview {
+        session_id: "abcdef12-3456-7890-abcd-ef1234567890".to_string(),
+        model: "gpt-5.6-sol".to_string(),
+        provider: ProviderId::OpenAi,
+        message_count: 2,
+        assistant_message_count: 1,
+        usage_message_count: 1,
+        total_usage: TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 1_000,
+            total_tokens: 11_000,
+            ..TokenUsage::default()
+        },
+        cost: CostSummary {
+            model_usage,
+            billing_basis: orbcode_app_server::BillingBasis::Subscription,
+            ..CostSummary::default()
+        },
+    };
+
+    let rendered = render_usage_overview(&overview);
+    let model_line = rendered
+        .lines()
+        .find(|line| line.trim_start().starts_with("gpt-5.6-sol:"))
+        .expect("subscription model line");
+    assert!(rendered.contains("Cost: subscription (not API-priced)"));
+    assert!(model_line.contains("10000 input"));
+    assert!(model_line.contains("subscription (not API-priced)"));
+    assert!(!rendered.contains("subscription; not API-priced"));
+}
+
+#[test]
 fn render_cost_overview_shows_total_and_per_model_breakdown() {
     let mut model_usage = std::collections::HashMap::new();
     model_usage.insert(

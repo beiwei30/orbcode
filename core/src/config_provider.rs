@@ -36,6 +36,16 @@ impl AppConfigProviderRequestExt for AppConfig {
     }
 }
 
+/// Apply the transport and provider-specific request options shared by normal
+/// turns and diagnostic probes after the request's final base URL is known.
+pub fn apply_provider_request_options(
+    config: &AppConfig,
+    provider: ProviderId,
+    request: &mut ProviderRequest,
+) {
+    config.apply_request_options(provider, request);
+}
+
 trait AppConfigProviderRequestOptionsExt {
     fn apply_request_options(&self, provider: ProviderId, request: &mut ProviderRequest);
 }

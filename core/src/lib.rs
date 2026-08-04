@@ -19,6 +19,7 @@ mod tool_runtime;
 mod turn_loop;
 
 pub use compaction::CompactSessionResult;
+pub use config_provider::apply_provider_request_options;
 pub use model_cost::{
     BillingBasis, CostSummary, CostTracker, ModelCosts, ModelUsage, calculate_usd_cost,
     format_cost, format_model_pricing, get_model_costs,

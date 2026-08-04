@@ -160,9 +160,9 @@ impl fmt::Display for ModelUsage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let cost = match self.billing_basis {
             BillingBasis::Api => format_cost(self.cost_usd),
-            BillingBasis::Subscription => "subscription; not API-priced".to_string(),
+            BillingBasis::Subscription => "subscription (not API-priced)".to_string(),
             BillingBasis::Mixed => format!(
-                "{} API + subscription usage not API-priced",
+                "{} API + subscription usage (not API-priced)",
                 format_cost(self.cost_usd)
             ),
         };
@@ -541,7 +541,22 @@ mod tests {
         assert_eq!(usage.input_tokens, 10_000);
         assert_eq!(usage.output_tokens, 2_000);
         assert_eq!(usage.billing_basis, BillingBasis::Subscription);
-        assert!(usage.to_string().contains("subscription; not API-priced"));
+        assert!(usage.to_string().contains("subscription (not API-priced)"));
+    }
+
+    #[test]
+    fn mixed_usage_display_matches_diagnostics_cost_wording() {
+        let usage = ModelUsage {
+            cost_usd: 0.42,
+            billing_basis: BillingBasis::Mixed,
+            ..ModelUsage::default()
+        };
+
+        assert!(
+            usage
+                .to_string()
+                .contains("$0.4200 API + subscription usage (not API-priced)")
+        );
     }
 
     #[test]

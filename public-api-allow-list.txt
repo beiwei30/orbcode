@@ -320,6 +320,7 @@ config	pub_use	token_accounting::resolve_model_max_output_tokens
 core	pub_enum	CoreError
 core	pub_struct	ProviderFailure
 core	pub_use	compaction::CompactSessionResult
+core	pub_use	config_provider::apply_provider_request_options
 core	pub_use	model_cost::BillingBasis
 core	pub_use	model_cost::CostSummary
 core	pub_use	model_cost::CostTracker
