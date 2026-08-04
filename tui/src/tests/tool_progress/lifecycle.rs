@@ -1112,6 +1112,7 @@ fn legacy_flattened_tool_messages_render_without_raw_markers() {
         usage: None,
         created_at: Utc::now(),
         is_synthetic: false,
+        cost_attribution: None,
     };
     let user = TranscriptMessage {
         id: "user-tool-result".to_string(),
@@ -1122,6 +1123,7 @@ fn legacy_flattened_tool_messages_render_without_raw_markers() {
         usage: None,
         created_at: Utc::now(),
         is_synthetic: false,
+        cost_attribution: None,
     };
 
     let rendered = [assistant, user]

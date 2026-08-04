@@ -705,8 +705,12 @@ impl SessionManager {
     /// and the budget cap against the model actually in use, not the one set at
     /// startup.
     fn cost_pricing_params(&self) -> (String, u32, u32, BillingBasis) {
+        self.cost_pricing_params_for(self.effective_config().default_provider)
+    }
+
+    fn cost_pricing_params_for(&self, provider: ProviderId) -> (String, u32, u32, BillingBasis) {
         let config = self.effective_config();
-        let billing_basis = if self.uses_chatgpt_subscription() {
+        let billing_basis = if self.uses_chatgpt_subscription_for(provider) {
             BillingBasis::Subscription
         } else {
             BillingBasis::Api
@@ -716,7 +720,7 @@ impl SessionManager {
         {
             "gpt-5.6-sol".to_string()
         } else {
-            config.provider_model_name(config.default_provider)
+            config.provider_model_name(provider)
         };
         let context_window =
             orbcode_config::resolve_context_window(&api_model, &config.context_window_options());
@@ -727,9 +731,53 @@ impl SessionManager {
         (api_model, context_window, max_output, billing_basis)
     }
 
-    pub(super) fn uses_chatgpt_subscription(&self) -> bool {
+    fn cost_pricing_params_for_message(
+        &self,
+        message: &TranscriptMessage,
+    ) -> (String, u32, u32, BillingBasis) {
+        let Some(attribution) = message.cost_attribution.as_ref() else {
+            return self.cost_pricing_params();
+        };
         let config = self.effective_config();
-        config.default_provider == ProviderId::OpenAi
+        let context_window = orbcode_config::resolve_context_window(
+            &attribution.model,
+            &config.context_window_options(),
+        );
+        let max_output = orbcode_config::resolve_max_output_tokens(
+            &attribution.model,
+            &config.max_output_token_options(),
+        );
+        (
+            attribution.model.clone(),
+            context_window,
+            max_output,
+            if attribution.subscription {
+                BillingBasis::Subscription
+            } else {
+                BillingBasis::Api
+            },
+        )
+    }
+
+    pub(super) fn with_message_cost_attribution(
+        &self,
+        message: TranscriptMessage,
+        provider: ProviderId,
+    ) -> TranscriptMessage {
+        if message.usage.is_none() || message.cost_attribution.is_some() {
+            return message;
+        }
+        let (model, _, _, billing_basis) = self.cost_pricing_params_for(provider);
+        message.with_cost_attribution(provider, model, billing_basis == BillingBasis::Subscription)
+    }
+
+    pub(super) fn uses_chatgpt_subscription(&self) -> bool {
+        self.uses_chatgpt_subscription_for(self.effective_config().default_provider)
+    }
+
+    fn uses_chatgpt_subscription_for(&self, provider: ProviderId) -> bool {
+        let config = self.effective_config();
+        provider == ProviderId::OpenAi
             && config.resolve_env("OPENAI_API_KEY").is_none()
             && self.auth.cached_api_key(ProviderId::OpenAi).is_none()
             && self
@@ -761,8 +809,6 @@ impl SessionManager {
             .transcript_store
             .load_session_if_present(session_id)
             .await?;
-        let (api_model, context_window, max_output, billing_basis) = self.cost_pricing_params();
-
         let mut guard = self.live_cost.lock().await;
         let state = guard.entry(session_id.to_string()).or_default();
         if state.seeded {
@@ -774,6 +820,8 @@ impl SessionManager {
                     continue;
                 };
                 if state.counted_message_ids.insert(message.id.clone()) {
+                    let (api_model, context_window, max_output, billing_basis) =
+                        self.cost_pricing_params_for_message(message);
                     match billing_basis {
                         BillingBasis::Subscription => state.tracker.add_subscription_usage(
                             &api_model,
@@ -804,7 +852,8 @@ impl SessionManager {
         if self.ensure_live_cost_seeded(session_id).await.is_err() {
             return;
         }
-        let (api_model, context_window, max_output, billing_basis) = self.cost_pricing_params();
+        let (api_model, context_window, max_output, billing_basis) =
+            self.cost_pricing_params_for_message(message);
         let mut guard = self.live_cost.lock().await;
         let state = guard.entry(session_id.to_string()).or_default();
         if state.counted_message_ids.insert(message.id.clone()) {

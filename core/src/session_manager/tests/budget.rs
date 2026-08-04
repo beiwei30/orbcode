@@ -50,6 +50,23 @@ async fn seed_unpriced_cost(manager: &SessionManager, session_id: &str) -> f64 {
     total
 }
 
+async fn enable_chatgpt_subscription(manager: &mut SessionManager) {
+    manager.config.default_provider = ProviderId::OpenAi;
+    std::fs::write(
+        manager.config.home_dir.join("auth.json"),
+        format!(
+            r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":"account-123","email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
+            chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
+        ),
+    )
+    .expect("write ChatGPT auth");
+    manager
+        .auth
+        .refresh_stored_state()
+        .await
+        .expect("refresh auth state");
+}
+
 #[tokio::test]
 async fn precheck_is_none_when_no_cap_configured() {
     let mut manager = test_manager().await;
@@ -219,21 +236,8 @@ async fn precheck_block_over_cap_wins_over_unknown_pricing() {
 #[tokio::test]
 async fn subscription_usage_does_not_trigger_api_budget_cap() {
     let mut manager = test_manager().await;
-    manager.config.default_provider = ProviderId::OpenAi;
     manager.config.settings.max_budget_usd = Some(0.000_001);
-    std::fs::write(
-        manager.config.home_dir.join("auth.json"),
-        format!(
-            r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":"account-123","email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
-            chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
-        ),
-    )
-    .expect("write ChatGPT auth");
-    manager
-        .auth
-        .refresh_stored_state()
-        .await
-        .expect("refresh auth state");
+    enable_chatgpt_subscription(&mut manager).await;
 
     let session_id = "subscription-budget";
     manager
@@ -261,6 +265,77 @@ async fn subscription_usage_does_not_trigger_api_budget_cap() {
             .await
             .is_none(),
         "subscription usage must not be compared with the API dollar budget"
+    );
+}
+
+#[tokio::test]
+async fn subscription_fallback_api_usage_enforces_budget_after_resume() {
+    let mut manager = test_manager().await;
+    enable_chatgpt_subscription(&mut manager).await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        "claude-sonnet-4-6".to_string(),
+    );
+    let session_id = "subscription-fallback-budget";
+
+    let subscription_message = manager.with_message_cost_attribution(
+        TranscriptMessage::new(MessageRole::Assistant, "subscription answer")
+            .with_usage(usage(1_000_000, 100_000)),
+        ProviderId::OpenAi,
+    );
+    manager
+        .append_message(session_id, subscription_message)
+        .await
+        .expect("append subscription usage");
+    let (subscription_total, pricing_known) = manager.live_cost_total(session_id).await;
+    assert_eq!(subscription_total, 0.0);
+    assert!(pricing_known);
+
+    let fallback_message = manager.with_message_cost_attribution(
+        TranscriptMessage::new(MessageRole::Assistant, "fallback answer")
+            .with_usage(usage(200_000, 50_000)),
+        ProviderId::Anthropic,
+    );
+    manager
+        .append_message(session_id, fallback_message)
+        .await
+        .expect("append fallback usage");
+
+    let (fallback_total, pricing_known) = manager.live_cost_total(session_id).await;
+    assert!(fallback_total > 0.0, "fallback API usage must be priced");
+    assert!(pricing_known, "Sonnet fallback pricing must be known");
+    let overview = manager
+        .cost_overview(session_id)
+        .await
+        .expect("cost overview");
+    assert_eq!(overview.cost.billing_basis, crate::BillingBasis::Mixed);
+
+    manager.config.settings.max_budget_usd = Some(fallback_total / 2.0);
+    let decision = manager.budget_precheck(session_id, &manager.config).await;
+    assert!(
+        matches!(
+            decision,
+            Some(BudgetDecision::Block {
+                outcome: BudgetOutcome::Exceeded,
+                ..
+            })
+        ),
+        "API-priced fallback usage must enforce maxBudgetUsd"
+    );
+
+    manager.reset_live_cost(session_id).await;
+    let (restored_total, restored_pricing_known) = manager.live_cost_total(session_id).await;
+    assert!((restored_total - fallback_total).abs() < EPSILON);
+    assert!(restored_pricing_known);
+    assert!(
+        matches!(
+            manager.budget_precheck(session_id, &manager.config).await,
+            Some(BudgetDecision::Block {
+                outcome: BudgetOutcome::Exceeded,
+                ..
+            })
+        ),
+        "restored fallback usage must continue enforcing maxBudgetUsd"
     );
 }
 

@@ -518,6 +518,7 @@ protocol	pub_use	session::AdditionalDirectoryInfo
 protocol	pub_use	session::MemorySource
 protocol	pub_use	session::MemorySourceKind
 protocol	pub_use	session::MemorySourceStatus
+protocol	pub_use	session::MessageCostAttribution
 protocol	pub_use	session::MessageRole
 protocol	pub_use	session::SessionId
 protocol	pub_use	session::SessionRecord

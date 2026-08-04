@@ -58,9 +58,6 @@ impl SessionManager {
         session_id: &str,
         config: &AppConfig,
     ) -> Option<BudgetDecision> {
-        if self.uses_chatgpt_subscription() {
-            return None;
-        }
         let max_budget_usd = config.max_budget_usd()?;
         let (total_usd, pricing_known) = self.live_cost_total(session_id).await;
         if over_budget(total_usd, max_budget_usd) {
@@ -523,7 +520,8 @@ impl SessionManager {
                         TranscriptMessage::new(MessageRole::Assistant, response.content.clone())
                             .with_usage(response.usage.clone()),
                     )
-                };
+                }
+                .map(|message| self.with_message_cost_attribution(message, response.provider));
                 if let Some(message) = partial.clone() {
                     let _ = self.append_message(session_id, message).await;
                 } else if response.usage.total_tokens > 0 {
@@ -532,6 +530,8 @@ impl SessionManager {
                     let cost_message = TranscriptMessage::new(MessageRole::Assistant, "")
                         .with_usage(response.usage.clone())
                         .with_synthetic(true);
+                    let cost_message =
+                        self.with_message_cost_attribution(cost_message, response.provider);
                     self.accumulate_live_cost(session_id, &cost_message).await;
                 }
                 if self.active_turns.is_active(session_id, turn_id).await

@@ -173,6 +173,9 @@ impl ProviderStreamSink for SessionProviderStreamSink<'_> {
             let cost_message = TranscriptMessage::new(orbcode_protocol::MessageRole::Assistant, "")
                 .with_usage(discarded_response.usage)
                 .with_synthetic(true);
+            let cost_message = self
+                .manager
+                .with_message_cost_attribution(cost_message, provider);
             self.manager
                 .accumulate_live_cost(self.session_id, &cost_message)
                 .await;
@@ -275,7 +278,10 @@ impl<'a> AgentProviderStreamSink<'a> {
     }
 
     pub(super) fn into_message(self) -> TranscriptMessage {
-        agent_provider_response_message(self.tool_round_stream.into_response())
+        let response = self.tool_round_stream.into_response();
+        let provider = response.provider;
+        self.manager
+            .with_message_cost_attribution(agent_provider_response_message(response), provider)
     }
 
     async fn emit_tool_use_progress(

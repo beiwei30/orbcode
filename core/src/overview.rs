@@ -496,15 +496,28 @@ pub(crate) fn build_usage_overview(
         }
         if let Some(usage) = message.usage.clone() {
             usage_message_count += 1;
-            match billing_basis {
+            let (usage_model, usage_billing_basis) = message.cost_attribution.as_ref().map_or(
+                (api_model, billing_basis),
+                |attribution| {
+                    (
+                        attribution.model.as_str(),
+                        if attribution.subscription {
+                            crate::BillingBasis::Subscription
+                        } else {
+                            crate::BillingBasis::Api
+                        },
+                    )
+                },
+            );
+            match usage_billing_basis {
                 crate::BillingBasis::Subscription => cost_tracker.add_subscription_usage(
-                    api_model,
+                    usage_model,
                     &usage,
                     context_window,
                     max_output_tokens,
                 ),
                 crate::BillingBasis::Api | crate::BillingBasis::Mixed => {
-                    cost_tracker.add_usage(api_model, &usage, context_window, max_output_tokens);
+                    cost_tracker.add_usage(usage_model, &usage, context_window, max_output_tokens);
                 }
             }
             accumulate_token_usage(&mut total_usage, usage);
