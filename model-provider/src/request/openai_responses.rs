@@ -35,22 +35,23 @@ pub fn build_openai_responses_request_body(request: &ProviderRequest) -> Value {
 }
 
 fn responses_input(request: &ProviderRequest) -> Vec<Value> {
-    let mut input = Vec::new();
-    if let Some(context) = responses_user_context(&request.context) {
-        input.push(responses_message("user", "input_text", context));
-    }
-    for message in &request.messages {
-        input.extend(responses_message_items(message));
-    }
-    if input.iter().all(|item| {
-        item.get("role").and_then(Value::as_str) != Some("user")
-            && item.get("type").and_then(Value::as_str) != Some("function_call_output")
-    }) {
+    let mut input = request
+        .messages
+        .iter()
+        .flat_map(responses_message_items)
+        .collect::<Vec<_>>();
+    if input
+        .iter()
+        .all(|item| item.get("role").and_then(Value::as_str) != Some("user"))
+    {
         input.push(responses_message(
             "user",
             "input_text",
             request.prompt.clone(),
         ));
+    }
+    if let Some(context) = responses_user_context(&request.context) {
+        input.insert(0, responses_message("user", "input_text", context));
     }
     input
 }
@@ -258,6 +259,43 @@ mod tests {
             input
                 .iter()
                 .any(|item| item["type"] == "function_call_output" && item["call_id"] == "call-1")
+        );
+    }
+
+    #[test]
+    fn tool_output_only_history_still_appends_request_prompt() {
+        let messages = vec![
+            TranscriptMessage::from_blocks(
+                MessageRole::Assistant,
+                vec![TranscriptBlock::ToolUse {
+                    id: "call-1".to_string(),
+                    name: "Read".to_string(),
+                    input: "{\"path\":\"a\"}".to_string(),
+                }],
+            ),
+            TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "call-1".to_string(),
+                    content: "contents".to_string(),
+                    is_error: false,
+                    metadata: None,
+                }],
+            ),
+        ];
+
+        let body = build_openai_responses_request_body(&request(messages));
+        let input = body["input"].as_array().expect("input");
+        let prompt_messages = input
+            .iter()
+            .filter(|item| item["role"] == "user" && item["content"][0]["text"] == "follow up")
+            .count();
+
+        assert_eq!(prompt_messages, 1);
+        assert!(
+            input
+                .iter()
+                .any(|item| item["type"] == "function_call_output")
         );
     }
 }
