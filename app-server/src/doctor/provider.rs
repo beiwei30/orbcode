@@ -1,4 +1,6 @@
-use orbcode_config::{AppConfig, CHATGPT_CODEX_BASE_URL, load_chatgpt_oauth};
+use orbcode_config::{
+    AppConfig, CHATGPT_CODEX_BASE_URL, ChatGptOAuthCredentials, load_chatgpt_oauth,
+};
 use orbcode_model_provider::{
     OpenAiWireMode, ProviderCancellationToken, ProviderError, ProviderRequest,
     ProviderRequestOptions, StreamErrorCategory, probe_provider, suggestion_for,
@@ -94,7 +96,7 @@ fn probe_enabled(config: &AppConfig) -> bool {
 }
 
 async fn probe_one(config: &AppConfig, provider: ProviderId) -> ProbeOutcome {
-    let request = build_probe_request(config, provider);
+    let request = build_probe_request(config, provider).await;
     if request.api_key.is_none() && request.auth_token.is_none() {
         return ProbeOutcome::MissingCredentials;
     }
@@ -108,7 +110,7 @@ async fn probe_one(config: &AppConfig, provider: ProviderId) -> ProbeOutcome {
 /// Build a minimal probe request for `provider` from config. The credential
 /// precedence mirrors the session request path, but only reads config — it does
 /// not depend on `core`'s internal request builder.
-fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequest {
+async fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequest {
     let mut request = ProviderRequest {
         session_id: "doctor-probe".to_string(),
         prompt: "ping".to_string(),
@@ -149,7 +151,10 @@ fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequ
             if request.api_key.is_some() {
                 request.model = config.provider_model_resolution(provider).request_model;
                 request.base_url = config.openai_base_url();
-            } else if let Some(credentials) = load_chatgpt_oauth(&config.home_dir) {
+            } else if let Some(credentials) = load_chatgpt_oauth(&config.home_dir)
+                .await
+                .filter(ChatGptOAuthCredentials::is_usable)
+            {
                 request.model = if config.provider_model_is_explicit() {
                     config.provider_model_resolution(provider).request_model
                 } else {
@@ -311,8 +316,8 @@ mod tests {
         assert!(detail.contains("ANTHROPIC_API_KEY"));
     }
 
-    #[test]
-    fn build_probe_request_has_no_credentials_when_config_is_empty() {
+    #[tokio::test]
+    async fn build_probe_request_has_no_credentials_when_config_is_empty() {
         let mut config = config();
         for key in [
             "ANTHROPIC_AUTH_TOKEN",
@@ -321,26 +326,26 @@ mod tests {
         ] {
             config.env_overrides.insert(key.to_string(), String::new());
         }
-        let request = build_probe_request(&config, ProviderId::Anthropic);
+        let request = build_probe_request(&config, ProviderId::Anthropic).await;
         assert!(request.api_key.is_none());
         assert!(request.auth_token.is_none());
         assert_eq!(request.options.max_output_tokens, Some(1));
     }
 
-    #[test]
-    fn build_probe_request_prefers_auth_token_for_anthropic() {
+    #[tokio::test]
+    async fn build_probe_request_prefers_auth_token_for_anthropic() {
         let mut config = config();
         config.env_overrides.insert(
             "ANTHROPIC_AUTH_TOKEN".to_string(),
             "external-token".to_string(),
         );
-        let request = build_probe_request(&config, ProviderId::Anthropic);
+        let request = build_probe_request(&config, ProviderId::Anthropic).await;
         assert_eq!(request.auth_token.as_deref(), Some("external-token"));
         assert!(request.api_key.is_none());
     }
 
-    #[test]
-    fn build_probe_request_uses_chatgpt_responses_credentials() {
+    #[tokio::test]
+    async fn build_probe_request_uses_chatgpt_responses_credentials() {
         let home = tempfile::tempdir().expect("home");
         std::fs::write(
             home.path().join("auth.json"),
@@ -354,7 +359,7 @@ mod tests {
             .env_overrides
             .insert("OPENAI_API_KEY".to_string(), String::new());
 
-        let request = build_probe_request(&config, ProviderId::OpenAi);
+        let request = build_probe_request(&config, ProviderId::OpenAi).await;
         assert_eq!(request.model, "gpt-5.6-sol");
         assert_eq!(request.base_url, CHATGPT_CODEX_BASE_URL);
         assert_eq!(request.auth_token.as_deref(), Some("access"));

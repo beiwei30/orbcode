@@ -150,7 +150,7 @@ impl AppServer {
             .with_openai_proxy_config(config.outbound_proxy_config())
             .with_forced_login_method(forced_login_method);
         let mut sessions =
-            SessionManager::new_with_auth(config, tools.clone(), mcp.clone(), auth.clone());
+            SessionManager::new_with_auth(config, tools.clone(), mcp.clone(), auth.clone()).await?;
         sessions.refresh_agent_definitions().await;
         sessions.refresh_output_styles().await;
         let background = BackgroundManager::new(sessions.config().home_dir.clone());

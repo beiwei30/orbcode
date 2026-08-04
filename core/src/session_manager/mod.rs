@@ -383,7 +383,11 @@ mod session_transcript;
 mod session_facade;
 
 impl SessionManager {
-    pub fn new(config: AppConfig, tools: ToolRegistry, mcp: McpRegistry) -> Self {
+    pub async fn new(
+        config: AppConfig,
+        tools: ToolRegistry,
+        mcp: McpRegistry,
+    ) -> Result<Self, CoreError> {
         let auth = AuthManager::new(config.home_dir.clone())
             .with_env_overrides(config.env_overrides.clone())
             .with_openai_proxy_config(config.outbound_proxy_config())
@@ -392,15 +396,16 @@ impl SessionManager {
                     .forced_login_method()
                     .and_then(parse_forced_login_method),
             );
-        Self::new_with_auth(config, tools, mcp, auth)
+        Self::new_with_auth(config, tools, mcp, auth).await
     }
 
-    pub fn new_with_auth(
+    pub async fn new_with_auth(
         config: AppConfig,
         tools: ToolRegistry,
         mcp: McpRegistry,
         auth: AuthManager,
-    ) -> Self {
+    ) -> Result<Self, CoreError> {
+        auth.refresh_stored_state().await?;
         let transcript_store = SessionStore::new(
             config.current_project_dir.clone(),
             config.cwd.clone(),
@@ -418,7 +423,7 @@ impl SessionManager {
         let initial_styles = built_in_output_style_definitions();
         let initial_active =
             resolve_active_output_style(&initial_styles, orbcode_config::DEFAULT_OUTPUT_STYLE_NAME);
-        Self {
+        Ok(Self {
             config,
             auth,
             tools,
@@ -441,7 +446,7 @@ impl SessionManager {
             local_shell_tasks,
             ask_user_pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
             transcript_append_locks: TranscriptAppendLocks::default(),
-        }
+        })
     }
 
     /// Resolve a pending AskUserQuestion request. Called by the protocol layer
@@ -725,8 +730,12 @@ impl SessionManager {
     pub(super) fn uses_chatgpt_subscription(&self) -> bool {
         let config = self.effective_config();
         config.default_provider == ProviderId::OpenAi
-            && config.openai_api_key().is_none()
-            && orbcode_config::load_chatgpt_oauth(&config.home_dir).is_some()
+            && config.resolve_env("OPENAI_API_KEY").is_none()
+            && self.auth.cached_api_key(ProviderId::OpenAi).is_none()
+            && self
+                .auth
+                .cached_chatgpt_oauth()
+                .is_some_and(|credentials| credentials.is_usable())
     }
 
     /// Seeds the live cost tracker for `session_id` from the persisted

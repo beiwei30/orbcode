@@ -229,6 +229,11 @@ async fn subscription_usage_does_not_trigger_api_budget_cap() {
         ),
     )
     .expect("write ChatGPT auth");
+    manager
+        .auth
+        .refresh_stored_state()
+        .await
+        .expect("refresh auth state");
 
     let session_id = "subscription-budget";
     manager
@@ -256,6 +261,50 @@ async fn subscription_usage_does_not_trigger_api_budget_cap() {
             .await
             .is_none(),
         "subscription usage must not be compared with the API dollar budget"
+    );
+}
+
+#[tokio::test]
+async fn incomplete_chatgpt_credentials_do_not_disable_api_budget_checks() {
+    let mut manager = test_manager().await;
+    manager.config.default_provider = ProviderId::OpenAi;
+    manager.config.settings.max_budget_usd = Some(0.000_001);
+    std::fs::write(
+        manager.config.home_dir.join("auth.json"),
+        format!(
+            r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":null,"email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
+            chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
+        ),
+    )
+    .expect("write incomplete ChatGPT auth");
+    manager
+        .auth
+        .refresh_stored_state()
+        .await
+        .expect("refresh auth state");
+
+    let session_id = "incomplete-subscription-budget";
+    manager
+        .append_message(
+            session_id,
+            TranscriptMessage::new(MessageRole::Assistant, "answer")
+                .with_usage(usage(1_000_000, 100_000)),
+        )
+        .await
+        .expect("append assistant");
+
+    let overview = manager
+        .cost_overview(session_id)
+        .await
+        .expect("cost overview");
+    assert_eq!(overview.cost.billing_basis, crate::BillingBasis::Api);
+    assert!(!manager.uses_chatgpt_subscription());
+    assert!(
+        manager
+            .budget_precheck(session_id, &manager.config)
+            .await
+            .is_some(),
+        "incomplete credentials must not bypass the API budget policy"
     );
 }
 

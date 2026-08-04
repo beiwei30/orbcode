@@ -38,7 +38,7 @@ pub async fn run_doctor(
         auth,
     ));
     checks.push(environment::oauth_expiry_check(config));
-    checks.push(chatgpt_subscription_check(config, auth));
+    checks.push(chatgpt_subscription_check(config, auth).await);
     checks.push(provider::provider_probe_check(config).await);
     checks.push(permission_check(
         "network",
@@ -195,9 +195,9 @@ fn chatgpt_is_active(auth: &AuthOverview) -> bool {
     })
 }
 
-fn chatgpt_subscription_check(config: &AppConfig, auth: &AuthOverview) -> DoctorCheck {
+async fn chatgpt_subscription_check(config: &AppConfig, auth: &AuthOverview) -> DoctorCheck {
     let name = "chatgpt_subscription".to_string();
-    let Some(credentials) = load_chatgpt_oauth(&config.home_dir) else {
+    let Some(credentials) = load_chatgpt_oauth(&config.home_dir).await else {
         return DoctorCheck {
             name,
             status: DoctorStatus::Pass,
@@ -209,6 +209,13 @@ fn chatgpt_subscription_check(config: &AppConfig, auth: &AuthOverview) -> Doctor
             name,
             status: DoctorStatus::Fail,
             detail: "saved login has no ChatGPT account id; sign in again with `orbcode auth login --provider openai --method chatgpt`".to_string(),
+        };
+    }
+    if !credentials.is_usable() {
+        return DoctorCheck {
+            name,
+            status: DoctorStatus::Fail,
+            detail: "saved ChatGPT login is incomplete; sign in again with `orbcode auth login --provider openai --method chatgpt`".to_string(),
         };
     }
     if !chatgpt_is_active(auth) {
@@ -592,8 +599,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn chatgpt_subscription_check_reports_fixed_responses_path_and_default_model() {
+    #[tokio::test]
+    async fn chatgpt_subscription_check_reports_fixed_responses_path_and_default_model() {
         let home = tempfile::tempdir().expect("home");
         std::fs::write(
             home.path().join("auth.json"),
@@ -619,7 +626,7 @@ mod tests {
             }],
         };
 
-        let check = chatgpt_subscription_check(&config, &auth);
+        let check = chatgpt_subscription_check(&config, &auth).await;
         assert_eq!(check.status, DoctorStatus::Pass);
         assert!(check.detail.contains("gpt-5.6-sol"));
         assert!(check.detail.contains("fixed ChatGPT Codex Responses"));

@@ -39,6 +39,17 @@ pub struct ChatGptOAuthCredentials {
 }
 
 impl ChatGptOAuthCredentials {
+    /// Whether the saved credentials contain every value required both to
+    /// issue a Codex Responses request and to refresh it later.
+    pub fn is_usable(&self) -> bool {
+        !self.access_token.trim().is_empty()
+            && !self.refresh_token.trim().is_empty()
+            && self
+                .account_id
+                .as_deref()
+                .is_some_and(|account_id| !account_id.trim().is_empty())
+    }
+
     pub(crate) fn needs_refresh(&self) -> bool {
         Utc::now().timestamp_millis() + 5 * 60 * 1000 >= self.expires_at
     }

@@ -3,7 +3,7 @@ use std::env;
 use std::fmt;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
 use orbcode_protocol::ProviderId;
@@ -83,6 +83,7 @@ pub struct AuthManager {
     forced_method: Option<AuthMethod>,
     openai_oauth: OpenAiOAuthOptions,
     openai_refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    cached_state: Arc<RwLock<StoredAuthState>>,
 }
 
 /// Map a managed `forceLoginMethod` policy string onto an [`AuthMethod`].
@@ -140,6 +141,7 @@ impl AuthManager {
             forced_method: None,
             openai_oauth: OpenAiOAuthOptions::default(),
             openai_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            cached_state: Arc::new(RwLock::new(StoredAuthState::default())),
         }
     }
 
@@ -177,6 +179,28 @@ impl AuthManager {
         &self.openai_oauth.codex_base_url
     }
 
+    /// Refresh the in-memory auth snapshot used by synchronous session status
+    /// and billing decisions. Runtime file I/O remains on Tokio's async path.
+    pub async fn refresh_stored_state(&self) -> Result<(), ConfigError> {
+        self.load_state().await.map(drop)
+    }
+
+    pub fn cached_api_key(&self, provider: ProviderId) -> Option<String> {
+        let store = self
+            .cached_state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stored_api_key_from_state(&store, provider)
+    }
+
+    pub fn cached_chatgpt_oauth(&self) -> Option<ChatGptOAuthCredentials> {
+        let store = self
+            .cached_state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        chatgpt_oauth_from_state(&store)
+    }
+
     pub async fn start_chatgpt_browser_login(
         &self,
     ) -> Result<ChatGptBrowserLoginSession, ConfigError> {
@@ -212,17 +236,19 @@ impl AuthManager {
     pub async fn resolve_chatgpt_oauth(
         &self,
     ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
-        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+        let Some(credentials) = self.load_chatgpt_oauth().await? else {
             return Ok(None);
         };
+        ensure_chatgpt_oauth_usable(&credentials)?;
         if !credentials.needs_refresh() {
             return Ok(Some(credentials));
         }
 
         let _refresh_guard = self.openai_refresh_lock.lock().await;
-        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+        let Some(credentials) = self.load_chatgpt_oauth().await? else {
             return Ok(None);
         };
+        ensure_chatgpt_oauth_usable(&credentials)?;
         if !credentials.needs_refresh() {
             return Ok(Some(credentials));
         }
@@ -237,9 +263,10 @@ impl AuthManager {
         &self,
     ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
         let _refresh_guard = self.openai_refresh_lock.lock().await;
-        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+        let Some(credentials) = self.load_chatgpt_oauth().await? else {
             return Ok(None);
         };
+        ensure_chatgpt_oauth_usable(&credentials)?;
         let refreshed = openai_oauth::refresh_credentials(&self.openai_oauth, &credentials).await?;
         self.store_chatgpt_oauth(refreshed.clone()).await?;
         Ok(Some(refreshed))
@@ -260,6 +287,7 @@ impl AuthManager {
         &self,
         credentials: ChatGptOAuthCredentials,
     ) -> Result<AuthStatusEntry, ConfigError> {
+        ensure_chatgpt_oauth_usable(&credentials)?;
         let mut store = self.load_state().await?;
         let entry = StoredAuthEntry {
             provider: ProviderId::OpenAi,
@@ -413,10 +441,14 @@ impl AuthManager {
         let path = self.store_path();
         tokio::fs::create_dir_all(&self.home_dir).await?;
         if !tokio::fs::try_exists(&path).await? {
-            return Ok(StoredAuthState::default());
+            let store = StoredAuthState::default();
+            self.replace_cached_state(&store);
+            return Ok(store);
         }
         let contents = tokio::fs::read_to_string(path).await?;
-        Ok(serde_json::from_str(&contents)?)
+        let store = serde_json::from_str(&contents)?;
+        self.replace_cached_state(&store);
+        Ok(store)
     }
 
     async fn save_state(&self, store: &StoredAuthState) -> Result<(), ConfigError> {
@@ -431,18 +463,35 @@ impl AuthManager {
         )
         .await?;
         tokio::fs::rename(tmp_path, path).await?;
+        self.replace_cached_state(store);
         Ok(())
+    }
+
+    async fn load_chatgpt_oauth(&self) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
+        let store = self.load_state().await?;
+        Ok(chatgpt_oauth_from_state(&store))
+    }
+
+    fn replace_cached_state(&self, store: &StoredAuthState) {
+        *self
+            .cached_state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = store.clone();
     }
 }
 
 pub fn stored_api_key(home_dir: &Path, provider: ProviderId) -> Option<String> {
     let store = load_stored_auth_state(home_dir)?;
-    store.entries.into_iter().find_map(|entry| match entry {
+    stored_api_key_from_state(&store, provider)
+}
+
+fn stored_api_key_from_state(store: &StoredAuthState, provider: ProviderId) -> Option<String> {
+    store.entries.iter().find_map(|entry| match entry {
         StoredAuthEntry {
             provider: entry_provider,
             source: StoredAuthSource::StoredApiKey { api_key },
             ..
-        } if entry_provider == provider => Some(api_key),
+        } if *entry_provider == provider => Some(api_key.clone()),
         _ => None,
     })
 }
@@ -459,16 +508,34 @@ pub fn stored_auth_token(home_dir: &Path, provider: ProviderId) -> Option<String
     })
 }
 
-pub fn load_chatgpt_oauth(home_dir: &Path) -> Option<ChatGptOAuthCredentials> {
-    let store = load_stored_auth_state(home_dir)?;
+pub async fn load_chatgpt_oauth(home_dir: &Path) -> Option<ChatGptOAuthCredentials> {
+    let contents = tokio::fs::read_to_string(home_dir.join("auth.json"))
+        .await
+        .ok()?;
+    let store = serde_json::from_str(&contents).ok()?;
+    chatgpt_oauth_from_state(&store)
+}
+
+fn chatgpt_oauth_from_state(store: &StoredAuthState) -> Option<ChatGptOAuthCredentials> {
     store
         .entries
-        .into_iter()
+        .iter()
         .find(|entry| entry.provider == ProviderId::OpenAi && entry.method == AuthMethod::ChatGpt)
-        .and_then(|entry| match entry.source {
-            StoredAuthSource::ChatGptOAuth { credentials } => Some(credentials),
+        .and_then(|entry| match &entry.source {
+            StoredAuthSource::ChatGptOAuth { credentials } => Some(credentials.clone()),
             _ => None,
         })
+}
+
+fn ensure_chatgpt_oauth_usable(credentials: &ChatGptOAuthCredentials) -> Result<(), ConfigError> {
+    if credentials.is_usable() {
+        Ok(())
+    } else {
+        Err(ConfigError::Config(
+            "saved ChatGPT OAuth credentials are incomplete; sign in again with `orbcode auth login --provider openai --method chatgpt`"
+                .to_string(),
+        ))
+    }
 }
 
 fn load_stored_auth_state(home_dir: &Path) -> Option<StoredAuthState> {
@@ -505,11 +572,7 @@ fn stored_source_summary(source: &StoredAuthSource) -> String {
 fn stored_source_usable(source: &StoredAuthSource) -> bool {
     match source {
         StoredAuthSource::StoredHint { .. } => false,
-        StoredAuthSource::ChatGptOAuth { credentials } => {
-            !credentials.access_token.trim().is_empty()
-                && !credentials.refresh_token.trim().is_empty()
-                && credentials.account_id.is_some()
-        }
+        StoredAuthSource::ChatGptOAuth { credentials } => credentials.is_usable(),
         _ => true,
     }
 }
@@ -958,7 +1021,9 @@ mod tests {
             .await
             .expect("ChatGPT login");
 
-        let loaded = load_chatgpt_oauth(&home).expect("stored ChatGPT credentials");
+        let loaded = load_chatgpt_oauth(&home)
+            .await
+            .expect("stored ChatGPT credentials");
         assert_eq!(loaded.account_id.as_deref(), Some("account-123"));
         assert_eq!(
             stored_api_key(&home, ProviderId::OpenAi).as_deref(),
@@ -1031,9 +1096,54 @@ mod tests {
             right.expect("right").expect("credentials").access_token,
             "new-access-token"
         );
-        let stored = load_chatgpt_oauth(&home).expect("rotated credentials");
+        let stored = load_chatgpt_oauth(&home)
+            .await
+            .expect("rotated credentials");
         assert_eq!(stored.id_token, "id-token");
         assert_eq!(stored.refresh_token, "new-refresh-token");
+    }
+
+    #[test]
+    fn chatgpt_credentials_require_non_empty_request_and_refresh_fields() {
+        let valid = chatgpt_credentials(Utc::now().timestamp_millis() + 60 * 60 * 1000);
+        assert!(valid.is_usable());
+
+        for invalid in [
+            ChatGptOAuthCredentials {
+                access_token: " ".to_string(),
+                ..valid.clone()
+            },
+            ChatGptOAuthCredentials {
+                refresh_token: String::new(),
+                ..valid.clone()
+            },
+            ChatGptOAuthCredentials {
+                account_id: None,
+                ..valid.clone()
+            },
+            ChatGptOAuthCredentials {
+                account_id: Some("  ".to_string()),
+                ..valid
+            },
+        ] {
+            assert!(!invalid.is_usable());
+        }
+    }
+
+    #[tokio::test]
+    async fn chatgpt_resolution_rejects_incomplete_stored_credentials() {
+        let home = temp_home("chatgpt-incomplete");
+        std::fs::write(
+            home.join("auth.json"),
+            r#"{"entries":[{"provider":"openai","method":"chatgpt","source":{"kind":"chatgpt_oauth","credentials":{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":4102444800000,"account_id":null,"email":null,"plan_type":"plus"}},"updated_at":"2026-08-03T00:00:00Z"}]}"#,
+        )
+        .expect("auth store");
+
+        let error = sealed_auth_manager(home)
+            .resolve_chatgpt_oauth()
+            .await
+            .expect_err("incomplete credentials must fail");
+        assert!(error.to_string().contains("credentials are incomplete"));
     }
 
     #[tokio::test]

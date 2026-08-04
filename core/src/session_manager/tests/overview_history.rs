@@ -389,6 +389,8 @@ async fn resumed_manager(manager: &SessionManager) -> SessionManager {
         .await
         .expect("create mcp registry");
     SessionManager::new(config, orbcode_tools::ToolRegistry::foundation(), mcp)
+        .await
+        .expect("create resumed session manager")
 }
 
 #[tokio::test]
