@@ -227,6 +227,29 @@ fn render_usage_overview_labels_subscription_usage_consistently() {
 }
 
 #[test]
+fn render_usage_overview_warns_on_unknown_mixed_pricing() {
+    let overview = UsageOverview {
+        session_id: "abcdef12-3456-7890-abcd-ef1234567890".to_string(),
+        model: "mixed-models".to_string(),
+        provider: ProviderId::OpenAi,
+        message_count: 2,
+        assistant_message_count: 1,
+        usage_message_count: 1,
+        total_usage: TokenUsage::default(),
+        cost: CostSummary {
+            total_cost_usd: 0.25,
+            has_unknown_model_cost: true,
+            billing_basis: orbcode_app_server::BillingBasis::Mixed,
+            ..CostSummary::default()
+        },
+    };
+
+    let rendered = render_usage_overview(&overview);
+    assert!(rendered.contains("Cost: $0.2500 API + subscription usage (not API-priced)"));
+    assert!(rendered.contains("may be inaccurate due to unknown model pricing"));
+}
+
+#[test]
 fn render_cost_overview_shows_total_and_per_model_breakdown() {
     let mut model_usage = std::collections::HashMap::new();
     model_usage.insert(
@@ -294,6 +317,25 @@ fn render_cost_overview_warns_on_unknown_model_pricing() {
     let rendered = render_cost_overview(&overview);
 
     assert!(rendered.contains("total: $0.0750"));
+    assert!(rendered.contains("may be inaccurate due to unknown model pricing"));
+}
+
+#[test]
+fn render_cost_overview_warns_on_unknown_mixed_pricing() {
+    let overview = CostOverview {
+        session_id: "abcdef12-3456-7890-abcd-ef1234567890".to_string(),
+        model: "mixed-models".to_string(),
+        provider: ProviderId::OpenAi,
+        cost: CostSummary {
+            total_cost_usd: 0.25,
+            has_unknown_model_cost: true,
+            billing_basis: orbcode_app_server::BillingBasis::Mixed,
+            ..CostSummary::default()
+        },
+    };
+
+    let rendered = render_cost_overview(&overview);
+    assert!(rendered.contains("total: $0.2500 API + subscription usage (not API-priced)"));
     assert!(rendered.contains("may be inaccurate due to unknown model pricing"));
 }
 

@@ -183,21 +183,11 @@ pub(crate) fn render_usage_overview(overview: &UsageOverview) -> String {
     ]);
 
     let cost = &overview.cost;
-    let cost_display = if cost.billing_basis == BillingBasis::Subscription {
-        "subscription (not API-priced)".to_string()
-    } else if cost.billing_basis == BillingBasis::Mixed {
-        format!(
-            "{} API + subscription usage (not API-priced)",
-            format_cost(cost.total_cost_usd)
-        )
-    } else if cost.has_unknown_model_cost {
-        format!(
-            "{} (may be inaccurate due to unknown model pricing)",
-            format_cost(cost.total_cost_usd)
-        )
-    } else {
-        format_cost(cost.total_cost_usd)
-    };
+    let cost_display = format_total_cost(
+        cost.total_cost_usd,
+        cost.billing_basis,
+        cost.has_unknown_model_cost,
+    );
     lines.extend([String::new(), format!("Cost: {cost_display}")]);
 
     if !cost.model_usage.is_empty() {
@@ -220,21 +210,11 @@ pub(crate) fn render_cost_overview(overview: &CostOverview) -> String {
         format!("provider: {}", overview.provider),
     ];
 
-    let total_display = if cost.billing_basis == BillingBasis::Subscription {
-        "subscription (not API-priced)".to_string()
-    } else if cost.billing_basis == BillingBasis::Mixed {
-        format!(
-            "{} API + subscription usage (not API-priced)",
-            format_cost(cost.total_cost_usd)
-        )
-    } else if cost.has_unknown_model_cost {
-        format!(
-            "{} (may be inaccurate due to unknown model pricing)",
-            format_cost(cost.total_cost_usd)
-        )
-    } else {
-        format_cost(cost.total_cost_usd)
-    };
+    let total_display = format_total_cost(
+        cost.total_cost_usd,
+        cost.billing_basis,
+        cost.has_unknown_model_cost,
+    );
     lines.extend([String::new(), format!("total: {total_display}")]);
 
     if cost.model_usage.is_empty() {
@@ -266,6 +246,25 @@ pub(crate) fn render_cost_overview(overview: &CostOverview) -> String {
     }
 
     lines.join("\n")
+}
+
+fn format_total_cost(
+    total_cost_usd: f64,
+    billing_basis: BillingBasis,
+    has_unknown_model_cost: bool,
+) -> String {
+    let mut display = match billing_basis {
+        BillingBasis::Api => format_cost(total_cost_usd),
+        BillingBasis::Subscription => "subscription (not API-priced)".to_string(),
+        BillingBasis::Mixed => format!(
+            "{} API + subscription usage (not API-priced)",
+            format_cost(total_cost_usd)
+        ),
+    };
+    if has_unknown_model_cost && billing_basis != BillingBasis::Subscription {
+        display.push_str(" (may be inaccurate due to unknown model pricing)");
+    }
+    display
 }
 
 pub(crate) fn render_doctor_report(report: &DoctorReport) -> String {
