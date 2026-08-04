@@ -98,7 +98,7 @@ fi
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
-isolated_env=(env -u ORBCODE_HOME -u PROVIDER_TYPE -u CLAUDE_CODE_USE_OPENAI)
+isolated_env=(env -u ORBCODE_HOME -u PROVIDER_TYPE -u ORBCODE_PROVIDER -u CLAUDE_CODE_USE_OPENAI)
 
 echo "==> --help lists packaged CLI smoke commands"
 help_out="$("${binary}" --help)"
@@ -214,7 +214,7 @@ tui_out="${scratch}/tui.out"
 tui_err="${scratch}/tui.err"
 set +e
 (
-    unset ORBCODE_HOME PROVIDER_TYPE CLAUDE_CODE_USE_OPENAI
+    unset ORBCODE_HOME PROVIDER_TYPE ORBCODE_PROVIDER CLAUDE_CODE_USE_OPENAI
     export CLAUDE_CONFIG_DIR="${scratch}/tui-home"
     export ANTHROPIC_BASE_URL="stub://anthropic"
     export PROVIDER_TYPE="anthropic"

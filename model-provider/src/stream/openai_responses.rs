@@ -9,7 +9,7 @@ use crate::{
     classify_provider_error, sanitize_provider_error_message,
 };
 
-use super::decode_stream_line;
+use super::decode_provider_stream_line;
 
 #[derive(Debug, Deserialize)]
 struct ResponsesStreamEvent {
@@ -82,7 +82,8 @@ impl OpenAiResponsesStreamReader {
                 .pending_bytes
                 .drain(..=newline_index)
                 .collect::<Vec<_>>();
-            let line = decode_stream_line(&line_bytes)?;
+            let line =
+                decode_provider_stream_line(&line_bytes, ProviderId::OpenAi, "OpenAI Responses")?;
             events.extend(self.consume_line(&line)?);
         }
         Ok(events)
@@ -91,7 +92,11 @@ impl OpenAiResponsesStreamReader {
     pub fn finish_events(&mut self) -> Result<Vec<ProviderStreamEvent>, ProviderError> {
         let mut events = Vec::new();
         if !self.pending_bytes.is_empty() {
-            let line = decode_stream_line(&std::mem::take(&mut self.pending_bytes))?;
+            let line = decode_provider_stream_line(
+                &std::mem::take(&mut self.pending_bytes),
+                ProviderId::OpenAi,
+                "OpenAI Responses",
+            )?;
             events.extend(self.consume_line(&line)?);
         }
         events.extend(self.flush_frame()?);
@@ -569,5 +574,29 @@ mod tests {
             .expect("created");
         let error = reader.finish_events().expect_err("early EOF");
         assert!(error.message.contains("response.completed"));
+    }
+
+    #[test]
+    fn invalid_utf8_errors_identify_openai_responses() {
+        fn assert_openai_responses_error(error: &ProviderError) {
+            assert_eq!(error.provider, Some(ProviderId::OpenAi));
+            assert!(error.message.contains("OpenAI Responses stream"));
+            assert!(!error.message.contains("Anthropic"));
+        }
+
+        let mut complete_line_reader = OpenAiResponsesStreamReader::new();
+        let error = complete_line_reader
+            .push_chunk_events(b"data: \xff\n")
+            .expect_err("invalid UTF-8 line");
+        assert_openai_responses_error(&error);
+
+        let mut trailing_line_reader = OpenAiResponsesStreamReader::new();
+        trailing_line_reader
+            .push_chunk_events(b"data: \xff")
+            .expect("buffer incomplete line");
+        let error = trailing_line_reader
+            .finish_events()
+            .expect_err("invalid trailing UTF-8 line");
+        assert_openai_responses_error(&error);
     }
 }
