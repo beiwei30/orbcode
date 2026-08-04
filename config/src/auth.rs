@@ -3,18 +3,27 @@ use std::env;
 use std::fmt;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use orbcode_protocol::ProviderId;
 use serde::{Deserialize, Serialize};
 
 use crate::ConfigError;
+use crate::OutboundProxyConfig;
+use crate::openai_oauth::{
+    self, ChatGptBrowserLoginSession, ChatGptDeviceLoginSession, ChatGptOAuthCredentials,
+    OpenAiOAuthOptions,
+};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMethod {
     ApiKey,
+    #[serde(alias = "oauth_device")]
     OAuthDevice,
+    #[serde(rename = "chatgpt")]
+    ChatGpt,
 }
 
 impl fmt::Display for AuthMethod {
@@ -22,6 +31,7 @@ impl fmt::Display for AuthMethod {
         let value = match self {
             Self::ApiKey => "api_key",
             Self::OAuthDevice => "oauth_device",
+            Self::ChatGpt => "chatgpt",
         };
         f.write_str(value)
     }
@@ -71,6 +81,8 @@ pub struct AuthManager {
     /// When set by managed policy (`forceLoginMethod`), `login` rejects any
     /// attempt to authenticate with a different method.
     forced_method: Option<AuthMethod>,
+    openai_oauth: OpenAiOAuthOptions,
+    openai_refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Map a managed `forceLoginMethod` policy string onto an [`AuthMethod`].
@@ -97,10 +109,22 @@ struct StoredAuthEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum StoredAuthSource {
-    EnvVar { env_var: String },
-    StoredApiKey { api_key: String },
-    StoredAuthToken { auth_token: String },
-    StoredHint { hint: String },
+    EnvVar {
+        env_var: String,
+    },
+    StoredApiKey {
+        api_key: String,
+    },
+    StoredAuthToken {
+        auth_token: String,
+    },
+    StoredHint {
+        hint: String,
+    },
+    #[serde(rename = "chatgpt_oauth")]
+    ChatGptOAuth {
+        credentials: ChatGptOAuthCredentials,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +138,8 @@ impl AuthManager {
             home_dir,
             env_overrides: HashMap::new(),
             forced_method: None,
+            openai_oauth: OpenAiOAuthOptions::default(),
+            openai_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -131,6 +157,122 @@ impl AuthManager {
     pub fn with_env_overrides(mut self, env_overrides: HashMap<String, String>) -> Self {
         self.env_overrides = env_overrides;
         self
+    }
+
+    /// Override OAuth endpoints and callback behavior. Production callers use
+    /// the fixed defaults; this exists so tests can use local fake servers.
+    pub fn with_openai_oauth_options(mut self, options: OpenAiOAuthOptions) -> Self {
+        self.openai_oauth = options;
+        self
+    }
+
+    /// Apply the same resolved proxy inputs used by provider traffic to
+    /// ChatGPT login, token exchange, and refresh requests.
+    pub fn with_openai_proxy_config(mut self, proxy_config: OutboundProxyConfig) -> Self {
+        self.openai_oauth.proxy_config = proxy_config;
+        self
+    }
+
+    pub fn chatgpt_codex_base_url(&self) -> &str {
+        &self.openai_oauth.codex_base_url
+    }
+
+    pub async fn start_chatgpt_browser_login(
+        &self,
+    ) -> Result<ChatGptBrowserLoginSession, ConfigError> {
+        self.ensure_login_method_allowed(AuthMethod::ChatGpt)?;
+        openai_oauth::start_browser_login(self.openai_oauth.clone()).await
+    }
+
+    pub async fn complete_chatgpt_browser_login(
+        &self,
+        session: ChatGptBrowserLoginSession,
+    ) -> Result<AuthStatusEntry, ConfigError> {
+        let credentials = openai_oauth::complete_browser_login(session).await?;
+        self.store_chatgpt_oauth(credentials).await
+    }
+
+    pub async fn start_chatgpt_device_login(
+        &self,
+    ) -> Result<ChatGptDeviceLoginSession, ConfigError> {
+        self.ensure_login_method_allowed(AuthMethod::ChatGpt)?;
+        openai_oauth::start_device_login(self.openai_oauth.clone()).await
+    }
+
+    pub async fn complete_chatgpt_device_login(
+        &self,
+        session: ChatGptDeviceLoginSession,
+    ) -> Result<AuthStatusEntry, ConfigError> {
+        let credentials = openai_oauth::complete_device_login(session).await?;
+        self.store_chatgpt_oauth(credentials).await
+    }
+
+    /// Return current ChatGPT credentials, refreshing and atomically
+    /// persisting a rotated refresh token when expiry is near.
+    pub async fn resolve_chatgpt_oauth(
+        &self,
+    ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
+        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+            return Ok(None);
+        };
+        if !credentials.needs_refresh() {
+            return Ok(Some(credentials));
+        }
+
+        let _refresh_guard = self.openai_refresh_lock.lock().await;
+        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+            return Ok(None);
+        };
+        if !credentials.needs_refresh() {
+            return Ok(Some(credentials));
+        }
+        let refreshed = openai_oauth::refresh_credentials(&self.openai_oauth, &credentials).await?;
+        self.store_chatgpt_oauth(refreshed.clone()).await?;
+        Ok(Some(refreshed))
+    }
+
+    /// Force one refresh after the Codex backend rejects an otherwise-current
+    /// access token. Callers must bound this recovery to one attempt.
+    pub async fn refresh_chatgpt_oauth(
+        &self,
+    ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
+        let _refresh_guard = self.openai_refresh_lock.lock().await;
+        let Some(credentials) = load_chatgpt_oauth(&self.home_dir) else {
+            return Ok(None);
+        };
+        let refreshed = openai_oauth::refresh_credentials(&self.openai_oauth, &credentials).await?;
+        self.store_chatgpt_oauth(refreshed.clone()).await?;
+        Ok(Some(refreshed))
+    }
+
+    fn ensure_login_method_allowed(&self, method: AuthMethod) -> Result<(), ConfigError> {
+        if let Some(forced) = self.forced_method
+            && forced != method
+        {
+            return Err(ConfigError::Config(format!(
+                "login method is locked by managed policy to {forced}; cannot log in with {method}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn store_chatgpt_oauth(
+        &self,
+        credentials: ChatGptOAuthCredentials,
+    ) -> Result<AuthStatusEntry, ConfigError> {
+        let mut store = self.load_state().await?;
+        let entry = StoredAuthEntry {
+            provider: ProviderId::OpenAi,
+            method: AuthMethod::ChatGpt,
+            source: StoredAuthSource::ChatGptOAuth { credentials },
+            updated_at: Utc::now(),
+        };
+        store.entries.retain(|existing| {
+            !(existing.provider == ProviderId::OpenAi && existing.method == AuthMethod::ChatGpt)
+        });
+        store.entries.push(entry.clone());
+        self.save_state(&store).await?;
+        self.status_for_stored_entry(&entry).await
     }
 
     pub async fn overview(&self) -> Result<AuthOverview, ConfigError> {
@@ -172,13 +314,7 @@ impl AuthManager {
         token: Option<String>,
         env_var: Option<String>,
     ) -> Result<AuthStatusEntry, ConfigError> {
-        if let Some(forced) = self.forced_method
-            && forced != method
-        {
-            return Err(ConfigError::Config(format!(
-                "login method is locked by managed policy to {forced}; cannot log in with {method}"
-            )));
-        }
+        self.ensure_login_method_allowed(method)?;
         let source = match (
             token
                 .map(|value| value.trim().to_string())
@@ -190,8 +326,21 @@ impl AuthManager {
             (Some(token), None) => match method {
                 AuthMethod::ApiKey => StoredAuthSource::StoredApiKey { api_key: token },
                 AuthMethod::OAuthDevice => StoredAuthSource::StoredAuthToken { auth_token: token },
+                AuthMethod::ChatGpt => {
+                    return Err(ConfigError::Config(
+                        "ChatGPT login uses the browser or --device-code flow; --token is not accepted"
+                            .into(),
+                    ));
+                }
             },
-            (None, Some(env_var)) => StoredAuthSource::EnvVar { env_var },
+            (None, Some(env_var)) if method != AuthMethod::ChatGpt => {
+                StoredAuthSource::EnvVar { env_var }
+            }
+            (None, Some(_)) => {
+                return Err(ConfigError::Config(
+                    "ChatGPT login cannot be configured through --env-var".into(),
+                ));
+            }
             (None, None) => {
                 return Err(ConfigError::Config(
                     "auth login requires either --token or --env-var".into(),
@@ -214,19 +363,10 @@ impl AuthManager {
 
         store
             .entries
-            .retain(|existing| existing.provider != provider);
+            .retain(|existing| !(existing.provider == provider && existing.method == method));
         store.entries.push(entry.clone());
         self.save_state(&store).await?;
-
-        Ok(AuthStatusEntry {
-            provider: entry.provider,
-            method: entry.method,
-            source_summary: stored_source_summary(&entry.source),
-            persisted: true,
-            usable: stored_source_usable(&entry.source),
-            active: true,
-            updated_at: Some(entry.updated_at),
-        })
+        self.status_for_stored_entry(&entry).await
     }
 
     pub async fn logout(&self, provider: Option<ProviderId>) -> Result<usize, ConfigError> {
@@ -248,6 +388,25 @@ impl AuthManager {
 
     fn store_path(&self) -> PathBuf {
         self.home_dir.join("auth.json")
+    }
+
+    async fn status_for_stored_entry(
+        &self,
+        stored: &StoredAuthEntry,
+    ) -> Result<AuthStatusEntry, ConfigError> {
+        self.overview()
+            .await?
+            .entries
+            .into_iter()
+            .find(|entry| {
+                entry.persisted
+                    && entry.provider == stored.provider
+                    && entry.method == stored.method
+                    && entry.updated_at == Some(stored.updated_at)
+            })
+            .ok_or_else(|| {
+                ConfigError::Config("saved auth entry was not present in auth status".to_string())
+            })
     }
 
     async fn load_state(&self) -> Result<StoredAuthState, ConfigError> {
@@ -278,24 +437,36 @@ impl AuthManager {
 
 pub fn stored_api_key(home_dir: &Path, provider: ProviderId) -> Option<String> {
     let store = load_stored_auth_state(home_dir)?;
-    store
-        .entries
-        .into_iter()
-        .find(|entry| entry.provider == provider)
-        .and_then(|entry| match entry.source {
-            StoredAuthSource::StoredApiKey { api_key } => Some(api_key),
-            _ => None,
-        })
+    store.entries.into_iter().find_map(|entry| match entry {
+        StoredAuthEntry {
+            provider: entry_provider,
+            source: StoredAuthSource::StoredApiKey { api_key },
+            ..
+        } if entry_provider == provider => Some(api_key),
+        _ => None,
+    })
 }
 
 pub fn stored_auth_token(home_dir: &Path, provider: ProviderId) -> Option<String> {
     let store = load_stored_auth_state(home_dir)?;
+    store.entries.into_iter().find_map(|entry| match entry {
+        StoredAuthEntry {
+            provider: entry_provider,
+            source: StoredAuthSource::StoredAuthToken { auth_token },
+            ..
+        } if entry_provider == provider => Some(auth_token),
+        _ => None,
+    })
+}
+
+pub fn load_chatgpt_oauth(home_dir: &Path) -> Option<ChatGptOAuthCredentials> {
+    let store = load_stored_auth_state(home_dir)?;
     store
         .entries
         .into_iter()
-        .find(|entry| entry.provider == provider)
+        .find(|entry| entry.provider == ProviderId::OpenAi && entry.method == AuthMethod::ChatGpt)
         .and_then(|entry| match entry.source {
-            StoredAuthSource::StoredAuthToken { auth_token } => Some(auth_token),
+            StoredAuthSource::ChatGptOAuth { credentials } => Some(credentials),
             _ => None,
         })
 }
@@ -313,11 +484,34 @@ fn stored_source_summary(source: &StoredAuthSource) -> String {
             format!("stored:{}", mask_secret(auth_token))
         }
         StoredAuthSource::StoredHint { hint } => format!("stored:{hint} (metadata only)"),
+        StoredAuthSource::ChatGptOAuth { credentials } => {
+            let mut status = if credentials.needs_refresh() {
+                "refresh required".to_string()
+            } else {
+                "ready".to_string()
+            };
+            if let Some(plan_type) = credentials.plan_type.as_deref() {
+                write!(status, "; subscription:{plan_type}")
+                    .expect("writing to String cannot fail");
+            }
+            if let Some(email) = credentials.email.as_deref() {
+                write!(status, "; {email}").expect("writing to String cannot fail");
+            }
+            format!("chatgpt oauth ({status})")
+        }
     }
 }
 
 fn stored_source_usable(source: &StoredAuthSource) -> bool {
-    !matches!(source, StoredAuthSource::StoredHint { .. })
+    match source {
+        StoredAuthSource::StoredHint { .. } => false,
+        StoredAuthSource::ChatGptOAuth { credentials } => {
+            !credentials.access_token.trim().is_empty()
+                && !credentials.refresh_token.trim().is_empty()
+                && credentials.account_id.is_some()
+        }
+        _ => true,
+    }
 }
 
 struct AuthEnvMatch {
@@ -445,6 +639,9 @@ fn openai_source_precedence(entry: &AuthStatusEntry) -> u8 {
     }
     if entry.method == AuthMethod::ApiKey && entry.source_summary.starts_with("stored:") {
         return 1;
+    }
+    if entry.method == AuthMethod::ChatGpt && entry.source_summary.starts_with("chatgpt oauth") {
+        return 2;
     }
     100
 }
@@ -621,6 +818,8 @@ fn mask_secret(secret: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn mask_secret_is_char_boundary_safe() {
@@ -725,6 +924,116 @@ mod tests {
             stored_auth_token(&home, ProviderId::Anthropic).as_deref(),
             Some("oauth-token")
         );
+    }
+
+    fn chatgpt_credentials(expires_at: i64) -> ChatGptOAuthCredentials {
+        ChatGptOAuthCredentials {
+            id_token: "id-token".to_string(),
+            access_token: "access-token".to_string(),
+            refresh_token: "refresh-token".to_string(),
+            expires_at,
+            account_id: Some("account-123".to_string()),
+            email: Some("dev@example.com".to_string()),
+            plan_type: Some("plus".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn chatgpt_credentials_round_trip_and_coexist_with_stored_api_key() {
+        let home = temp_home("chatgpt-round-trip");
+        let manager = sealed_auth_manager(home.clone());
+        manager
+            .login(
+                ProviderId::OpenAi,
+                AuthMethod::ApiKey,
+                Some("sk-openai-secret".to_string()),
+                None,
+            )
+            .await
+            .expect("API key login");
+        manager
+            .store_chatgpt_oauth(chatgpt_credentials(
+                Utc::now().timestamp_millis() + 60 * 60 * 1000,
+            ))
+            .await
+            .expect("ChatGPT login");
+
+        let loaded = load_chatgpt_oauth(&home).expect("stored ChatGPT credentials");
+        assert_eq!(loaded.account_id.as_deref(), Some("account-123"));
+        assert_eq!(
+            stored_api_key(&home, ProviderId::OpenAi).as_deref(),
+            Some("sk-openai-secret")
+        );
+        let overview = manager.overview().await.expect("overview");
+        let api_key = overview
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.provider == ProviderId::OpenAi && entry.method == AuthMethod::ApiKey
+            })
+            .expect("API key status");
+        let chatgpt = overview
+            .entries
+            .iter()
+            .find(|entry| entry.method == AuthMethod::ChatGpt)
+            .expect("ChatGPT status");
+        assert!(api_key.active);
+        assert!(!chatgpt.active);
+        assert!(!chatgpt.source_summary.contains("access-token"));
+        assert!(!chatgpt.source_summary.contains("refresh-token"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(home.join("auth.json"))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_chatgpt_resolution_refreshes_once_and_persists_rotation() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 3600
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let home = temp_home("chatgpt-singleflight");
+        let manager =
+            sealed_auth_manager(home.clone()).with_openai_oauth_options(OpenAiOAuthOptions {
+                issuer: server.uri(),
+                ..OpenAiOAuthOptions::default()
+            });
+        manager
+            .store_chatgpt_oauth(chatgpt_credentials(Utc::now().timestamp_millis() - 1))
+            .await
+            .expect("expired credentials");
+
+        let left = manager.clone();
+        let right = manager.clone();
+        let (left, right) =
+            tokio::join!(left.resolve_chatgpt_oauth(), right.resolve_chatgpt_oauth());
+        assert_eq!(
+            left.expect("left").expect("credentials").access_token,
+            "new-access-token"
+        );
+        assert_eq!(
+            right.expect("right").expect("credentials").access_token,
+            "new-access-token"
+        );
+        let stored = load_chatgpt_oauth(&home).expect("rotated credentials");
+        assert_eq!(stored.id_token, "id-token");
+        assert_eq!(stored.refresh_token, "new-refresh-token");
     }
 
     #[tokio::test]

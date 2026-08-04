@@ -1,8 +1,10 @@
 mod anthropic;
 mod openai;
+mod openai_responses;
 
 pub use anthropic::{AnthropicStreamReader, provider_stream_event_from_sse_frame};
 pub use openai::OpenAiStreamReader;
+pub use openai_responses::OpenAiResponsesStreamReader;
 
 use orbcode_protocol::StreamErrorCategory;
 

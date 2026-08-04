@@ -58,6 +58,9 @@ impl SessionManager {
         session_id: &str,
         config: &AppConfig,
     ) -> Option<BudgetDecision> {
+        if self.uses_chatgpt_subscription() {
+            return None;
+        }
         let max_budget_usd = config.max_budget_usd()?;
         let (total_usd, pricing_known) = self.live_cost_total(session_id).await;
         if over_budget(total_usd, max_budget_usd) {
@@ -487,6 +490,7 @@ impl SessionManager {
             );
             let stream_result = execute_stream_with_retry_and_fallback(
                 config,
+                &self.auth,
                 request,
                 &mut stream_sink,
                 ProviderCancellationToken::from_flag(cancel_flag.clone()),

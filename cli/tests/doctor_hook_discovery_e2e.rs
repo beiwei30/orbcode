@@ -26,7 +26,7 @@ fn run_doctor(home: &Path, cwd: &Path, managed_dir: &Path) -> (bool, String, Str
         .env("CLAUDE_CONFIG_DIR", home)
         .env("CLAUDE_CODE_MANAGED_SETTINGS_PATH", managed_dir)
         .env("ANTHROPIC_BASE_URL", "stub://anthropic")
-        .env("ORBCODE_PROVIDER", "anthropic")
+        .env("PROVIDER_TYPE", "anthropic")
         .env_remove("ORBCODE_HOME")
         .env_remove("CLAUDE_CODE_USE_OPENAI")
         .arg("doctor")

@@ -10,8 +10,9 @@
 
 use async_trait::async_trait;
 use orbcode_model_provider::{
-    ProviderCancellationToken, ProviderError, ProviderRequest, ProviderRequestOptions,
-    ProviderStreamEvent, ProviderStreamSink, stream_anthropic_request, stream_openai_request,
+    OpenAiWireMode, ProviderCancellationToken, ProviderError, ProviderRequest,
+    ProviderRequestOptions, ProviderStreamEvent, ProviderStreamSink, stream_anthropic_request,
+    stream_openai_request,
 };
 use orbcode_protocol::TurnContext;
 use serde_json::{Map, Value, json};
@@ -87,7 +88,67 @@ fn full_options() -> ProviderRequestOptions {
         timeout: Some(std::time::Duration::from_secs(30)),
         max_retries: Some(2),
         proxy: None,
+        ..ProviderRequestOptions::default()
     }
+}
+
+const RESPONSES_SSE: &str = concat!(
+    "event: response.output_text.delta\n",
+    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+    "event: response.completed\n",
+    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1,\"total_tokens\":3}}}\n\n",
+);
+
+#[tokio::test]
+async fn chatgpt_responses_uses_fixed_wire_shape_and_protected_auth_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/codex/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_raw(RESPONSES_SSE.as_bytes().to_vec(), "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let mut request = base_request(format!("{}/codex", server.uri()), "gpt-5.6-sol");
+    request.api_key = None;
+    request.auth_token = Some("oauth-access".to_string());
+    request.options = ProviderRequestOptions {
+        openai_wire_mode: OpenAiWireMode::Responses,
+        openai_account_id: Some("account-123".to_string()),
+        custom_headers: vec![
+            ("Authorization".to_string(), "Bearer attacker".to_string()),
+            ("ChatGPT-Account-ID".to_string(), "wrong".to_string()),
+            ("originator".to_string(), "attacker".to_string()),
+            ("session-id".to_string(), "wrong-session".to_string()),
+            ("X-Safe".to_string(), "yes".to_string()),
+        ],
+        ..ProviderRequestOptions::default()
+    };
+
+    let mut sink = NullSink;
+    stream_openai_request(&request, &mut sink, ProviderCancellationToken::default())
+        .await
+        .expect("Responses stream succeeds");
+
+    let received = server.received_requests().await.expect("wiremock captured");
+    let req = &received[0];
+    assert_eq!(
+        header_value(req, "authorization"),
+        Some("Bearer oauth-access")
+    );
+    assert_eq!(header_value(req, "chatgpt-account-id"), Some("account-123"));
+    assert_eq!(header_value(req, "originator"), Some("orbcode"));
+    assert_eq!(header_value(req, "session-id"), Some("session-e2e"));
+    assert_eq!(header_value(req, "x-safe"), Some("yes"));
+    let body: Value = serde_json::from_slice(&req.body).expect("JSON body");
+    assert_eq!(body["model"], "gpt-5.6-sol");
+    assert_eq!(body["store"], false);
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    assert!(body.get("messages").is_none());
 }
 
 fn header_value<'a>(req: &'a wiremock::Request, name: &str) -> Option<&'a str> {

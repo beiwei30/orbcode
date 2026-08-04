@@ -217,6 +217,49 @@ async fn precheck_block_over_cap_wins_over_unknown_pricing() {
 }
 
 #[tokio::test]
+async fn subscription_usage_does_not_trigger_api_budget_cap() {
+    let mut manager = test_manager().await;
+    manager.config.default_provider = ProviderId::OpenAi;
+    manager.config.settings.max_budget_usd = Some(0.000_001);
+    std::fs::write(
+        manager.config.home_dir.join("auth.json"),
+        format!(
+            r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":"account-123","email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
+            chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
+        ),
+    )
+    .expect("write ChatGPT auth");
+
+    let session_id = "subscription-budget";
+    manager
+        .append_message(
+            session_id,
+            TranscriptMessage::new(MessageRole::Assistant, "answer")
+                .with_usage(usage(1_000_000, 100_000)),
+        )
+        .await
+        .expect("append assistant");
+
+    let overview = manager
+        .cost_overview(session_id)
+        .await
+        .expect("cost overview");
+    assert_eq!(overview.cost.total_cost_usd, 0.0);
+    assert_eq!(
+        overview.cost.billing_basis,
+        crate::BillingBasis::Subscription
+    );
+    assert_eq!(manager.model_display_name(), "gpt-5.6-sol");
+    assert!(
+        manager
+            .budget_precheck(session_id, &manager.config)
+            .await
+            .is_none(),
+        "subscription usage must not be compared with the API dollar budget"
+    );
+}
+
+#[tokio::test]
 async fn fallback_discard_preserves_partial_usage_in_live_cost() {
     let mut manager = test_manager().await;
     manager.config.settings.env.insert(

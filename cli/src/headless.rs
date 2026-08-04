@@ -1532,9 +1532,12 @@ pub(crate) async fn build_cost_fields(client: &AppClient, session_id: &str) -> C
             let has_unknown = overview["cost"]["has_unknown_model_cost"]
                 .as_bool()
                 .unwrap_or(true);
+            let is_api_priced = overview["cost"]["billing_basis"]
+                .as_str()
+                .is_none_or(|basis| basis == "api");
             CostFields {
                 total_cost_usd,
-                pricing_known: !has_unknown,
+                pricing_known: !has_unknown && is_api_priced,
                 model_costs: None,
             }
         }

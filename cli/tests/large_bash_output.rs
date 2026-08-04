@@ -11,7 +11,7 @@ fn large_bash_output_stub_preview_is_bounded() {
         .current_dir(workspace.path())
         .env("CLAUDE_CONFIG_DIR", home.path())
         .env("ANTHROPIC_BASE_URL", "stub://anthropic")
-        .env("ORBCODE_PROVIDER", "anthropic")
+        .env("PROVIDER_TYPE", "anthropic")
         .env("ORBCODE_ALLOW_TOOLS", "true")
         .env_remove("CLAUDE_CODE_USE_OPENAI")
         .env_remove("ORBCODE_ALLOWED_TOOLS")

@@ -407,6 +407,7 @@ impl SessionManager {
         let mut stream_sink = CompactProviderStreamSink::new(config.default_provider);
         execute_stream_with_retry_and_fallback(
             &config,
+            &self.auth,
             request,
             &mut stream_sink,
             ProviderCancellationToken::default(),

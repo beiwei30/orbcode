@@ -1,4 +1,4 @@
-use orbcode_config::AppConfig;
+use orbcode_config::{AppConfig, OutboundProxyRoute};
 use orbcode_protocol::ProviderId;
 
 use orbcode_model_provider::ProviderRequest;
@@ -49,8 +49,18 @@ impl AppConfigProviderRequestOptionsExt for AppConfig {
         if options.user_agent.is_none() {
             options.user_agent = self.provider_user_agent();
         }
-        if options.proxy.is_none() {
-            options.proxy = self.provider_proxy_url();
+        if options.proxy.is_none() || options.proxy_resolved_from_config {
+            match self.outbound_proxy_route(&request.base_url) {
+                OutboundProxyRoute::Direct => {
+                    options.proxy = None;
+                    options.proxy_no_proxy = None;
+                }
+                OutboundProxyRoute::Proxy { url, no_proxy } => {
+                    options.proxy = Some(url);
+                    options.proxy_no_proxy = no_proxy;
+                }
+            }
+            options.proxy_resolved_from_config = true;
         }
         if options.timeout.is_none() {
             options.timeout = self.api_timeout();
@@ -251,6 +261,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_request_preserves_programmatic_proxy_override() {
+        let home = tempfile::tempdir().expect("home");
+        let cwd = tempfile::tempdir().expect("cwd");
+        let mut config = AppConfig::load(
+            cwd.path(),
+            AppConfigOverrides {
+                home_dir: Some(home.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("config");
+        seal_provider_env(&mut config);
+
+        let mut request = empty_request();
+        request.options.proxy = Some("http://programmatic-proxy.invalid:7000".to_string());
+        request.options.proxy_no_proxy = Some("programmatic.internal".to_string());
+        config.configure_provider_request(ProviderId::Anthropic, &mut request);
+
+        assert_eq!(
+            request.options.proxy.as_deref(),
+            Some("http://programmatic-proxy.invalid:7000")
+        );
+        assert_eq!(
+            request.options.proxy_no_proxy.as_deref(),
+            Some("programmatic.internal")
+        );
+        assert!(!request.options.proxy_resolved_from_config);
+    }
+
+    #[tokio::test]
     async fn anthropic_request_inherits_options_from_config_env() {
         let home = tempfile::tempdir().expect("home");
         let cwd = tempfile::tempdir().expect("cwd");
@@ -265,7 +306,8 @@ mod tests {
                     "ANTHROPIC_CUSTOM_HEADERS": "X-Cc-Test: yes",
                     "CLAUDE_CODE_USER_AGENT": "orbcode/test",
                     "API_TIMEOUT_MS": "12345",
-                    "HTTPS_PROXY": "http://proxy.invalid:9000"
+                    "https_proxy": "http://proxy.invalid:9000",
+                    "no_proxy": "internal.example"
                 }
             }"#,
         )
@@ -309,6 +351,11 @@ mod tests {
             request.options.proxy.as_deref(),
             Some("http://proxy.invalid:9000")
         );
+        assert_eq!(
+            request.options.proxy_no_proxy.as_deref(),
+            Some("internal.example,localhost,127.0.0.1,::1")
+        );
+        assert!(request.options.proxy_resolved_from_config);
         let metadata = request
             .options
             .metadata

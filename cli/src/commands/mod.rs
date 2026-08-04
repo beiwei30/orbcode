@@ -476,7 +476,11 @@ pub(crate) async fn run_tool(
     Ok(())
 }
 
-pub(crate) async fn run_auth(client: &AppClient, command: AuthCommand) -> Result<()> {
+pub(crate) async fn run_auth(
+    app_server: AppServer,
+    client: &AppClient,
+    command: AuthCommand,
+) -> Result<()> {
     match command {
         AuthCommand::Status => {
             let overview = client.auth_overview().await.map_err(client_err)?;
@@ -517,11 +521,60 @@ pub(crate) async fn run_auth(client: &AppClient, command: AuthCommand) -> Result
             method,
             token,
             env_var,
+            device_code,
         } => {
+            if matches!(method, crate::args::CliAuthMethod::ChatGpt) {
+                if provider.as_str() != "openai" {
+                    bail!("--method chatgpt is only valid with --provider openai");
+                }
+                if token.is_some() || env_var.is_some() {
+                    bail!("ChatGPT login does not accept --token or --env-var");
+                }
+                if device_code {
+                    let session = app_server.start_chatgpt_device_login().await?;
+                    println!("open {}", session.verification_uri);
+                    println!("code {}", session.user_code);
+                    println!(
+                        "waiting for authorization; interval={}s",
+                        session.interval_secs
+                    );
+                    io::stdout().flush()?;
+                    let entry = app_server.complete_chatgpt_device_login(session).await?;
+                    println!(
+                        "signed in to {} via {} ({})",
+                        entry.provider, entry.method, entry.source_summary
+                    );
+                    return Ok(());
+                }
+
+                let session = app_server.start_chatgpt_browser_login().await?;
+                println!("open {}", session.authorization_url);
+                println!("listening {}", session.redirect_uri);
+                match launch_browser(&session.authorization_url) {
+                    BrowserLaunch::Opened => println!("opened system browser"),
+                    BrowserLaunch::Disabled => println!(
+                        "browser auto-launch disabled (ORBCODE_NO_BROWSER); open the URL above"
+                    ),
+                    BrowserLaunch::Failed(error) => {
+                        println!("could not open system browser ({error}); open the URL above")
+                    }
+                }
+                io::stdout().flush()?;
+                let entry = app_server.complete_chatgpt_browser_login(session).await?;
+                println!(
+                    "signed in to {} via {} ({})",
+                    entry.provider, entry.method, entry.source_summary
+                );
+                return Ok(());
+            }
+            if device_code {
+                bail!("--device-code requires --method chatgpt");
+            }
             let provider_str = provider.as_str();
             let method_str: &str = match method {
                 crate::args::CliAuthMethod::ApiKey => "api_key",
-                crate::args::CliAuthMethod::OAuthDevice => "o_auth_device",
+                crate::args::CliAuthMethod::OAuthDevice => "oauth_device",
+                crate::args::CliAuthMethod::ChatGpt => unreachable!("handled above"),
             };
             let entry = client
                 .auth_login(

@@ -35,7 +35,7 @@ fn sessions_json_loads_all_message_variants_as_available() {
         .current_dir(&cwd_real)
         .env("CLAUDE_CONFIG_DIR", &home)
         .env("ANTHROPIC_BASE_URL", "stub://anthropic")
-        .env("ORBCODE_PROVIDER", "anthropic")
+        .env("PROVIDER_TYPE", "anthropic")
         .env_remove("ORBCODE_HOME")
         .env_remove("CLAUDE_CODE_USE_OPENAI")
         .arg("sessions")

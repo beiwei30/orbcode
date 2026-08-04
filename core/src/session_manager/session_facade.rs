@@ -84,7 +84,12 @@ impl SessionManager {
     }
 
     pub fn model_display_name(&self) -> String {
-        self.effective_config().model_display_name()
+        let config = self.effective_config();
+        if self.uses_chatgpt_subscription() && !config.provider_model_is_explicit() {
+            "gpt-5.6-sol".to_string()
+        } else {
+            config.model_display_name()
+        }
     }
 
     pub fn model_options(&self) -> Vec<ModelOption> {

@@ -4,7 +4,7 @@ use std::env;
 use orbcode_protocol::ProviderId;
 
 use crate::ConfigError;
-use crate::claude_home::{ClaudeSettings, resolve_env_value};
+use crate::claude_home::{ClaudeSettings, resolve_env_value_with};
 use crate::config::PermissionMode;
 use crate::layers::{LayerInput, ResolvedSettings, SettingOrigin, SettingWarning};
 use crate::policy::{SettingsLayers, SettingsSource};
@@ -179,19 +179,45 @@ pub(crate) fn resolve_layered_settings(
 pub(crate) fn resolve_default_provider(
     override_provider: Option<ProviderId>,
     settings: &ClaudeSettings,
+    env_overrides: &HashMap<String, String>,
+) -> ProviderId {
+    resolve_default_provider_with(override_provider, settings, |key| {
+        env_overrides
+            .get(key)
+            .cloned()
+            .or_else(|| env::var(key).ok())
+    })
+}
+
+fn resolve_default_provider_with(
+    override_provider: Option<ProviderId>,
+    settings: &ClaudeSettings,
+    process_env: impl Fn(&str) -> Option<String>,
 ) -> ProviderId {
     override_provider
         .or_else(|| {
-            env::var("ORBCODE_PROVIDER")
-                .ok()
-                .and_then(|value| ProviderId::parse(&value))
+            resolve_env_value_with("PROVIDER_TYPE", &settings.env, |key| process_env(key))
+                .and_then(parse_provider_type)
         })
+        .or_else(|| process_env("ORBCODE_PROVIDER").and_then(|value| ProviderId::parse(&value)))
         .or_else(|| {
-            parse_bool_value(resolve_env_value(settings, "CLAUDE_CODE_USE_OPENAI"))
-                .filter(|enabled| *enabled)
-                .map(|_| ProviderId::OpenAi)
+            parse_bool_value(resolve_env_value_with(
+                "CLAUDE_CODE_USE_OPENAI",
+                &settings.env,
+                |key| process_env(key),
+            ))
+            .filter(|enabled| *enabled)
+            .map(|_| ProviderId::OpenAi)
         })
         .unwrap_or(ProviderId::Anthropic)
+}
+
+fn parse_provider_type(value: String) -> Option<ProviderId> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => Some(ProviderId::Anthropic),
+        "openai" => Some(ProviderId::OpenAi),
+        _ => None,
+    }
 }
 
 /// Parse a boolean from an environment variable.
@@ -216,6 +242,9 @@ pub(crate) fn parse_bool_value(value: Option<String>) -> Option<bool> {
 /// model/provider resolution regardless of the developer's shell.
 pub fn sealed_provider_env_overrides() -> HashMap<String, String> {
     let legacy_keys = [
+        "PROVIDER_TYPE",
+        "ORBCODE_PROVIDER",
+        "CLAUDE_CODE_USE_OPENAI",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
@@ -234,6 +263,16 @@ pub fn sealed_provider_env_overrides() -> HashMap<String, String> {
         "OPENAI_DEFAULT_OPUS_MODEL",
         "OPENAI_DEFAULT_SONNET_MODEL",
         "OPENAI_DEFAULT_HAIKU_MODEL",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "CLAUDE_CODE_PROXY",
+        "ANTHROPIC_PROXY_URL",
     ];
     legacy_keys
         .into_iter()
@@ -319,12 +358,66 @@ mod tests {
     }
 
     #[test]
-    fn resolve_default_provider_respects_openai_env_flag() {
+    fn resolve_default_provider_uses_provider_type_from_settings() {
+        let mut settings = ClaudeSettings::default();
+        settings
+            .env
+            .insert("PROVIDER_TYPE".to_string(), "openai".to_string());
+        let provider = super::resolve_default_provider_with(None, &settings, |_| None);
+        assert_eq!(provider, ProviderId::OpenAi);
+    }
+
+    #[test]
+    fn provider_type_anthropic_overrides_legacy_openai_boolean() {
+        let mut settings = ClaudeSettings::default();
+        settings
+            .env
+            .insert("PROVIDER_TYPE".to_string(), "anthropic".to_string());
+        settings
+            .env
+            .insert("CLAUDE_CODE_USE_OPENAI".to_string(), "true".to_string());
+        let provider = super::resolve_default_provider_with(None, &settings, |_| None);
+        assert_eq!(provider, ProviderId::Anthropic);
+    }
+
+    #[test]
+    fn process_provider_type_wins_over_settings_and_cli_wins_over_process() {
+        let mut settings = ClaudeSettings::default();
+        settings
+            .env
+            .insert("PROVIDER_TYPE".to_string(), "anthropic".to_string());
+        let process = |key: &str| (key == "PROVIDER_TYPE").then(|| "openai".to_string());
+        assert_eq!(
+            super::resolve_default_provider_with(None, &settings, process),
+            ProviderId::OpenAi
+        );
+        assert_eq!(
+            super::resolve_default_provider_with(Some(ProviderId::Anthropic), &settings, process,),
+            ProviderId::Anthropic
+        );
+    }
+
+    #[test]
+    fn provider_type_defaults_to_anthropic_and_rejects_other_values() {
+        let settings = ClaudeSettings::default();
+        assert_eq!(
+            super::resolve_default_provider_with(None, &settings, |_| None),
+            ProviderId::Anthropic
+        );
+        let process = |key: &str| (key == "PROVIDER_TYPE").then(|| "gemini".to_string());
+        assert_eq!(
+            super::resolve_default_provider_with(None, &settings, process),
+            ProviderId::Anthropic
+        );
+    }
+
+    #[test]
+    fn legacy_openai_boolean_remains_a_compatibility_fallback() {
         let mut settings = ClaudeSettings::default();
         settings
             .env
             .insert("CLAUDE_CODE_USE_OPENAI".to_string(), "true".to_string());
-        let provider = super::resolve_default_provider(None, &settings);
+        let provider = super::resolve_default_provider_with(None, &settings, |_| None);
         assert_eq!(provider, ProviderId::OpenAi);
     }
 }

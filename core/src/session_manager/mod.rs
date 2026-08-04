@@ -11,10 +11,10 @@ use std::{
 use chrono::Duration as ChronoDuration;
 use chrono::{Local, TimeZone, Utc};
 use orbcode_config::{
-    AgentDefinition, AppConfig, OutputStyleDefinition, ResolvedOutputStyle, RuntimeSessionState,
-    built_in_agent_definitions, built_in_output_style_definitions, load_agent_definitions,
-    load_output_style_definitions, load_output_style_setting, resolve_active_output_style,
-    sanitize_path,
+    AgentDefinition, AppConfig, AuthManager, OutputStyleDefinition, ResolvedOutputStyle,
+    RuntimeSessionState, built_in_agent_definitions, built_in_output_style_definitions,
+    load_agent_definitions, load_output_style_definitions, load_output_style_setting,
+    parse_forced_login_method, resolve_active_output_style, sanitize_path,
 };
 #[cfg(test)]
 use orbcode_config::{HookCommand, HookMatcher};
@@ -32,8 +32,8 @@ use orbcode_protocol::PermissionResolutionKind;
 #[cfg(test)]
 use orbcode_protocol::TurnCancellationKind;
 use orbcode_protocol::{
-    MessageRole, SessionRecord, SessionSummary, StreamEvent, TranscriptBlock, TranscriptMessage,
-    TurnContext, visible_content_from_blocks,
+    MessageRole, ProviderId, SessionRecord, SessionSummary, StreamEvent, TranscriptBlock,
+    TranscriptMessage, TurnContext, visible_content_from_blocks,
 };
 #[cfg(test)]
 use orbcode_session_store::PERSISTED_OUTPUT_TAG;
@@ -66,7 +66,7 @@ use crate::tool_flow::{INTERRUPTED_TOOL_RESULT, ToolUseOutcome};
 #[cfg(test)]
 use crate::turn_loop::TurnLoopOutcome;
 use crate::{
-    CoreError,
+    BillingBasis, CoreError,
     agent_loop::messages::repair_missing_tool_results,
     context::build_turn_context_with_memory_home,
     context_estimation::estimate_category_breakdown,
@@ -245,6 +245,7 @@ fn blocks_from_json_content(content: &Value) -> Vec<TranscriptBlock> {
 #[derive(Clone)]
 pub struct SessionManager {
     config: AppConfig,
+    auth: AuthManager,
     tools: ToolRegistry,
     mcp: McpRegistry,
     active_turns: ActiveTurnRegistry,
@@ -383,6 +384,23 @@ mod session_facade;
 
 impl SessionManager {
     pub fn new(config: AppConfig, tools: ToolRegistry, mcp: McpRegistry) -> Self {
+        let auth = AuthManager::new(config.home_dir.clone())
+            .with_env_overrides(config.env_overrides.clone())
+            .with_openai_proxy_config(config.outbound_proxy_config())
+            .with_forced_login_method(
+                config
+                    .forced_login_method()
+                    .and_then(parse_forced_login_method),
+            );
+        Self::new_with_auth(config, tools, mcp, auth)
+    }
+
+    pub fn new_with_auth(
+        config: AppConfig,
+        tools: ToolRegistry,
+        mcp: McpRegistry,
+        auth: AuthManager,
+    ) -> Self {
         let transcript_store = SessionStore::new(
             config.current_project_dir.clone(),
             config.cwd.clone(),
@@ -402,6 +420,7 @@ impl SessionManager {
             resolve_active_output_style(&initial_styles, orbcode_config::DEFAULT_OUTPUT_STYLE_NAME);
         Self {
             config,
+            auth,
             tools,
             mcp,
             active_turns: ActiveTurnRegistry::new(),
@@ -661,13 +680,7 @@ impl SessionManager {
         // in the reported window/model (matching `model_display_name`), not the
         // startup-configured model.
         let config = self.effective_config();
-        let api_model = config.provider_model_name(config.default_provider);
-        let context_window =
-            orbcode_config::resolve_context_window(&api_model, &config.context_window_options());
-        let max_output = orbcode_config::resolve_max_output_tokens(
-            &api_model,
-            &config.max_output_token_options(),
-        );
+        let (api_model, context_window, max_output, billing_basis) = self.cost_pricing_params();
         Ok(build_usage_overview(
             session,
             self.model_display_name(),
@@ -675,6 +688,7 @@ impl SessionManager {
             config.default_provider,
             context_window,
             max_output,
+            billing_basis,
         ))
     }
 
@@ -685,16 +699,34 @@ impl SessionManager {
     /// Uses the effective config so a runtime `/model` override prices `/cost`
     /// and the budget cap against the model actually in use, not the one set at
     /// startup.
-    fn cost_pricing_params(&self) -> (String, u32, u32) {
+    fn cost_pricing_params(&self) -> (String, u32, u32, BillingBasis) {
         let config = self.effective_config();
-        let api_model = config.provider_model_name(config.default_provider);
+        let billing_basis = if self.uses_chatgpt_subscription() {
+            BillingBasis::Subscription
+        } else {
+            BillingBasis::Api
+        };
+        let api_model = if billing_basis == BillingBasis::Subscription
+            && !config.provider_model_is_explicit()
+        {
+            "gpt-5.6-sol".to_string()
+        } else {
+            config.provider_model_name(config.default_provider)
+        };
         let context_window =
             orbcode_config::resolve_context_window(&api_model, &config.context_window_options());
         let max_output = orbcode_config::resolve_max_output_tokens(
             &api_model,
             &config.max_output_token_options(),
         );
-        (api_model, context_window, max_output)
+        (api_model, context_window, max_output, billing_basis)
+    }
+
+    pub(super) fn uses_chatgpt_subscription(&self) -> bool {
+        let config = self.effective_config();
+        config.default_provider == ProviderId::OpenAi
+            && config.openai_api_key().is_none()
+            && orbcode_config::load_chatgpt_oauth(&config.home_dir).is_some()
     }
 
     /// Seeds the live cost tracker for `session_id` from the persisted
@@ -720,7 +752,7 @@ impl SessionManager {
             .transcript_store
             .load_session_if_present(session_id)
             .await?;
-        let (api_model, context_window, max_output) = self.cost_pricing_params();
+        let (api_model, context_window, max_output, billing_basis) = self.cost_pricing_params();
 
         let mut guard = self.live_cost.lock().await;
         let state = guard.entry(session_id.to_string()).or_default();
@@ -733,9 +765,19 @@ impl SessionManager {
                     continue;
                 };
                 if state.counted_message_ids.insert(message.id.clone()) {
-                    state
-                        .tracker
-                        .add_usage(&api_model, usage, context_window, max_output);
+                    match billing_basis {
+                        BillingBasis::Subscription => state.tracker.add_subscription_usage(
+                            &api_model,
+                            usage,
+                            context_window,
+                            max_output,
+                        ),
+                        BillingBasis::Api | BillingBasis::Mixed => {
+                            state
+                                .tracker
+                                .add_usage(&api_model, usage, context_window, max_output);
+                        }
+                    }
                 }
             }
         }
@@ -753,13 +795,23 @@ impl SessionManager {
         if self.ensure_live_cost_seeded(session_id).await.is_err() {
             return;
         }
-        let (api_model, context_window, max_output) = self.cost_pricing_params();
+        let (api_model, context_window, max_output, billing_basis) = self.cost_pricing_params();
         let mut guard = self.live_cost.lock().await;
         let state = guard.entry(session_id.to_string()).or_default();
         if state.counted_message_ids.insert(message.id.clone()) {
-            state
-                .tracker
-                .add_usage(&api_model, usage, context_window, max_output);
+            match billing_basis {
+                BillingBasis::Subscription => state.tracker.add_subscription_usage(
+                    &api_model,
+                    usage,
+                    context_window,
+                    max_output,
+                ),
+                BillingBasis::Api | BillingBasis::Mixed => {
+                    state
+                        .tracker
+                        .add_usage(&api_model, usage, context_window, max_output);
+                }
+            }
         }
     }
 

@@ -20,8 +20,8 @@ mod turn_loop;
 
 pub use compaction::CompactSessionResult;
 pub use model_cost::{
-    CostSummary, CostTracker, ModelCosts, ModelUsage, calculate_usd_cost, format_cost,
-    format_model_pricing, get_model_costs,
+    BillingBasis, CostSummary, CostTracker, ModelCosts, ModelUsage, calculate_usd_cost,
+    format_cost, format_model_pricing, get_model_costs,
 };
 use orbcode_config::ConfigError;
 use orbcode_mcp::McpError;

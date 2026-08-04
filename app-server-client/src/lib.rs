@@ -28,17 +28,17 @@ pub use websocket_transport::WebSocketTransport;
 
 pub use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
-    AgentDefinition, AgentLoadWarning, AuthOverview, AuthStatusEntry, BootstrapParams,
-    BootstrapState, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
-    ContextOverview, ContextTokenSource, ContextUsageOverview, CostOverview, DoctorCheck,
-    DoctorReport, DoctorStatus, HookDiscovery, McpAuth, McpOAuthOverview, McpOAuthStatusEntry,
-    McpPromptResult, McpResourceSlashSuggestion, McpServerConfig, McpServerSlashSuggestion,
-    McpServerStatus, McpServerTrust, McpSlashSuggestionCatalog, McpToolSlashSuggestion,
-    McpTransport, MemoryFileOverview, MemoryOverview, PermissionContext, PermissionDecision,
-    PermissionOverview, PlanOverview, PolicyConflictOverview, PolicyOverview, PolicySourceOverview,
-    ProviderRequestDebugSnapshot, SandboxLocalSettings, SandboxSettingsUpdate, SkillDefinition,
-    StatsActivityDay, StatsOverview, StatusOverview, UsageOverview, WorkflowCommand,
-    WorkflowSource, WorkspaceDiff, format_cost,
+    AgentDefinition, AgentLoadWarning, AuthOverview, AuthStatusEntry, BillingBasis,
+    BootstrapParams, BootstrapState, CompactDecision, CompactSessionResult,
+    ContextDiagnosticsReport, ContextOverview, ContextTokenSource, ContextUsageOverview,
+    CostOverview, DoctorCheck, DoctorReport, DoctorStatus, HookDiscovery, McpAuth,
+    McpOAuthOverview, McpOAuthStatusEntry, McpPromptResult, McpResourceSlashSuggestion,
+    McpServerConfig, McpServerSlashSuggestion, McpServerStatus, McpServerTrust,
+    McpSlashSuggestionCatalog, McpToolSlashSuggestion, McpTransport, MemoryFileOverview,
+    MemoryOverview, PermissionContext, PermissionDecision, PermissionOverview, PlanOverview,
+    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, ProviderRequestDebugSnapshot,
+    SandboxLocalSettings, SandboxSettingsUpdate, SkillDefinition, StatsActivityDay, StatsOverview,
+    StatusOverview, UsageOverview, WorkflowCommand, WorkflowSource, WorkspaceDiff, format_cost,
 };
 
 use std::collections::{HashMap, VecDeque};

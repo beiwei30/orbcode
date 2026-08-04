@@ -1,7 +1,7 @@
-use orbcode_config::AppConfig;
+use orbcode_config::{AppConfig, CHATGPT_CODEX_BASE_URL, load_chatgpt_oauth};
 use orbcode_model_provider::{
-    ProviderCancellationToken, ProviderError, ProviderRequest, ProviderRequestOptions,
-    StreamErrorCategory, probe_provider, suggestion_for,
+    OpenAiWireMode, ProviderCancellationToken, ProviderError, ProviderRequest,
+    ProviderRequestOptions, StreamErrorCategory, probe_provider, suggestion_for,
 };
 use orbcode_protocol::{ProviderId, TurnContext};
 
@@ -145,9 +145,25 @@ fn build_probe_request(config: &AppConfig, provider: ProviderId) -> ProviderRequ
             }
         }
         ProviderId::OpenAi => {
-            request.model = config.provider_model_resolution(provider).request_model;
-            request.base_url = config.openai_base_url();
             request.api_key = config.openai_api_key();
+            if request.api_key.is_some() {
+                request.model = config.provider_model_resolution(provider).request_model;
+                request.base_url = config.openai_base_url();
+            } else if let Some(credentials) = load_chatgpt_oauth(&config.home_dir) {
+                request.model = if config.provider_model_is_explicit() {
+                    config.provider_model_resolution(provider).request_model
+                } else {
+                    "gpt-5.6-sol".to_string()
+                };
+                request.base_url = CHATGPT_CODEX_BASE_URL.to_string();
+                request.auth_token = Some(credentials.access_token);
+                request.options.openai_account_id = credentials.account_id;
+                request.options.openai_wire_mode = OpenAiWireMode::Responses;
+                request.options.max_output_tokens = Some(16);
+            } else {
+                request.model = config.provider_model_resolution(provider).request_model;
+                request.base_url = config.openai_base_url();
+            }
         }
         _ => {}
     }
@@ -321,6 +337,32 @@ mod tests {
         let request = build_probe_request(&config, ProviderId::Anthropic);
         assert_eq!(request.auth_token.as_deref(), Some("external-token"));
         assert!(request.api_key.is_none());
+    }
+
+    #[test]
+    fn build_probe_request_uses_chatgpt_responses_credentials() {
+        let home = tempfile::tempdir().expect("home");
+        std::fs::write(
+            home.path().join("auth.json"),
+            r#"{"entries":[{"provider":"openai","method":"chatgpt","source":{"kind":"chatgpt_oauth","credentials":{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":4102444800000,"account_id":"account-123","email":null,"plan_type":"plus"}},"updated_at":"2026-08-03T00:00:00Z"}]}"#,
+        )
+        .expect("auth store");
+        let mut config = config();
+        config.home_dir = home.path().to_path_buf();
+        config.default_provider = ProviderId::OpenAi;
+        config
+            .env_overrides
+            .insert("OPENAI_API_KEY".to_string(), String::new());
+
+        let request = build_probe_request(&config, ProviderId::OpenAi);
+        assert_eq!(request.model, "gpt-5.6-sol");
+        assert_eq!(request.base_url, CHATGPT_CODEX_BASE_URL);
+        assert_eq!(request.auth_token.as_deref(), Some("access"));
+        assert_eq!(
+            request.options.openai_account_id.as_deref(),
+            Some("account-123")
+        );
+        assert_eq!(request.options.openai_wire_mode, OpenAiWireMode::Responses);
     }
 
     #[tokio::test]

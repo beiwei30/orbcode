@@ -1,7 +1,7 @@
 use chrono::{Datelike, NaiveDate};
 use orbcode_app_server_client::{
-    CostOverview, DoctorCheck, DoctorReport, DoctorStatus, StatsActivityDay, StatsOverview,
-    UsageOverview, format_cost,
+    BillingBasis, CostOverview, DoctorCheck, DoctorReport, DoctorStatus, StatsActivityDay,
+    StatsOverview, UsageOverview, format_cost,
 };
 
 use super::format_context_tokens;
@@ -183,7 +183,14 @@ pub(crate) fn render_usage_overview(overview: &UsageOverview) -> String {
     ]);
 
     let cost = &overview.cost;
-    let cost_display = if cost.has_unknown_model_cost {
+    let cost_display = if cost.billing_basis == BillingBasis::Subscription {
+        "subscription (not API-priced)".to_string()
+    } else if cost.billing_basis == BillingBasis::Mixed {
+        format!(
+            "{} API + subscription usage (not API-priced)",
+            format_cost(cost.total_cost_usd)
+        )
+    } else if cost.has_unknown_model_cost {
         format!(
             "{} (may be inaccurate due to unknown model pricing)",
             format_cost(cost.total_cost_usd)
@@ -197,14 +204,7 @@ pub(crate) fn render_usage_overview(overview: &UsageOverview) -> String {
         let mut models: Vec<_> = cost.model_usage.iter().collect();
         models.sort_by_key(|(name, _)| *name);
         for (model, mu) in models {
-            lines.push(format!(
-                "  {model}: {} input, {} output, {} cache read, {} cache write ({})",
-                mu.input_tokens,
-                mu.output_tokens,
-                mu.cache_read_input_tokens,
-                mu.cache_creation_input_tokens,
-                format_cost(mu.cost_usd),
-            ));
+            lines.push(format!("  {model}: {mu}"));
         }
     }
 
@@ -220,7 +220,14 @@ pub(crate) fn render_cost_overview(overview: &CostOverview) -> String {
         format!("provider: {}", overview.provider),
     ];
 
-    let total_display = if cost.has_unknown_model_cost {
+    let total_display = if cost.billing_basis == BillingBasis::Subscription {
+        "subscription (not API-priced)".to_string()
+    } else if cost.billing_basis == BillingBasis::Mixed {
+        format!(
+            "{} API + subscription usage (not API-priced)",
+            format_cost(cost.total_cost_usd)
+        )
+    } else if cost.has_unknown_model_cost {
         format!(
             "{} (may be inaccurate due to unknown model pricing)",
             format_cost(cost.total_cost_usd)
@@ -241,9 +248,16 @@ pub(crate) fn render_cost_overview(overview: &CostOverview) -> String {
     let mut models: Vec<_> = cost.model_usage.iter().collect();
     models.sort_by_key(|(name, _)| *name);
     for (model, mu) in models {
+        let billed = match mu.billing_basis {
+            BillingBasis::Api => format_cost(mu.cost_usd),
+            BillingBasis::Subscription => "subscription (not API-priced)".to_string(),
+            BillingBasis::Mixed => format!(
+                "{} API + subscription usage (not API-priced)",
+                format_cost(mu.cost_usd)
+            ),
+        };
         lines.push(format!(
-            "  {model}: {} ({} input, {} output, {} cache read, {} cache write)",
-            format_cost(mu.cost_usd),
+            "  {model}: {billed} ({} input, {} output, {} cache read, {} cache write)",
             mu.input_tokens,
             mu.output_tokens,
             mu.cache_read_input_tokens,

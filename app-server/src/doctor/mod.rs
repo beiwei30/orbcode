@@ -6,7 +6,7 @@ mod sandbox;
 use std::path::Path;
 
 use orbcode_app_server_protocol::{DoctorCheck, DoctorReport, DoctorStatus};
-use orbcode_config::{AppConfig, model_capabilities};
+use orbcode_config::{AppConfig, AuthMethod, AuthOverview, load_chatgpt_oauth, model_capabilities};
 use orbcode_core::{CoreError, SessionStorageHealth};
 use orbcode_mcp::McpRegistry;
 use orbcode_protocol::{ProviderId, TurnContext};
@@ -31,13 +31,14 @@ pub async fn run_doctor(
         config.default_provider,
         config.fallback_provider,
     ));
-    checks.push(model_capabilities_check(config));
+    checks.push(model_capabilities_check(config, auth));
     checks.push(environment::auth_check(
         config.default_provider,
         config.fallback_provider,
         auth,
     ));
     checks.push(environment::oauth_expiry_check(config));
+    checks.push(chatgpt_subscription_check(config, auth));
     checks.push(provider::provider_probe_check(config).await);
     checks.push(permission_check(
         "network",
@@ -153,9 +154,15 @@ fn provider_chain_check(
     }
 }
 
-fn model_capabilities_check(config: &AppConfig) -> DoctorCheck {
-    let resolution = config.provider_model_resolution(config.default_provider);
-    let caps = model_capabilities(&resolution.request_model, config.default_provider);
+fn model_capabilities_check(config: &AppConfig, auth: &AuthOverview) -> DoctorCheck {
+    let request_model = if chatgpt_is_active(auth) && !config.provider_model_is_explicit() {
+        "gpt-5.6-sol".to_string()
+    } else {
+        config
+            .provider_model_resolution(config.default_provider)
+            .request_model
+    };
+    let caps = model_capabilities(&request_model, config.default_provider);
     let mut features = Vec::new();
     if caps.supports_thinking {
         features.push("thinking");
@@ -171,11 +178,67 @@ fn model_capabilities_check(config: &AppConfig) -> DoctorCheck {
         status: DoctorStatus::Pass,
         detail: format!(
             "model={} context={}k max_output={}k features=[{}]",
-            resolution.request_model,
+            request_model,
             caps.context_window / 1_000,
             caps.max_output_tokens / 1_000,
             features.join(", "),
         ),
+    }
+}
+
+fn chatgpt_is_active(auth: &AuthOverview) -> bool {
+    auth.entries.iter().any(|entry| {
+        entry.provider == ProviderId::OpenAi
+            && entry.method == AuthMethod::ChatGpt
+            && entry.usable
+            && entry.active
+    })
+}
+
+fn chatgpt_subscription_check(config: &AppConfig, auth: &AuthOverview) -> DoctorCheck {
+    let name = "chatgpt_subscription".to_string();
+    let Some(credentials) = load_chatgpt_oauth(&config.home_dir) else {
+        return DoctorCheck {
+            name,
+            status: DoctorStatus::Pass,
+            detail: "not configured".to_string(),
+        };
+    };
+    if credentials.account_id.as_deref().is_none_or(str::is_empty) {
+        return DoctorCheck {
+            name,
+            status: DoctorStatus::Fail,
+            detail: "saved login has no ChatGPT account id; sign in again with `orbcode auth login --provider openai --method chatgpt`".to_string(),
+        };
+    }
+    if !chatgpt_is_active(auth) {
+        return DoctorCheck {
+            name,
+            status: DoctorStatus::Warn,
+            detail: "ready but shadowed by a higher-precedence OpenAI API key".to_string(),
+        };
+    }
+
+    let remaining_secs = (credentials.expires_at - chrono::Utc::now().timestamp_millis()) / 1000;
+    let model = if config.provider_model_is_explicit() {
+        config.provider_model_name(ProviderId::OpenAi)
+    } else {
+        "gpt-5.6-sol".to_string()
+    };
+    let plan = credentials.plan_type.as_deref().unwrap_or("unknown");
+    if remaining_secs < 300 {
+        return DoctorCheck {
+            name,
+            status: DoctorStatus::Warn,
+            detail: format!(
+                "active; token refresh required on next request; plan={plan} model={model} endpoint=fixed ChatGPT Codex Responses"
+            ),
+        };
+    }
+    DoctorCheck {
+        name,
+        status: DoctorStatus::Pass,
+        detail: format!("active; plan={plan} model={model} endpoint=fixed ChatGPT Codex Responses"),
     }
 }
 
@@ -527,5 +590,40 @@ mod tests {
         for value in ["", "0", "false", "no", "off", "maybe"] {
             assert!(!is_truthy(value), "{value} should not enable the probe");
         }
+    }
+
+    #[test]
+    fn chatgpt_subscription_check_reports_fixed_responses_path_and_default_model() {
+        let home = tempfile::tempdir().expect("home");
+        std::fs::write(
+            home.path().join("auth.json"),
+            format!(
+                r#"{{"entries":[{{"provider":"openai","method":"chatgpt","source":{{"kind":"chatgpt_oauth","credentials":{{"id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":{},"account_id":"account-123","email":null,"plan_type":"plus"}}}},"updated_at":"2026-08-03T00:00:00Z"}}]}}"#,
+                chrono::Utc::now().timestamp_millis() + 60 * 60 * 1000
+            ),
+        )
+        .expect("auth store");
+        let mut config = config();
+        config.home_dir = home.path().to_path_buf();
+        config.default_provider = ProviderId::OpenAi;
+        let auth = AuthOverview {
+            store_path: home.path().join("auth.json"),
+            entries: vec![AuthStatusEntry {
+                provider: ProviderId::OpenAi,
+                method: AuthMethod::ChatGpt,
+                source_summary: "chatgpt oauth (ready; subscription:plus)".to_string(),
+                persisted: true,
+                usable: true,
+                active: true,
+                updated_at: None,
+            }],
+        };
+
+        let check = chatgpt_subscription_check(&config, &auth);
+        assert_eq!(check.status, DoctorStatus::Pass);
+        assert!(check.detail.contains("gpt-5.6-sol"));
+        assert!(check.detail.contains("fixed ChatGPT Codex Responses"));
+        let model = model_capabilities_check(&config, &auth);
+        assert!(model.detail.contains("model=gpt-5.6-sol"));
     }
 }

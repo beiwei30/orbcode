@@ -4,6 +4,21 @@ use std::fmt;
 use orbcode_config::canonical_model_name;
 use orbcode_protocol::TokenUsage;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingBasis {
+    #[default]
+    Api,
+    Subscription,
+    Mixed,
+}
+
+impl BillingBasis {
+    fn merge(self, other: Self) -> Self {
+        if self == other { self } else { Self::Mixed }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelCosts {
     pub input_tokens: f64,
@@ -137,18 +152,27 @@ pub struct ModelUsage {
     pub cost_usd: f64,
     pub context_window: u32,
     pub max_output_tokens: u32,
+    #[serde(default)]
+    pub billing_basis: BillingBasis,
 }
 
 impl fmt::Display for ModelUsage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cost = match self.billing_basis {
+            BillingBasis::Api => format_cost(self.cost_usd),
+            BillingBasis::Subscription => "subscription; not API-priced".to_string(),
+            BillingBasis::Mixed => format!(
+                "{} API + subscription usage not API-priced",
+                format_cost(self.cost_usd)
+            ),
+        };
         write!(
             f,
-            "{} input, {} output, {} cache read, {} cache write ({})",
+            "{} input, {} output, {} cache read, {} cache write ({cost})",
             self.input_tokens,
             self.output_tokens,
             self.cache_read_input_tokens,
             self.cache_creation_input_tokens,
-            format_cost(self.cost_usd),
         )
     }
 }
@@ -158,6 +182,8 @@ pub struct CostSummary {
     pub total_cost_usd: f64,
     pub model_usage: HashMap<String, ModelUsage>,
     pub has_unknown_model_cost: bool,
+    #[serde(default)]
+    pub billing_basis: BillingBasis,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -165,6 +191,7 @@ pub struct CostTracker {
     total_cost_usd: f64,
     model_usage: HashMap<String, ModelUsage>,
     has_unknown_model_cost: bool,
+    billing_basis: Option<BillingBasis>,
 }
 
 impl CostTracker {
@@ -185,8 +212,58 @@ impl CostTracker {
         }
         self.total_cost_usd += cost;
 
+        self.accumulate_usage(
+            model,
+            usage,
+            cost,
+            context_window,
+            max_output_tokens,
+            BillingBasis::Api,
+        );
+
+        cost
+    }
+
+    pub fn add_subscription_usage(
+        &mut self,
+        model: &str,
+        usage: &TokenUsage,
+        context_window: u32,
+        max_output_tokens: u32,
+    ) {
+        self.accumulate_usage(
+            model,
+            usage,
+            0.0,
+            context_window,
+            max_output_tokens,
+            BillingBasis::Subscription,
+        );
+    }
+
+    fn accumulate_usage(
+        &mut self,
+        model: &str,
+        usage: &TokenUsage,
+        cost: f64,
+        context_window: u32,
+        max_output_tokens: u32,
+        billing_basis: BillingBasis,
+    ) {
+        self.billing_basis = Some(match self.billing_basis {
+            Some(existing) => existing.merge(billing_basis),
+            None => billing_basis,
+        });
+
         let canonical = canonical_model_name(&model.to_ascii_lowercase());
-        let entry = self.model_usage.entry(canonical).or_default();
+        let entry = self
+            .model_usage
+            .entry(canonical)
+            .or_insert_with(|| ModelUsage {
+                billing_basis,
+                ..Default::default()
+            });
+        entry.billing_basis = entry.billing_basis.merge(billing_basis);
         entry.input_tokens += usage.input_tokens as u64;
         entry.output_tokens += usage.output_tokens as u64;
         entry.cache_read_input_tokens += usage.cache_read_input_tokens as u64;
@@ -195,8 +272,6 @@ impl CostTracker {
         entry.cost_usd += cost;
         entry.context_window = context_window;
         entry.max_output_tokens = max_output_tokens;
-
-        cost
     }
 
     pub fn total_cost_usd(&self) -> f64 {
@@ -216,6 +291,7 @@ impl CostTracker {
             total_cost_usd: self.total_cost_usd,
             model_usage: self.model_usage,
             has_unknown_model_cost: self.has_unknown_model_cost,
+            billing_basis: self.billing_basis.unwrap_or_default(),
         }
     }
 }
@@ -445,6 +521,27 @@ mod tests {
         assert_eq!(model_usage.output_tokens, 1_500_000);
         assert_eq!(model_usage.context_window, 200_000);
         assert_eq!(model_usage.max_output_tokens, 16_384);
+    }
+
+    #[test]
+    fn subscription_usage_counts_tokens_without_api_cost() {
+        let mut tracker = CostTracker::new();
+        tracker.add_subscription_usage(
+            "gpt-5.6-sol",
+            &usage_with(10_000, 2_000, 3_000, 500, 0),
+            272_000,
+            128_000,
+        );
+
+        let summary = tracker.into_summary();
+        assert_eq!(summary.total_cost_usd, 0.0);
+        assert!(!summary.has_unknown_model_cost);
+        assert_eq!(summary.billing_basis, BillingBasis::Subscription);
+        let usage = &summary.model_usage["gpt-5.6-sol"];
+        assert_eq!(usage.input_tokens, 10_000);
+        assert_eq!(usage.output_tokens, 2_000);
+        assert_eq!(usage.billing_basis, BillingBasis::Subscription);
+        assert!(usage.to_string().contains("subscription; not API-priced"));
     }
 
     #[test]
