@@ -48,16 +48,16 @@ async fn run_tool_slash_command(
 ) -> Result<PersistedSystemCommandResult> {
     let (name, input) =
         split_first_word(args).ok_or_else(|| anyhow::anyhow!("usage: /tool <name> [input]"))?;
-    let value = app_server
+    let result = app_server
         .invoke_tool(name, input)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let outcome = ToolOutcome {
-        name: value["name"].as_str().unwrap_or("").to_string(),
-        summary: value["summary"].as_str().unwrap_or("").to_string(),
-        output: value["output"].as_str().unwrap_or("").to_string(),
-        metadata: value.get("metadata").cloned(),
-        changed_paths: Vec::new(),
+        name: result.name,
+        summary: result.summary,
+        output: result.output,
+        metadata: result.metadata,
+        changed_paths: result.changed_paths,
     };
     Ok(PersistedSystemCommandResult {
         note: render_tool_note(&outcome),
@@ -72,13 +72,12 @@ async fn run_mcp_read_slash_command(
     let rest = args.trim_start_matches("read ");
     let (server_id, uri) =
         split_first_word(rest).ok_or_else(|| anyhow::anyhow!("usage: /mcp read <server> <uri>"))?;
-    let value = app_server
+    let result = app_server
         .read_mcp_resource(server_id, uri)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let contents = value["contents"].as_str().unwrap_or("");
     Ok(PersistedSystemCommandResult {
-        note: format!("MCP Resource: {server_id} {uri}\n{contents}"),
+        note: format!("MCP Resource: {server_id} {uri}\n{}", result.contents),
         status: format!("Read MCP resource `{uri}`."),
     })
 }
@@ -92,15 +91,15 @@ async fn run_mcp_call_slash_command(
         .ok_or_else(|| anyhow::anyhow!("usage: /mcp call <server> <tool> [input]"))?;
     let (tool_name, input) = split_first_word(remaining)
         .ok_or_else(|| anyhow::anyhow!("usage: /mcp call <server> <tool> [input]"))?;
-    let value = app_server
+    let result = app_server
         .invoke_mcp_tool(server_id, tool_name, input)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let result_server_id = value["server_id"].as_str().unwrap_or("");
-    let result_tool_name = value["tool_name"].as_str().unwrap_or("");
-    let result_output = value["output"].as_str().unwrap_or("");
     Ok(PersistedSystemCommandResult {
-        note: format!("MCP Tool: {result_server_id}::{result_tool_name}\n{result_output}"),
+        note: format!(
+            "MCP Tool: {}::{}\n{}",
+            result.server_id, result.tool_name, result.output
+        ),
         status: format!("Ran MCP tool `{server_id}::{tool_name}`."),
     })
 }

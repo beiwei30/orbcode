@@ -10,11 +10,8 @@ readme.workspace = true
 publish.workspace = true
 
 [dependencies]
-orbcode-config = { path = "../config" }
-orbcode-core = { path = "../core" }
-orbcode-mcp = { path = "../mcp" }
+chrono.workspace = true
 orbcode-protocol = { path = "../protocol" }
-orbcode-tools = { path = "../tools" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

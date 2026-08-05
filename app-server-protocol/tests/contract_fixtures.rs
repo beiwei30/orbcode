@@ -6,8 +6,9 @@
 
 use orbcode_app_server_protocol::{
     AskUserQuestionRequest, AskUserQuestionResponse, BootstrapParams, ClientMessage, ErrorCode,
-    InitializeParams, InitializeResult, McpTrustDecisionWire, McpTrustResponseParams,
-    PermissionDecisionWire, PermissionResponseParams, ServerMessage, method,
+    InitializeParams, InitializeResult, McpListServersResult, McpServerInput, McpTrustDecisionWire,
+    McpTrustResponseParams, PermissionDecisionWire, PermissionResponseParams, ServerMessage,
+    method,
 };
 use serde_json::Value;
 
@@ -136,6 +137,21 @@ fn contract_bootstrap_params() {
     assert_eq!(params.additional_directories.len(), 1);
     assert_eq!(params.session_mcp_servers.len(), 1);
     assert_eq!(params.session_mcp_servers[0].id, "docs-server");
+}
+
+#[test]
+fn contract_mcp_server_input() {
+    let input: McpServerInput = assert_roundtrip("mcp_server_input.json");
+    assert_eq!(input.id, "docs-server");
+    assert_eq!(input.env["DOCS_TOKEN"], "secret");
+}
+
+#[test]
+fn contract_mcp_list_servers_result() {
+    let result: McpListServersResult = assert_roundtrip("mcp_list_servers_result.json");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].id, "docs-server");
+    assert_eq!(result[0].env["DOCS_TOKEN"], "<redacted>");
 }
 
 // ---------------------------------------------------------------------------

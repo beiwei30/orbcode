@@ -1,5 +1,6 @@
 use orbcode_config::{AppConfig, effective_context_window_size};
 use orbcode_model_provider::ProviderCancellationToken;
+pub use orbcode_protocol::CompactDecision;
 use orbcode_protocol::{
     MessageRole, SessionRecord, TokenUsage, TranscriptBlock, TranscriptMessage,
 };
@@ -25,18 +26,6 @@ const AUTOCOMPACT_RECENT_COMPACT_TURNS_ENV: &str =
     "ORBCODE_AUTOCOMPACT_RECENT_COMPACT_TURNS_OVERRIDE";
 const DEFAULT_MANUAL_COMPACT_THRESHOLD_PERCENT: u32 = 50;
 const DEFAULT_AUTOCOMPACT_RECENT_COMPACT_TURNS: usize = 3;
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub enum CompactDecision {
-    Proceed,
-    NeedsConfirmation {
-        context_percent_used: u32,
-        threshold_percent: u32,
-    },
-    SkippedRecentManual {
-        turns_since_compact: usize,
-    },
-}
 
 fn manual_compact_threshold_percent(config: &AppConfig) -> u32 {
     config

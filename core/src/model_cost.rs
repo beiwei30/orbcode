@@ -1,23 +1,8 @@
 use std::collections::HashMap;
-use std::fmt;
 
 use orbcode_config::canonical_model_name;
 use orbcode_protocol::TokenUsage;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BillingBasis {
-    #[default]
-    Api,
-    Subscription,
-    Mixed,
-}
-
-impl BillingBasis {
-    fn merge(self, other: Self) -> Self {
-        if self == other { self } else { Self::Mixed }
-    }
-}
+pub use orbcode_protocol::{BillingBasis, CostSummary, ModelUsage};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelCosts {
@@ -140,50 +125,6 @@ pub fn format_model_pricing(costs: &ModelCosts) -> String {
         format_price(costs.input_tokens),
         format_price(costs.output_tokens)
     )
-}
-
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ModelUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: u64,
-    pub cache_creation_input_tokens: u64,
-    pub web_search_requests: u64,
-    pub cost_usd: f64,
-    pub context_window: u32,
-    pub max_output_tokens: u32,
-    #[serde(default)]
-    pub billing_basis: BillingBasis,
-}
-
-impl fmt::Display for ModelUsage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let cost = match self.billing_basis {
-            BillingBasis::Api => format_cost(self.cost_usd),
-            BillingBasis::Subscription => "subscription (not API-priced)".to_string(),
-            BillingBasis::Mixed => format!(
-                "{} API + subscription usage (not API-priced)",
-                format_cost(self.cost_usd)
-            ),
-        };
-        write!(
-            f,
-            "{} input, {} output, {} cache read, {} cache write ({cost})",
-            self.input_tokens,
-            self.output_tokens,
-            self.cache_read_input_tokens,
-            self.cache_creation_input_tokens,
-        )
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CostSummary {
-    pub total_cost_usd: f64,
-    pub model_usage: HashMap<String, ModelUsage>,
-    pub has_unknown_model_cost: bool,
-    #[serde(default)]
-    pub billing_basis: BillingBasis,
 }
 
 #[derive(Clone, Debug, Default)]

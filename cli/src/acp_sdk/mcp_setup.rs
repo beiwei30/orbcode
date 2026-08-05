@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use agent_client_protocol::Result;
 use agent_client_protocol::schema::McpServer;
 use orbcode_app_server_protocol::{
-    McpAuth, McpServerConfig, McpServerStatus, McpServerTrust, McpTransport,
+    McpAuth, McpServerInput, McpServerStatus, McpServerTrust, McpTransport,
 };
 
 use super::invalid_params;
@@ -11,14 +11,14 @@ use super::invalid_params;
 pub(super) fn acp_mcp_servers_to_configs(
     method_name: &str,
     servers: &[McpServer],
-) -> Result<Vec<McpServerConfig>> {
+) -> Result<Vec<McpServerInput>> {
     let mut configs = Vec::with_capacity(servers.len());
     let mut used_names = HashSet::new();
     for server in servers {
         match server {
             McpServer::Stdio(stdio) => {
                 let id = unique_acp_server_name(&stdio.name, &mut used_names);
-                configs.push(McpServerConfig {
+                configs.push(McpServerInput {
                     id,
                     transport: McpTransport::Stdio,
                     endpoint: stdio.command.display().to_string(),
@@ -48,7 +48,7 @@ pub(super) fn acp_mcp_servers_to_configs(
                         http.url
                     )));
                 }
-                configs.push(McpServerConfig {
+                configs.push(McpServerInput {
                     id,
                     transport: McpTransport::StreamableHttp,
                     endpoint: http.url.clone(),

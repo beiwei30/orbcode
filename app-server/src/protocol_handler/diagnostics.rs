@@ -1,17 +1,17 @@
-use orbcode_app_server_protocol::ResponseResult;
-use serde::Deserialize;
+use orbcode_app_server_protocol::{
+    AdvancedCapabilitiesResult, AdvancedCapabilityOverview, ChildSessionOrphanCleanupResult,
+    DiagnosticsCleanupChildSessionsParams, LastProviderRequestResult, PreUserInstructionsResult,
+    ProviderRequestDebugOverview, ResponseResult, SessionIdParams,
+};
 use serde_json::Value;
 
 use super::{core_error, success, try_parse};
 use crate::AppServer;
+use crate::protocol_conversion::hook_discovery_to_wire;
 
 impl AppServer {
     pub(super) async fn handle_diagnostics_status(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         match self.status_overview(&p.session_id).await {
             Ok(overview) => success(overview),
             Err(e) => core_error(e),
@@ -27,20 +27,7 @@ impl AppServer {
 
     pub(super) async fn handle_diagnostics_doctor(&self, _params: Option<Value>) -> ResponseResult {
         match self.doctor_report().await {
-            Ok(report) => {
-                let checks: Vec<Value> = report
-                    .checks
-                    .iter()
-                    .map(|c| {
-                        serde_json::json!({
-                            "name": c.name,
-                            "status": format!("{:?}", c.status),
-                            "detail": c.detail,
-                        })
-                    })
-                    .collect();
-                success(serde_json::json!({ "checks": checks }))
-            }
+            Ok(report) => success(report),
             Err(e) => core_error(e),
         }
     }
@@ -49,59 +36,50 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            #[serde(default = "default_dry_run")]
-            dry_run: bool,
-            #[serde(default)]
-            stale_running_cutoff_ms: Option<i64>,
-        }
-
-        fn default_dry_run() -> bool {
-            true
-        }
-
-        let p: Params = try_parse!(params);
+        let p: DiagnosticsCleanupChildSessionsParams = try_parse!(params);
         match self
             .cleanup_orphan_child_sessions(p.dry_run, p.stale_running_cutoff_ms)
             .await
         {
-            Ok(result) => success(result),
+            Ok(result) => success(ChildSessionOrphanCleanupResult {
+                dry_run: result.dry_run,
+                scoped_cwds: result.scoped_cwds,
+                inspected_metadata: result.inspected_metadata,
+                orphan_metadata: result.orphan_metadata,
+                eligible_metadata: result.eligible_metadata,
+                stale_running_metadata: result.stale_running_metadata,
+                skipped_running_metadata: result.skipped_running_metadata,
+                removed_metadata: result.removed_metadata,
+                removed_transcripts: result.removed_transcripts,
+                orphan_child_session_ids: result.orphan_child_session_ids,
+            }),
             Err(e) => core_error(e),
         }
     }
 
     pub(super) async fn handle_diagnostics_hooks(&self, _params: Option<Value>) -> ResponseResult {
         let discovery = self.hook_discovery().await;
-        success(discovery)
+        success(hook_discovery_to_wire(discovery))
     }
 
     pub(super) async fn handle_diagnostics_diff(&self, _params: Option<Value>) -> ResponseResult {
         match self.workspace_diff().await {
-            Ok(diff) => success(serde_json::json!({
-                "cwd": diff.cwd,
-                "status": diff.status,
-                "staged_diff": diff.staged_diff,
-                "unstaged_diff": diff.unstaged_diff,
-                "untracked_files": diff.untracked_files,
-            })),
+            Ok(diff) => success(diff),
             Err(e) => core_error(e),
         }
     }
 
     pub(super) fn handle_diagnostics_advanced(&self, _params: Option<Value>) -> ResponseResult {
-        let capabilities: Vec<Value> = self
+        let capabilities = self
             .advanced_capabilities()
             .into_iter()
-            .map(|c| {
-                serde_json::json!({
-                    "name": c.name,
-                    "summary": c.summary,
-                    "status": format!("{:?}", c.status),
-                })
+            .map(|capability| AdvancedCapabilityOverview {
+                name: capability.name.to_string(),
+                summary: capability.summary.to_string(),
+                status: format!("{:?}", capability.status),
             })
             .collect();
-        success(capabilities)
+        success(AdvancedCapabilitiesResult(capabilities))
     }
 
     pub(super) async fn handle_diagnostics_last_request(
@@ -110,18 +88,20 @@ impl AppServer {
     ) -> ResponseResult {
         let snapshot = self.last_provider_request_snapshot().await;
         match snapshot {
-            Some(s) => success(serde_json::json!({
-                "provider": s.provider.as_str(),
-                "source": s.source,
-                "session_id": s.session_id,
-                "model": s.model,
-                "base_url": s.base_url,
-                "captured_at": s.captured_at,
-                "recent_activity_json": s.recent_activity_json,
-                "previous_turn_json": s.previous_turn_json,
-                "body_json": s.body_json,
-            })),
-            None => success(serde_json::Value::Null),
+            Some(snapshot) => success(LastProviderRequestResult(Some(
+                ProviderRequestDebugOverview {
+                    provider: snapshot.provider.as_str().to_string(),
+                    source: snapshot.source,
+                    session_id: snapshot.session_id,
+                    model: snapshot.model,
+                    base_url: snapshot.base_url,
+                    captured_at: snapshot.captured_at,
+                    recent_activity_json: snapshot.recent_activity_json,
+                    previous_turn_json: snapshot.previous_turn_json,
+                    body_json: snapshot.body_json,
+                },
+            ))),
+            None => success(LastProviderRequestResult(None)),
         }
     }
 
@@ -129,12 +109,8 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         let preview = self.pre_user_instructions_preview(&p.session_id).await;
-        success(serde_json::json!({ "preview": preview }))
+        success(PreUserInstructionsResult { preview })
     }
 }

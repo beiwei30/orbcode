@@ -302,7 +302,9 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    use orbcode_config::{ContextWindowOptions, MaxOutputTokenOptions, TokenWarningOptions};
+    use orbcode_app_server_client::{
+        ContextWindowOptions, MaxOutputTokenOptions, TokenWarningOptions,
+    };
     use ratatui::prelude::Rect;
 
     use crate::background_agent_panel::BackgroundAgentPanelState;

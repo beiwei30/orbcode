@@ -398,45 +398,34 @@ pub(crate) async fn load_mcp_prompt_commands(
     app_server: &AppClient,
 ) -> Vec<DynamicSlashCommandSpec> {
     let mut specs = Vec::new();
-    let servers_value = match app_server.list_mcp_servers().await {
+    let servers = match app_server.list_mcp_servers().await {
         Ok(value) => value,
         Err(_) => return specs,
     };
-    let servers_arr = servers_value.as_array().cloned().unwrap_or_default();
-    for server in &servers_arr {
-        let server_id = match server["id"].as_str() {
-            Some(id) => id,
-            None => continue,
-        };
-        let enabled = server["enabled"].as_bool().unwrap_or(false);
-        let trust = server["trust"].as_str().unwrap_or("");
-        let status = server["status"].as_str().unwrap_or("");
-        if !enabled || trust != "trusted" {
+    for server in servers.iter() {
+        let server_id = server.id.as_str();
+        if !server.enabled || !server.trust.is_trusted() {
             continue;
         }
-        if status != "ready" {
+        if server.status != orbcode_app_server_client::McpServerStatus::Ready {
             continue;
         }
-        let prompts_value = match app_server.list_mcp_prompts(server_id).await {
+        let prompts = match app_server.list_mcp_prompts(server_id).await {
             Ok(value) => value,
             Err(_) => continue,
         };
-        let prompts_arr = prompts_value.as_array().cloned().unwrap_or_default();
-        for prompt in &prompts_arr {
-            let prompt_name = match prompt["name"].as_str() {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-            let description = prompt["description"].as_str().unwrap_or("").to_string();
-            let arguments = prompt["arguments"].as_array().cloned().unwrap_or_default();
-            let argument_hint = if arguments.is_empty() {
+        for prompt in prompts.iter() {
+            let prompt_name = prompt.name.clone();
+            let description = prompt.description.clone();
+            let argument_hint = if prompt.arguments.is_empty() {
                 None
             } else {
-                let args: Vec<String> = arguments
+                let args: Vec<String> = prompt
+                    .arguments
                     .iter()
                     .map(|arg| {
-                        let name = arg["name"].as_str().unwrap_or("arg");
-                        if arg["required"].as_bool().unwrap_or(false) {
+                        let name = &arg.name;
+                        if arg.required {
                             format!("<{name}>")
                         } else {
                             format!("[{name}]")

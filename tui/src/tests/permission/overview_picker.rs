@@ -4,7 +4,7 @@ use orbcode_app_server_client::AppClient;
 #[test]
 fn permission_picker_lines_show_source_editability_and_add_rows() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: false,
@@ -147,7 +147,7 @@ fn permission_picker_lines_show_source_editability_and_add_rows() {
 #[test]
 fn permission_picker_main_tabs_keep_fixed_height() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: true,
@@ -184,7 +184,7 @@ fn permission_picker_main_tabs_keep_fixed_height() {
 #[test]
 fn permission_picker_empty_state_keeps_add_rows_visible_first() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: true,
@@ -239,7 +239,7 @@ fn permission_picker_empty_state_keeps_add_rows_visible_first() {
 #[test]
 fn permission_picker_recently_denied_includes_denied_requests() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: true,
@@ -292,7 +292,7 @@ fn permission_picker_recently_denied_includes_denied_requests() {
 #[test]
 fn permission_picker_desired_height_includes_picker_lines() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: true,
@@ -357,10 +357,7 @@ async fn permissions_slash_command_opens_interactive_picker_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -409,10 +406,7 @@ async fn permissions_picker_removes_selected_session_rule() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     app_server
         .app_server()
@@ -514,10 +508,7 @@ async fn permissions_picker_adds_settings_rule_from_inline_draft() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.open_permission_picker(
         "/permissions",
@@ -649,10 +640,7 @@ async fn permissions_slash_command_adds_and_removes_settings_rules() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -730,10 +718,7 @@ async fn permissions_slash_command_rejects_invalid_rules_with_context() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -784,10 +769,7 @@ async fn permissions_slash_command_explains_uneditable_sources() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -848,10 +830,7 @@ async fn permissions_slash_command_adds_and_removes_session_rules() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 

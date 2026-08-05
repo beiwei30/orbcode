@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use orbcode_app_server_client::{
-    AppClient, McpAuth, McpOAuthOverview, McpOAuthStatusEntry, McpServerConfig, McpServerStatus,
+    AppClient, McpAuth, McpOAuthOverview, McpOAuthStatusEntry, McpServerInput, McpServerStatus,
     McpServerTrust, McpTransport, ProviderRequestDebugSnapshot,
 };
 
@@ -84,39 +84,48 @@ async fn run_last_request_slash_command(app_server: &AppClient) -> LocalOutputCo
         )
     };
     let value = match app_server.last_provider_request_snapshot().await {
-        Ok(v) if !v.is_null() => v,
+        Ok(result) => match result.0 {
+            Some(value) => value,
+            None => return no_capture(),
+        },
         _ => return no_capture(),
     };
-    match serde_json::from_value::<ProviderRequestDebugSnapshot>(value) {
-        Ok(snapshot) => {
+    match orbcode_protocol::ProviderId::parse(&value.provider) {
+        Some(provider) => {
+            let snapshot = ProviderRequestDebugSnapshot {
+                provider,
+                source: value.source,
+                session_id: value.session_id,
+                model: value.model,
+                base_url: value.base_url,
+                captured_at: value.captured_at,
+                recent_activity_json: value.recent_activity_json,
+                previous_turn_json: value.previous_turn_json,
+                body_json: value.body_json,
+            };
             let (summary, detail) = render_last_provider_request_snapshot(&snapshot);
             LocalOutputCommandResult::new(summary, Some(detail))
         }
-        Err(_) => no_capture(),
+        None => no_capture(),
     }
 }
 
 async fn run_tools_slash_command(app_server: &AppClient) -> LocalOutputCommandResult {
     let tools_result = app_server.list_tools().await;
     let rendered = match tools_result {
-        Ok(value) => {
-            let tools: Vec<serde_json::Value> = serde_json::from_value(value).unwrap_or_default();
-            tools
-                .iter()
-                .map(|tool| {
-                    format!(
-                        "{}  tools={} network={} {}",
-                        tool["name"].as_str().unwrap_or(""),
-                        tool["requires_tools_permission"].as_bool().unwrap_or(false),
-                        tool["requires_network_permission"]
-                            .as_bool()
-                            .unwrap_or(false),
-                        tool["summary"].as_str().unwrap_or("")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+        Ok(tools) => tools
+            .iter()
+            .map(|tool| {
+                format!(
+                    "{}  tools={} network={} {}",
+                    tool.name,
+                    tool.requires_tools_permission,
+                    tool.requires_network_permission,
+                    tool.summary
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         Err(_) => String::new(),
     };
     LocalOutputCommandResult::new("Listed tool registry.", nonempty_detail(rendered))
@@ -133,20 +142,16 @@ async fn run_mcp_inspection_slash_command(
             if !rest.trim().is_empty() {
                 return Err(anyhow::anyhow!("unknown slash command"));
             }
-            let value = app_server
+            let capabilities = app_server
                 .mcp_capabilities()
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let capabilities: Vec<serde_json::Value> =
-                serde_json::from_value(value).unwrap_or_default();
             let rendered = capabilities
                 .iter()
                 .map(|capability| {
                     format!(
                         "{} enabled={} {}",
-                        capability["transport"].as_str().unwrap_or(""),
-                        capability["enabled"].as_bool().unwrap_or(false),
-                        capability["note"].as_str().unwrap_or("")
+                        capability.transport, capability.enabled, capability.note
                     )
                 })
                 .collect::<Vec<_>>()
@@ -184,20 +189,16 @@ async fn run_mcp_inspection_slash_command(
             if server_id.is_empty() {
                 return Err(anyhow::anyhow!("usage: /mcp resources <server>"));
             }
-            let value = app_server
+            let resources = app_server
                 .list_mcp_resources(server_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let resources: Vec<serde_json::Value> =
-                serde_json::from_value(value).unwrap_or_default();
             let rendered = resources
                 .iter()
                 .map(|resource| {
                     format!(
                         "{}  {}  {}",
-                        resource["uri"].as_str().unwrap_or(""),
-                        resource["mime_type"].as_str().unwrap_or(""),
-                        resource["description"].as_str().unwrap_or("")
+                        resource.uri, resource.mime_type, resource.description
                     )
                 })
                 .collect::<Vec<_>>()
@@ -214,20 +215,13 @@ async fn run_mcp_inspection_slash_command(
             if server_id.is_empty() {
                 return Err(anyhow::anyhow!("usage: /mcp tools <server>"));
             }
-            let value = app_server
+            let tools = app_server
                 .list_mcp_tools(server_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let tools: Vec<serde_json::Value> = serde_json::from_value(value).unwrap_or_default();
             let rendered = tools
                 .iter()
-                .map(|tool| {
-                    format!(
-                        "{}  {}",
-                        tool["name"].as_str().unwrap_or(""),
-                        tool["summary"].as_str().unwrap_or("")
-                    )
-                })
+                .map(|tool| format!("{}  {}", tool.name, tool.summary))
                 .collect::<Vec<_>>()
                 .join("\n");
             let status = format!("Listed MCP tools from `{server_id}`.");
@@ -248,11 +242,10 @@ async fn run_mcp_server_table(
     subcommand: &str,
     app_server: &AppClient,
 ) -> Result<LocalOutputCommandResult> {
-    let value = app_server
+    let servers = app_server
         .list_mcp_servers()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let servers: Vec<McpServerConfig> = serde_json::from_value(value).unwrap_or_default();
     if servers.is_empty() {
         return Ok(LocalOutputCommandResult::new(
             "No MCP servers configured.",
@@ -263,7 +256,7 @@ async fn run_mcp_server_table(
         ));
     }
     let rendered = servers
-        .into_iter()
+        .iter()
         .map(|server| {
             let error = server
                 .error
@@ -314,7 +307,7 @@ async fn run_mcp_add_slash_command(
             trimmed.to_string()
         }
     };
-    let config = serde_json::json!(McpServerConfig {
+    let config = McpServerInput {
         id: id.to_string(),
         transport,
         endpoint: endpoint.to_string(),
@@ -334,7 +327,7 @@ async fn run_mcp_add_slash_command(
         trust: McpServerTrust::Unknown,
         transport_type_hint: None,
         source: None,
-    });
+    };
     app_server
         .upsert_mcp_server(config)
         .await
@@ -344,7 +337,7 @@ async fn run_mcp_add_slash_command(
     // Unknown-until-trusted model, so reset it to `Unknown`: the user must
     // explicitly `/mcp trust <id>` before its tools become invokable.
     app_server
-        .set_mcp_server_trust(id, McpServerTrust::Unknown.as_str())
+        .set_mcp_server_trust(id, McpServerTrust::Unknown)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let status = format!("Added MCP server `{id}` (untrusted; run `/mcp trust {id}` to enable).");
@@ -359,11 +352,11 @@ async fn run_mcp_remove_slash_command(
     if server_id.is_empty() {
         return Err(anyhow::anyhow!("usage: /mcp remove <server>"));
     }
-    let value = app_server
+    let result = app_server
         .remove_mcp_server(server_id)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let removed = value["removed"].as_bool().unwrap_or(false);
+    let removed = result.removed;
     let status = if removed {
         format!("Removed MCP server `{server_id}`.")
     } else {
@@ -383,7 +376,7 @@ async fn run_mcp_trust_slash_command(
         return Err(anyhow::anyhow!("usage: /mcp trust <server>"));
     }
     app_server
-        .set_mcp_server_trust(server_id, trust.as_str())
+        .set_mcp_server_trust(server_id, trust)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let status = format!("{verb} MCP server `{server_id}`.");
@@ -421,11 +414,10 @@ async fn run_mcp_auth_slash_command(
                     Some(trimmed)
                 }
             };
-            let value = app_server
+            let overview = app_server
                 .mcp_oauth_overview(server_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let overview = parse_mcp_oauth_overview_value(&value);
             let rendered = render_mcp_oauth_overview(&overview);
             Ok(LocalOutputCommandResult::new(
                 "MCP OAuth token status.",
@@ -437,11 +429,10 @@ async fn run_mcp_auth_slash_command(
             if server_id.is_empty() {
                 return Err(anyhow::anyhow!("usage: /mcp auth login <server>"));
             }
-            let value = app_server
+            let overview = app_server
                 .mcp_oauth_overview(Some(server_id))
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let overview = parse_mcp_oauth_overview_value(&value);
             if overview.entries.is_empty() {
                 return Ok(LocalOutputCommandResult::new(
                     format!("No MCP server `{server_id}` found."),
@@ -471,12 +462,11 @@ async fn run_mcp_auth_slash_command(
             if server_id.is_empty() {
                 return Err(anyhow::anyhow!("usage: /mcp auth logout <server>"));
             }
-            let value = app_server
+            let result = app_server
                 .logout_mcp_oauth_token(server_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let removed = value["removed"].as_bool().unwrap_or(false);
-            let status = if removed {
+            let status = if result.logged_out {
                 format!("Logged out MCP server `{server_id}`.")
             } else {
                 format!("No OAuth token for MCP server `{server_id}`.")
@@ -486,42 +476,6 @@ async fn run_mcp_auth_slash_command(
         _ => Err(anyhow::anyhow!(
             "usage: /mcp auth [status|login|logout] [server]"
         )),
-    }
-}
-
-fn parse_mcp_oauth_overview_value(value: &serde_json::Value) -> McpOAuthOverview {
-    let store_path = value["store_path"]
-        .as_str()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    let entries = value["entries"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .map(|e| McpOAuthStatusEntry {
-                    server_id: e["server_id"].as_str().unwrap_or("").to_string(),
-                    source_summary: e["source_summary"].as_str().unwrap_or("").to_string(),
-                    usable: e["usable"].as_bool().unwrap_or(false),
-                    expired: e["expired"].as_bool().unwrap_or(false),
-                    has_refresh_token: e["has_refresh_token"].as_bool().unwrap_or(false),
-                    has_token_endpoint: e["has_token_endpoint"].as_bool().unwrap_or(false),
-                    expires_at: e["expires_at"].as_i64(),
-                    scopes: e["scopes"]
-                        .as_array()
-                        .map(|s| {
-                            s.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    updated_at: e["updated_at"].as_i64(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    McpOAuthOverview {
-        store_path,
-        entries,
     }
 }
 

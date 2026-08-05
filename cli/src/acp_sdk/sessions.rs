@@ -355,11 +355,6 @@ pub(super) async fn handle_delete_session(
 
     state.sessions.lock().await.remove(&session_id);
     deny_pending_server_requests(&state, &session_id).await;
-    state
-        .app_server
-        .remove_session_mcp_servers(&session_id)
-        .await;
-
     responder.respond(DeleteSessionResponse::new())
 }
 
@@ -549,10 +544,9 @@ pub(super) async fn handle_close_session(
         tracing::warn!(%session_id, %err, "ACP session/close cancel failed");
     }
     deny_pending_server_requests(&state, &session_id).await;
-    state
-        .app_server
-        .remove_session_mcp_servers(&session_id)
-        .await;
+    if let Err(err) = state.client.acp_close_session(&session_id).await {
+        tracing::warn!(%session_id, %err, "ACP session/close cleanup failed");
+    }
 
     responder.respond(CloseSessionResponse::new())
 }

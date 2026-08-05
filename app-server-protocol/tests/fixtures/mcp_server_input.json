@@ -1,0 +1,26 @@
+{
+  "id": "docs-server",
+  "transport": "streamable_http",
+  "endpoint": "https://user:password@example.com/mcp?token=secret",
+  "args": [
+    "--profile",
+    "production"
+  ],
+  "env": {
+    "DOCS_TOKEN": "secret"
+  },
+  "cwd": "/tmp/project",
+  "headers": {
+    "X-API-Key": "secret"
+  },
+  "enabled": true,
+  "status": "ready",
+  "error": null,
+  "summary": "Docs Server",
+  "auth": {
+    "kind": "header",
+    "name": "Authorization",
+    "value": "secret"
+  },
+  "trust": "unknown"
+}

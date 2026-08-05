@@ -65,7 +65,7 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let settings = app_server.sandbox_local_settings_typed().await?;
+        let settings = app_server.sandbox_local_settings().await?;
         self.overlay = Some(OverlayState::SandboxPicker(SandboxPickerState::new(
             command, settings,
         )));
@@ -81,9 +81,9 @@ impl TuiState {
     ) -> Result<()> {
         let command = command.into();
         app_server
-            .update_sandbox_settings_typed(sandbox_mode_update(choice))
+            .update_sandbox_settings(sandbox_mode_update(choice))
             .await?;
-        let settings = app_server.sandbox_local_settings_typed().await?;
+        let settings = app_server.sandbox_local_settings().await?;
         if let Some(OverlayState::SandboxPicker(picker)) = self.overlay.as_mut() {
             picker.refresh_settings(settings);
         }
@@ -101,9 +101,9 @@ impl TuiState {
     ) -> Result<()> {
         let command = command.into();
         app_server
-            .update_sandbox_settings_typed(sandbox_override_update(choice))
+            .update_sandbox_settings(sandbox_override_update(choice))
             .await?;
-        let settings = app_server.sandbox_local_settings_typed().await?;
+        let settings = app_server.sandbox_local_settings().await?;
         if let Some(OverlayState::SandboxPicker(picker)) = self.overlay.as_mut() {
             picker.refresh_settings(settings);
         }

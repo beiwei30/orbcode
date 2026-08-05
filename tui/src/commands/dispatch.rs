@@ -63,11 +63,10 @@ impl TuiState {
                 );
                 serde_json::Value::Object(map)
             };
-            let value = app_server
+            let result = app_server
                 .get_mcp_prompt(prompt_ref.server_id, prompt_ref.prompt_name, arguments)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let result: McpPromptResult = serde_json::from_value(value)?;
             let expanded = assemble_mcp_prompt_result(&result);
             self.push_local_slash_command_output(
                 line,
@@ -84,7 +83,8 @@ impl TuiState {
             let task_id = app_server
                 .start_workflow(&self.session_id, &workflow_name, invocation.args)
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .task_id;
             let detail = format!(
                 "Task ID: {task_id}\n\nUse TaskOutput with this task_id to read the result, or TaskStop to cancel it."
             );
@@ -93,7 +93,7 @@ impl TuiState {
                 format!("Started workflow task {task_id}."),
                 Some(detail),
             );
-            if let Ok(task) = app_server.background_job_detail_typed(&task_id).await {
+            if let Ok(task) = app_server.background_job_detail(&task_id).await {
                 self.transcript_task_cards
                     .apply_pushed_view(task, Instant::now());
             }

@@ -1,11 +1,22 @@
+mod auth;
+mod contracts;
 mod envelope;
 mod error;
+mod extensions;
 mod initialize;
+mod mcp;
 pub mod method;
 mod notification;
+mod permission;
 mod request;
 mod response;
 mod server_request;
+mod settings;
+
+pub use auth::{
+    AuthMethod, AuthOverview, AuthStatusEntry, StatusAuthOverview, StatusAuthStatusEntry,
+};
+pub use contracts::*;
 
 pub use envelope::{
     ClientMessage, ClientRequestEnvelope, RequestId, ResponseResult, ServerMessage,
@@ -13,11 +24,18 @@ pub use envelope::{
     ServerResponseEnvelope,
 };
 pub use error::{ErrorCode, ProtocolError};
+pub use extensions::{
+    AgentDefinition, AgentHookCommand, AgentHookMatcher, AgentLoadWarning, AgentPermissionMode,
+    AgentSource, AgentWarningKind, DiscoveredHook, HookDiscovery, HookDiscoveryWarning, HookLayer,
+    HookProvenance, HookValidationStatus, SkillDefinition, SkillSource,
+};
 pub use initialize::{
     ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, ServerCapabilities,
     ServerInfo,
 };
+pub use mcp::*;
 pub use notification::StreamEventNotification;
+pub use permission::{PermissionContext, PermissionDecision, PermissionRuleOverview};
 pub use request::BootstrapParams;
 pub use response::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
@@ -30,21 +48,24 @@ pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,
     PermissionDecisionWire, PermissionResponseParams,
 };
+pub use settings::{
+    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, SandboxFilesystemLocalSettings,
+    SandboxLocalSettings, SandboxNetworkLocalSettings, SandboxSettingsUpdate, ThemeSetting,
+    TokenWarningOptions,
+};
 
 // Re-export protocol types used by consumers of this crate.
-pub use orbcode_config::{
-    AgentDefinition, AgentLoadWarning, AuthOverview, AuthStatusEntry, HookDiscovery,
-    SandboxLocalSettings, SandboxSettingsUpdate,
-};
-pub use orbcode_core::{
+pub use orbcode_protocol::{
     BillingBasis, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
-    ContextTokenSource, ContextUsageOverview, CostOverview, PermissionContext, PermissionDecision,
-    ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, UsageOverview, WorkflowCommand,
-    WorkflowSource, format_cost,
+    ContextTokenSource, ContextUsageOverview, CostOverview, McpTrustApprovalRequest,
+    PermissionRequest, ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent,
+    TurnContext, UsageOverview, WorkflowCommand, WorkflowSource,
 };
-pub use orbcode_mcp::{
-    McpAuth, McpOAuthOverview, McpOAuthStatusEntry, McpPromptResult, McpServerConfig,
-    McpServerStatus, McpServerTrust, McpTransport,
-};
-pub use orbcode_protocol::{McpTrustApprovalRequest, PermissionRequest, StreamEvent};
-pub use orbcode_tools::SkillDefinition;
+
+pub fn format_cost(cost: f64) -> String {
+    if cost > 0.5 {
+        format!("${:.2}", (cost * 100.0).round() / 100.0)
+    } else {
+        format!("${cost:.4}")
+    }
+}

@@ -110,7 +110,7 @@ impl TaskPanelState {
         self.refresh_in_flight = true;
         let result = app_server.load_task_list_snapshot(&self.task_list_id).await;
         self.refresh_in_flight = false;
-        let value = match result {
+        let result = match result {
             Ok(value) => value,
             Err(_) => {
                 self.last_refreshed_at = Some(Instant::now());
@@ -118,7 +118,7 @@ impl TaskPanelState {
                 return false;
             }
         };
-        let snapshot = match parse_task_list_snapshot(&value) {
+        let snapshot = match parse_task_list_snapshot(result) {
             Some(snapshot) => snapshot,
             None => {
                 self.last_refreshed_at = Some(Instant::now());
@@ -244,24 +244,13 @@ impl TaskPanelState {
     }
 }
 
-fn parse_task_list_snapshot(value: &serde_json::Value) -> Option<TaskListSnapshot> {
-    let task_list_id = value["task_list_id"].as_str()?.to_string();
-    let directory = std::path::PathBuf::from(value["directory"].as_str().unwrap_or(""));
-    let task_array = value["tasks"].as_array()?;
-    let mut tasks = Vec::with_capacity(task_array.len());
+fn parse_task_list_snapshot(
+    value: orbcode_app_server_client::TaskListResult,
+) -> Option<TaskListSnapshot> {
+    let mut tasks = Vec::with_capacity(value.tasks.len());
     let mut summary = TaskListSummary::default();
-    for entry in task_array {
-        let id = entry["id"].as_str().unwrap_or("").to_string();
-        let subject = entry["subject"].as_str().unwrap_or("").to_string();
-        let description = entry["description"].as_str().unwrap_or("").to_string();
-        let active_form = entry["active_form"]
-            .as_str()
-            .map(std::string::ToString::to_string);
-        let owner = entry["owner"]
-            .as_str()
-            .map(std::string::ToString::to_string);
-        let status_str = entry["status"].as_str().unwrap_or("Pending");
-        let status = match status_str {
+    for entry in value.tasks {
+        let status = match entry.status.as_str() {
             "InProgress" => TaskStatusKind::InProgress,
             "Completed" => TaskStatusKind::Completed,
             _ => TaskStatusKind::Pending,
@@ -272,45 +261,21 @@ fn parse_task_list_snapshot(value: &serde_json::Value) -> Option<TaskListSnapsho
             TaskStatusKind::Pending => summary.pending += 1,
         }
         summary.total += 1;
-        let blocked_by: Vec<String> = entry["blocked_by"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let blocks: Vec<String> = entry["blocks"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let open_blockers: Vec<String> = entry["open_blockers"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
         tasks.push(TaskView {
-            id,
-            subject,
-            description,
-            active_form,
-            owner,
+            id: entry.id,
+            subject: entry.subject,
+            description: entry.description,
+            active_form: None,
+            owner: None,
             status,
-            blocks,
-            blocked_by,
-            open_blockers,
+            blocks: Vec::new(),
+            blocked_by: Vec::new(),
+            open_blockers: Vec::new(),
         });
     }
     Some(TaskListSnapshot {
-        task_list_id,
-        directory,
+        task_list_id: value.task_list_id,
+        directory: value.directory,
         tasks,
         summary,
         fingerprint: 0,

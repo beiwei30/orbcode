@@ -16,6 +16,7 @@ orbcode-app-server = { path = "../app-server" }
 orbcode-app-server-client = { path = "../app-server-client" }
 orbcode-app-server-protocol = { path = "../app-server-protocol" }
 orbcode-app-server-transport = { path = "../app-server-transport" }
+orbcode-config = { path = "../config" }
 orbcode-protocol = { path = "../protocol" }
 orbcode-tui = { path = "../tui" }
 chrono.workspace = true
