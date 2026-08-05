@@ -184,8 +184,7 @@ impl DiffOverlayState {
             DiffOverlayMode::Unstaged => self.files_cache.unstaged_files.as_deref().unwrap_or(&[]),
             DiffOverlayMode::Staged => self.files_cache.staged_files.as_deref().unwrap_or(&[]),
         }
-        .get(selected_file)
-        .cloned();
+        .get(selected_file);
         let Some(file) = file else {
             self.file_content_cache.visual_rows.clear();
             self.file_content_cache.source_line_by_visual_row.clear();
@@ -207,11 +206,11 @@ impl DiffOverlayState {
             return false;
         }
 
-        let line_no_width = diff_file_line_no_width(&file);
-        let extension = diff_file_extension(&file);
-        let syntax_lines = diff_file_syntax_lines(&file, &extension);
+        let line_no_width = diff_file_line_no_width(file);
+        let extension = diff_file_extension(file);
+        let syntax_lines = diff_file_syntax_lines(file, &extension);
         let projection = diff_file_visual_projection(
-            &file,
+            file,
             selected_line,
             line_no_width,
             available_width,
