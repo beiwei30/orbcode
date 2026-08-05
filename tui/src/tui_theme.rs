@@ -1,6 +1,6 @@
 use std::sync::{OnceLock, RwLock};
 
-use orbcode_config::ThemeSetting;
+use orbcode_app_server_client::ThemeSetting;
 use ratatui::prelude::{Color, Modifier, Style};
 
 pub(crate) const USER_BAR_BG: Color = Color::Rgb(55, 55, 55);

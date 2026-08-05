@@ -20,6 +20,7 @@ pub const SESSION_ACP_LOAD_PREFLIGHT: &str = "session/acp_load_preflight";
 pub const SESSION_ACP_LOAD_SETUP: &str = "session/acp_load_setup";
 pub const SESSION_ACP_RESUME_SETUP: &str = "session/acp_resume_setup";
 pub const SESSION_ACP_DELETE: &str = "session/acp_delete";
+pub const SESSION_ACP_CLOSE: &str = "session/acp_close";
 
 // ---------------------------------------------------------------------------
 // Turn
@@ -294,6 +295,7 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         SESSION_ACP_LOAD_SETUP,
         SESSION_ACP_RESUME_SETUP,
         SESSION_ACP_DELETE,
+        SESSION_ACP_CLOSE,
         // Background
         BACKGROUND_CREATE,
         BACKGROUND_LIST,
@@ -357,6 +359,7 @@ mod tests {
         assert!(methods.contains(&SESSION_ACP_LOAD_SETUP));
         assert!(methods.contains(&SESSION_ACP_RESUME_SETUP));
         assert!(methods.contains(&SESSION_ACP_DELETE));
+        assert!(methods.contains(&SESSION_ACP_CLOSE));
         assert!(methods.contains(&TURN_SUBMIT));
         assert!(methods.contains(&PERMISSION_RESPOND));
         assert!(methods.contains(&SETTINGS_MODEL_NAME));
@@ -402,11 +405,11 @@ mod tests {
 
     #[test]
     fn method_count_matches_expected() {
-        // Current count: 1 lifecycle + 14 session + 4 turn + 10 permission +
-        // 13 settings + 5 context/usage + 14 mcp + 6 tools + 7 background +
+        // Current count: 1 lifecycle + 15 session + 4 turn + 10 permission +
+        // 24 settings + 5 context/usage + 16 mcp + 8 tools + 8 background +
         // 4 workflows + 3 auth + 9 diagnostics + 1 notification +
-        // 3 server requests = 110
-        assert_eq!(all_methods().len(), 110);
+        // 3 server requests = 111
+        assert_eq!(all_methods().len(), 111);
     }
 
     #[test]
@@ -513,22 +516,22 @@ mod tests {
 
     #[test]
     fn client_request_methods_count() {
-        // 1 lifecycle + 10 stable session + 4 experimental session + 4 turn + 10 permission + 23 settings +
-        // 5 context/usage + 14 mcp + 6 tools + 7 background + 4 workflows +
-        // 3 auth + 9 diagnostics = 106
-        assert_eq!(client_request_methods().len(), 106);
+        // 1 lifecycle + 10 stable session + 5 experimental session + 4 turn + 10 permission + 24 settings +
+        // 5 context/usage + 16 mcp + 8 tools + 8 background + 4 workflows +
+        // 3 auth + 9 diagnostics = 107
+        assert_eq!(client_request_methods().len(), 107);
     }
 
     #[test]
     fn stable_client_request_methods_count() {
-        // 1 lifecycle + 9 session + 4 turn + 8 permission + 13 settings +
-        // 5 context/usage + 14 mcp + 6 tools + 3 auth + 7 diagnostics = 90
+        // 1 lifecycle + 10 session + 4 turn + 10 permission + 24 settings +
+        // 5 context/usage + 16 mcp + 8 tools + 3 auth + 9 diagnostics = 90
         assert_eq!(stable_client_request_methods().len(), 90);
     }
 
     #[test]
     fn experimental_client_request_methods_count() {
-        // 4 session + 8 background + 4 workflows = 16
-        assert_eq!(experimental_client_request_methods().len(), 16);
+        // 5 session + 8 background + 4 workflows = 17
+        assert_eq!(experimental_client_request_methods().len(), 17);
     }
 }

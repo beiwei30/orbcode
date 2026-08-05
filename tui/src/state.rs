@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crossterm::cursor::SetCursorStyle;
-use orbcode_app_server_client::{AppClient, BootstrapState, McpSlashSuggestionCatalog};
-use orbcode_config::{
-    ContextWindowOptions, MaxOutputTokenOptions, PermissionMode, TokenWarningOptions,
-    calculate_token_warning_state,
+use orbcode_app_server_client::{
+    AppClient, BootstrapState, ContextWindowOptions, MaxOutputTokenOptions,
+    McpSlashSuggestionCatalog, TokenWarningOptions,
 };
+use orbcode_config::PermissionMode;
 use orbcode_protocol::{EffortLevel, ProviderId, StreamEvent, TokenUsage, TranscriptMessage};
 use ratatui::prelude::Rect;
 use serde_json::Value;
@@ -302,10 +302,8 @@ impl TuiState {
     /// line stays in sync after `/effort`, the model picker, or the config
     /// picker change it. Best-effort: leaves the cached value untouched on error.
     pub(crate) async fn refresh_status_effort(&mut self, app_server: &AppClient) {
-        if let Ok(value) = app_server.effort_level().await {
-            self.status.effort = serde_json::from_value(value["effort"].clone())
-                .ok()
-                .flatten();
+        if let Ok(result) = app_server.effort_level().await {
+            self.status.effort = result.effort;
         }
     }
 
@@ -395,7 +393,7 @@ impl TuiState {
         if token_usage == 0 {
             return;
         }
-        let warning_state = calculate_token_warning_state(
+        let warning_state = calculate_token_warning_state_from_protocol(
             token_usage,
             &self.model_display_name,
             &self.context_window_options,
@@ -404,4 +402,30 @@ impl TuiState {
         );
         self.status.context_percent_left = Some(warning_state.percent_left);
     }
+}
+
+pub(crate) fn calculate_token_warning_state_from_protocol(
+    token_usage: u32,
+    model: &str,
+    context_options: &ContextWindowOptions,
+    max_output_options: &MaxOutputTokenOptions,
+    warning_options: &TokenWarningOptions,
+) -> orbcode_config::TokenWarningState {
+    orbcode_config::calculate_token_warning_state(
+        token_usage,
+        model,
+        &orbcode_config::ContextWindowOptions {
+            disable_1m_context: context_options.disable_1m_context,
+            max_context_tokens_override: context_options.max_context_tokens_override,
+            auto_compact_window_override: context_options.auto_compact_window_override,
+        },
+        &orbcode_config::MaxOutputTokenOptions {
+            max_output_tokens_override: max_output_options.max_output_tokens_override,
+        },
+        &orbcode_config::TokenWarningOptions {
+            auto_compact_enabled: warning_options.auto_compact_enabled,
+            auto_compact_percent_override: warning_options.auto_compact_percent_override,
+            blocking_limit_override: warning_options.blocking_limit_override,
+        },
+    )
 }

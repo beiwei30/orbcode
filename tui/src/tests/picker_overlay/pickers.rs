@@ -766,7 +766,7 @@ fn output_style_picker_handles_namespaced_values() {
 
 #[test]
 fn mcp_auth_render_overview_with_entries() {
-    use orbcode_app_server::{McpOAuthOverview, McpOAuthStatusEntry};
+    use orbcode_app_server_client::{McpOAuthOverview, McpOAuthStatusEntry};
     use std::path::PathBuf;
 
     use crate::commands::local_output::render_mcp_oauth_overview;
@@ -796,7 +796,7 @@ fn mcp_auth_render_overview_with_entries() {
 
 #[test]
 fn mcp_auth_render_overview_empty() {
-    use orbcode_app_server::McpOAuthOverview;
+    use orbcode_app_server_client::McpOAuthOverview;
     use std::path::PathBuf;
 
     use crate::commands::local_output::render_mcp_oauth_overview;

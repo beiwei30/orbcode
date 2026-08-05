@@ -1116,6 +1116,120 @@ async fn mcp_list_servers_returns_empty_array() {
 }
 
 #[tokio::test]
+async fn mcp_list_servers_redacts_all_secret_bearing_configuration_fields() {
+    let app = test_app("mcp-list-servers-redaction").await;
+    let canaries = [
+        "url-user-canary",
+        "url-password-canary",
+        "url-query-canary",
+        "url-fragment-canary",
+        "arg-canary",
+        "env-canary",
+        "header-canary",
+        "auth-header-canary",
+        "error-canary",
+    ];
+
+    let upsert = app
+        .handle_request(make_request(
+            "mcp/upsert_server",
+            json!({
+                "id": "secret-bearing-server",
+                "transport": "streamable_http",
+                "endpoint": "https://url-user-canary:url-password-canary@example.com/mcp?access_token=url-query-canary#url-fragment-canary",
+                "args": ["--token=arg-canary"],
+                "env": {"MCP_TOKEN": "env-canary"},
+                "headers": {"X-API-Key": "header-canary"},
+                "enabled": false,
+                "status": "failed",
+                "error": "error-canary",
+                "summary": "redaction fixture",
+                "auth": {
+                    "kind": "header",
+                    "name": "Authorization",
+                    "value": "auth-header-canary"
+                },
+                "trust": "unknown"
+            }),
+        ))
+        .await;
+    assert!(matches!(&upsert.result, ResponseResult::Success { .. }));
+    let serialized_upsert = serde_json::to_string(&upsert).expect("serialize upsert response");
+    for canary in canaries {
+        assert!(
+            !serialized_upsert.contains(canary),
+            "mutation response echoed {canary}: {serialized_upsert}"
+        );
+    }
+
+    let bootstrap = app
+        .handle_request(make_request_no_params("session/bootstrap"))
+        .await;
+    let session_id = match &bootstrap.result {
+        ResponseResult::Success { data: Some(data) } => data["session"]["session_id"]
+            .as_str()
+            .expect("bootstrap session id")
+            .to_string(),
+        other => panic!("expected bootstrap success, got {other:?}"),
+    };
+    let read_responses = [
+        (
+            "mcp/list_servers",
+            app.handle_request(make_request_no_params("mcp/list_servers"))
+                .await,
+        ),
+        (
+            "session/bootstrap",
+            app.handle_request(make_request(
+                "session/bootstrap",
+                json!({"session_id": session_id}),
+            ))
+            .await,
+        ),
+        (
+            "diagnostics/status",
+            app.handle_request(make_request(
+                "diagnostics/status",
+                json!({"session_id": session_id}),
+            ))
+            .await,
+        ),
+        (
+            "mcp/oauth_overview",
+            app.handle_request(make_request(
+                "mcp/oauth_overview",
+                json!({"server_id": null}),
+            ))
+            .await,
+        ),
+    ];
+    for (method, response) in read_responses {
+        let serialized = serde_json::to_string(&response).expect("serialize read response");
+        for canary in canaries {
+            assert!(
+                !serialized.contains(canary),
+                "{method} leaked {canary}: {serialized}"
+            );
+        }
+    }
+
+    let response = app
+        .handle_request(make_request_no_params("mcp/list_servers"))
+        .await;
+    let ResponseResult::Success { data: Some(data) } = response.result else {
+        panic!("expected MCP list success")
+    };
+    let servers: orbcode_app_server_protocol::McpListServersResult =
+        serde_json::from_value(data).expect("typed MCP list result");
+    let server = servers.first().expect("configured server");
+    assert_eq!(server.args, ["<redacted>"]);
+    assert_eq!(server.env["MCP_TOKEN"], "<redacted>");
+    assert_eq!(server.headers["X-API-Key"], "<redacted>");
+    assert_ne!(server.error.as_deref(), Some("error-canary"));
+    assert!(server.endpoint.contains("example.com/mcp"));
+}
+
+#[tokio::test]
 async fn mcp_capabilities_returns_array_with_fields() {
     let app = test_app("mcp-capabilities").await;
     let resp = app

@@ -593,7 +593,7 @@ fn render_status_overview_includes_session_and_runtime_summary() {
         sandbox_mode: "workspace-write".to_string(),
         sandbox_allow_network: false,
         permissions: PermissionOverview {
-            permissions: orbcode_app_server::PermissionContext {
+            permissions: orbcode_app_server_client::PermissionContext {
                 cwd: PathBuf::from("/tmp/project"),
                 allow_network: true,
                 provider_allow_network: false,
@@ -615,7 +615,7 @@ fn render_status_overview_includes_session_and_runtime_summary() {
             configured_additional_directories: vec![PathBuf::from("/tmp/configured")],
             session_additional_directories: vec![PathBuf::from("/tmp/extra")],
         },
-        auth: orbcode_app_server::AuthOverview {
+        auth: StatusAuthOverview {
             store_path: PathBuf::from("/tmp/home/auth.json"),
             entries: Vec::new(),
         },
@@ -686,7 +686,7 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
         sandbox_mode: "danger-full-access".to_string(),
         sandbox_allow_network: true,
         permissions: PermissionOverview {
-            permissions: orbcode_app_server::PermissionContext {
+            permissions: orbcode_app_server_client::PermissionContext {
                 cwd: PathBuf::from("/tmp/project"),
                 allow_network: true,
                 provider_allow_network: true,
@@ -708,7 +708,7 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
             configured_additional_directories: Vec::new(),
             session_additional_directories: Vec::new(),
         },
-        auth: orbcode_app_server::AuthOverview {
+        auth: StatusAuthOverview {
             store_path: PathBuf::from("/tmp/home/auth.json"),
             entries: Vec::new(),
         },
@@ -794,7 +794,6 @@ fn render_auth_overview_marks_blocked_oauth_status() {
             persisted: true,
             usable: false,
             active: false,
-            updated_at: None,
         }],
     });
 
@@ -814,7 +813,6 @@ fn render_auth_overview_marks_active_source() {
                 persisted: true,
                 usable: true,
                 active: true,
-                updated_at: None,
             },
             AuthStatusEntry {
                 provider: ProviderId::Anthropic,
@@ -823,7 +821,6 @@ fn render_auth_overview_marks_active_source() {
                 persisted: true,
                 usable: true,
                 active: false,
-                updated_at: None,
             },
         ],
     });

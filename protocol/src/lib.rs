@@ -1,7 +1,9 @@
+mod app_values;
 mod background_task_view;
 mod control;
 mod cost;
 mod interaction;
+mod overview;
 mod permission;
 mod provider;
 mod session;
@@ -10,6 +12,10 @@ mod tool;
 mod tool_title;
 mod usage;
 
+pub use app_values::{
+    CompactDecision, CompactSessionResult, ProviderRequestDebugSnapshot, WorkflowCommand,
+    WorkflowSource,
+};
 pub use background_task_view::{
     BackgroundTaskProgressEvent, BackgroundTaskView, BackgroundTaskViewKind,
     BackgroundTaskViewStatus, WorkflowStepView, WorkflowStepViewStatus,
@@ -20,9 +26,9 @@ pub use control::{
     extract_user_message_text,
 };
 pub use cost::{
-    BudgetState, CostBreakdown, ModelPricing, PRICING_ANTHROPIC_HAIKU, PRICING_ANTHROPIC_OPUS,
-    PRICING_ANTHROPIC_SONNET, PRICING_OPENAI_COMPATIBLE, accumulate_cost, over_budget,
-    pricing_for_model,
+    BillingBasis, BudgetState, CostBreakdown, CostSummary, ModelPricing, ModelUsage,
+    PRICING_ANTHROPIC_HAIKU, PRICING_ANTHROPIC_OPUS, PRICING_ANTHROPIC_SONNET,
+    PRICING_OPENAI_COMPATIBLE, accumulate_cost, over_budget, pricing_for_model,
 };
 pub use interaction::{
     ASK_USER_MAX_ANNOTATION_BYTES, ASK_USER_MAX_DESCRIPTION_BYTES, ASK_USER_MAX_HEADER_CHARS,
@@ -31,6 +37,11 @@ pub use interaction::{
     ASK_USER_MAX_REQUEST_BYTES, AskUserAnswerValue, AskUserCancellationReason, AskUserOption,
     AskUserQuestionSpec, AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError,
     validate_ask_user_outcome, validate_ask_user_questions,
+};
+pub use overview::{
+    ContextCategoryBreakdown, ContextDiagnosticCategory, ContextDiagnosticSection,
+    ContextDiagnosticStatus, ContextDiagnosticsReport, ContextTokenSource, ContextUsageOverview,
+    CostOverview, StatsActivityDay, StatsOverview, UsageOverview,
 };
 pub use permission::{
     McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,

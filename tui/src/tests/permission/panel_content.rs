@@ -807,13 +807,21 @@ fn permissions_slash_output_renders_detail_without_quote_bar() {
 #[test]
 fn render_permission_overview_includes_gates_and_rules() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: false,
             allow_tools: false,
-            allowed_rules: vec![PermissionRule::parse("Bash(git status:*)")],
-            denied_rules: vec![PermissionRule::parse("Bash(rm:*)")],
+            allowed_rules: vec![PermissionRuleOverview {
+                raw: "Bash(git status:*)".to_string(),
+                tool_name: "Bash".to_string(),
+                rule_content: Some("git status:*".to_string()),
+            }],
+            denied_rules: vec![PermissionRuleOverview {
+                raw: "Bash(rm:*)".to_string(),
+                tool_name: "Bash".to_string(),
+                rule_content: Some("rm:*".to_string()),
+            }],
             ask_rules: Vec::new(),
             additional_directories: vec![PathBuf::from("/tmp/extra")],
         },

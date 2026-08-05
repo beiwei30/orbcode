@@ -48,7 +48,6 @@ const ACP_ASK_OPTION_PREFIX: &str = "ask_user_option_";
 
 struct AcpSdkState {
     client: Arc<AppClient>,
-    app_server: AppServer,
     launch_cwd: PathBuf,
     sessions: Mutex<HashMap<String, AcpSessionState>>,
     pending_server_requests: Mutex<HashMap<String, Vec<PendingServerRequest>>>,
@@ -110,7 +109,6 @@ impl<Counterpart: Role> ConnectTo<Counterpart> for EofAwareStdio {
 impl AcpSdkState {
     fn new(
         client: Arc<AppClient>,
-        app_server: AppServer,
         server_request_rx: Option<mpsc::Receiver<ServerRequestEnvelope>>,
     ) -> Self {
         let launch_cwd = std::env::current_dir().map_or_else(
@@ -119,7 +117,6 @@ impl AcpSdkState {
         );
         Self {
             client,
-            app_server,
             launch_cwd,
             sessions: Mutex::new(HashMap::new()),
             pending_server_requests: Mutex::new(HashMap::new()),
@@ -130,16 +127,12 @@ impl AcpSdkState {
 
 pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()> {
     let client = Arc::new(
-        AppClient::new_option_only(app_server.clone())
+        AppClient::new_option_only(app_server)
             .await
             .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
     );
     let server_request_rx = client.take_server_request_receiver().await;
-    let state = Arc::new(AcpSdkState::new(
-        Arc::clone(&client),
-        app_server,
-        server_request_rx,
-    ));
+    let state = Arc::new(AcpSdkState::new(Arc::clone(&client), server_request_rx));
     let (stdio, stdin_eof_rx) = EofAwareStdio::new();
 
     let result = Agent
@@ -252,10 +245,9 @@ async fn cleanup_all_sessions(state: &AcpSdkState) {
             tracing::warn!(%session_id, %err, "ACP stdio cleanup cancel failed");
         }
         deny_pending_server_requests(state, &session_id).await;
-        state
-            .app_server
-            .remove_session_mcp_servers(&session_id)
-            .await;
+        if let Err(err) = state.client.acp_close_session(&session_id).await {
+            tracing::warn!(%session_id, %err, "ACP stdio cleanup failed");
+        }
     }
 }
 

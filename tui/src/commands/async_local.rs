@@ -158,12 +158,6 @@ pub(crate) fn apply_local_command_event_for_redraw(
     prompt
 }
 
-/// Deserialize a `serde_json::Value` into a typed `T`, converting errors to
-/// `String` so the result fits the `LocalCommandEvent` error channel.
-fn from_value<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|e| format!("protocol deserialization error: {e}"))
-}
-
 impl AsyncLocalSlashCommand {
     pub(crate) fn loading_status(self) -> &'static str {
         match self {
@@ -207,16 +201,10 @@ impl AsyncLocalSlashCommand {
     ) -> LocalCommandEvent {
         match self {
             Self::Agents => {
-                #[derive(serde::Deserialize)]
-                struct AgentResult {
-                    definitions: Vec<AgentDefinition>,
-                    warnings: Vec<AgentLoadWarning>,
-                }
                 let result = client
                     .agent_definitions_with_warnings()
                     .await
                     .map_err(|e| e.to_string())
-                    .and_then(from_value::<AgentResult>)
                     .map(|r| (r.definitions, r.warnings));
                 LocalCommandEvent::AgentsFinished(result)
             }
@@ -225,23 +213,18 @@ impl AsyncLocalSlashCommand {
                     .pre_user_instructions_preview(session_id)
                     .await
                     .map_err(|e| e.to_string())
-                    .map(|v| v["preview"].as_str().unwrap_or("").to_string());
+                    .map(|result| result.preview);
                 LocalCommandEvent::InstructionsFinished(result)
             }
             Self::Hooks => {
-                let result = client
-                    .hook_discovery()
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                let result = client.hook_discovery().await.map_err(|e| e.to_string());
                 LocalCommandEvent::HooksFinished(result)
             }
             Self::Context => {
                 let result = client
                     .context_overview(session_id)
                     .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map_err(|e| e.to_string());
                 LocalCommandEvent::ContextFinished {
                     command: "/context".to_string(),
                     full: false,
@@ -252,40 +235,26 @@ impl AsyncLocalSlashCommand {
                 let result = client
                     .cost_overview(session_id)
                     .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map_err(|e| e.to_string());
                 LocalCommandEvent::CostFinished(result)
             }
             Self::Diff => {
-                let result = client
-                    .workspace_diff()
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                let result = client.workspace_diff().await.map_err(|e| e.to_string());
                 LocalCommandEvent::DiffFinished(result)
             }
             Self::Doctor => {
-                let result = client
-                    .doctor_report()
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                let result = client.doctor_report().await.map_err(|e| e.to_string());
                 LocalCommandEvent::DoctorFinished(result)
             }
             Self::Memory => {
-                let result = client
-                    .memory_overview()
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                let result = client.memory_overview().await.map_err(|e| e.to_string());
                 LocalCommandEvent::MemoryFinished(result)
             }
             Self::Permissions => {
                 let result = client
                     .permission_overview()
                     .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map_err(|e| e.to_string());
                 LocalCommandEvent::PermissionsFinished(result)
             }
             Self::Skills => {
@@ -293,31 +262,25 @@ impl AsyncLocalSlashCommand {
                     .skill_definitions_for_session(session_id)
                     .await
                     .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map(|result| result.into_inner());
                 LocalCommandEvent::SkillsFinished(result)
             }
             Self::Stats => {
-                let result = client
-                    .stats_overview()
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                let result = client.stats_overview().await.map_err(|e| e.to_string());
                 LocalCommandEvent::StatsFinished(result)
             }
             Self::Status => {
                 let result = client
                     .status_overview(session_id)
                     .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map_err(|e| e.to_string());
                 LocalCommandEvent::StatusFinished(result)
             }
             Self::Usage => {
                 let result = client
                     .usage_overview(session_id)
                     .await
-                    .map_err(|e| e.to_string())
-                    .and_then(from_value);
+                    .map_err(|e| e.to_string());
                 LocalCommandEvent::UsageFinished(result)
             }
         }
@@ -361,8 +324,7 @@ impl TuiState {
             let result = client
                 .context_overview(&session_id)
                 .await
-                .map_err(|e| e.to_string())
-                .and_then(from_value);
+                .map_err(|e| e.to_string());
             let _ = local_command_tx.send(LocalCommandEnvelope::new(
                 session_id,
                 LocalCommandEvent::ContextFinished {

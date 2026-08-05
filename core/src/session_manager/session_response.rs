@@ -383,15 +383,20 @@ impl SessionManager {
                 let terminal_outcome =
                     scheduler.record_execution_outcome(item, outcome.into_tool_round_outcome());
                 if let Some(outcome) = terminal_outcome {
+                    if matches!(outcome, SequentialToolRoundOutcome::Cancelled { .. }) {
+                        // The outer cancellation branch synthesizes interrupted
+                        // results and terminal events for every unanswered tool.
+                        // Stop speculative streamed executions here without
+                        // emitting a second terminal event for the same id.
+                        stop_streamed_tool_executions(streamed_tool_executions.into_values()).await;
+                        return Ok(outcome);
+                    }
                     self.interrupt_streamed_tool_executions(
                         session_id,
                         streamed_tool_executions.into_values(),
                         tx,
                     )
                     .await;
-                    if matches!(outcome, SequentialToolRoundOutcome::Cancelled { .. }) {
-                        return Ok(outcome);
-                    }
                     self.flush_tool_result_context_queue(session_id, tx).await?;
                     return Ok(outcome);
                 }
@@ -629,6 +634,15 @@ impl SessionManager {
                 })
                 .is_some_and(|task_id| task_id.starts_with("workflow-"))
         }))
+    }
+}
+
+async fn stop_streamed_tool_executions<I>(executions: I)
+where
+    I: IntoIterator<Item = StreamedToolUseExecution>,
+{
+    for execution in executions {
+        execution.interrupt().await;
     }
 }
 

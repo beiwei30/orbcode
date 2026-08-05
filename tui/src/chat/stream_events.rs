@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use orbcode_app_server_client::{AppClient, AskUserQuestionRequest};
-use orbcode_config::calculate_token_warning_state;
 use orbcode_protocol::{
     BudgetOutcome, MessageRole, StreamEvent, TokenUsage, TranscriptBlock, TranscriptMessage,
     visible_content_from_blocks,
@@ -28,7 +27,7 @@ use crate::render::thinking::{
     message_contains_matching_thinking_block, message_has_non_thinking_block,
 };
 use crate::render_metrics::RenderEventCounts;
-use crate::state::{RequestTokenDirection, TuiState};
+use crate::state::{RequestTokenDirection, TuiState, calculate_token_warning_state_from_protocol};
 use crate::task_panel::task_tool_changes_panel;
 use crate::tool_cell::live_state::LiveToolActivity;
 
@@ -417,7 +416,7 @@ impl TuiState {
         if token_usage == 0 {
             return None;
         }
-        let warning_state = calculate_token_warning_state(
+        let warning_state = calculate_token_warning_state_from_protocol(
             token_usage,
             &self.model_display_name,
             &self.context_window_options,
@@ -808,8 +807,14 @@ impl TuiState {
                     self.current_turn_total_tokens.saturating_add(usage_total);
                 self.streamed_response_chars = self.streamed_response_chars.max(usage_output_chars);
                 if let Some(thinking_message) = self.take_completed_thinking_message() {
-                    message = Self::remove_duplicate_completed_thinking(&thinking_message, message);
-                    self.push_message_and_flush_history(thinking_message);
+                    let completion_contains_thinking =
+                        message_contains_matching_thinking_block(&message, &thinking_message);
+                    let completion_has_non_thinking = message_has_non_thinking_block(&message);
+                    if !completion_contains_thinking || completion_has_non_thinking {
+                        message =
+                            Self::remove_duplicate_completed_thinking(&thinking_message, message);
+                        self.push_message_and_flush_history(thinking_message);
+                    }
                 }
                 let has_tool_use = message
                     .blocks

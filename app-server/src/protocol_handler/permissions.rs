@@ -1,14 +1,14 @@
-use std::path::PathBuf;
-
 use orbcode_app_server_protocol::{
-    PermissionDecisionWire, PermissionResponseParams, ResponseResult,
+    AddDirectoryParams, PermissionDecisionWire, PermissionModeResult, PermissionResponseParams,
+    PermissionRuleParams, PermissionSetModeParams, ResponseResult, SentResult,
+    SessionPermissionRuleParams, ValidateDirectoryParams,
 };
 use orbcode_config::{PermissionMode, PermissionRuleSettingKind};
-use serde::Deserialize;
 use serde_json::Value;
 
 use super::{core_error, invalid_params, success, success_empty, try_parse};
 use crate::AppServer;
+use crate::protocol_conversion::permission_rule_update_to_wire;
 
 /// Convert the wire-level [`PermissionDecisionWire`] to core's
 /// [`PermissionDecision`](orbcode_core::PermissionDecision).
@@ -43,7 +43,7 @@ impl AppServer {
         let sent = self
             .respond_to_permission_request(&p.request_id, decision)
             .await;
-        success(serde_json::json!({ "sent": sent }))
+        success(SentResult { sent })
     }
 
     pub(super) async fn handle_permission_overview(
@@ -56,15 +56,13 @@ impl AppServer {
 
     pub(super) fn handle_permission_mode(&self, _params: Option<Value>) -> ResponseResult {
         let mode = self.permission_mode();
-        success(serde_json::json!({ "mode": mode.as_str() }))
+        success(PermissionModeResult {
+            mode: mode.as_str().to_string(),
+        })
     }
 
     pub(super) fn handle_permission_set_mode(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            mode: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: PermissionSetModeParams = try_parse!(params);
         let Some(mode) = PermissionMode::parse(&p.mode) else {
             return invalid_params(format!("unknown permission mode: {}", p.mode));
         };
@@ -73,19 +71,14 @@ impl AppServer {
     }
 
     pub(super) async fn handle_permission_add_rule(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            kind: String,
-            rule: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: PermissionRuleParams = try_parse!(params);
         let kind = match p.kind.as_str() {
             "allow" => PermissionRuleSettingKind::Allow,
             "deny" => PermissionRuleSettingKind::Deny,
             other => return invalid_params(format!("unknown rule kind: {other}")),
         };
         match self.add_permission_rule(kind, &p.rule).await {
-            Ok(update) => success(update),
+            Ok(update) => success(permission_rule_update_to_wire(update)),
             Err(e) => core_error(e),
         }
     }
@@ -94,19 +87,14 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            kind: String,
-            rule: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: PermissionRuleParams = try_parse!(params);
         let kind = match p.kind.as_str() {
             "allow" => PermissionRuleSettingKind::Allow,
             "deny" => PermissionRuleSettingKind::Deny,
             other => return invalid_params(format!("unknown rule kind: {other}")),
         };
         match self.remove_permission_rule(kind, &p.rule).await {
-            Ok(update) => success(update),
+            Ok(update) => success(permission_rule_update_to_wire(update)),
             Err(e) => core_error(e),
         }
     }
@@ -115,13 +103,7 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            kind: String,
-            rule: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionPermissionRuleParams = try_parse!(params);
         let kind = match p.kind.as_str() {
             "allow" => PermissionRuleSettingKind::Allow,
             "deny" => PermissionRuleSettingKind::Deny,
@@ -131,7 +113,7 @@ impl AppServer {
             .add_session_permission_rule(&p.session_id, kind, &p.rule)
             .await
         {
-            Ok(update) => success(update),
+            Ok(update) => success(permission_rule_update_to_wire(update)),
             Err(e) => core_error(e),
         }
     }
@@ -140,13 +122,7 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            kind: String,
-            rule: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionPermissionRuleParams = try_parse!(params);
         let kind = match p.kind.as_str() {
             "allow" => PermissionRuleSettingKind::Allow,
             "deny" => PermissionRuleSettingKind::Deny,
@@ -156,7 +132,7 @@ impl AppServer {
             .remove_session_permission_rule(&p.session_id, kind, &p.rule)
             .await
         {
-            Ok(update) => success(update),
+            Ok(update) => success(permission_rule_update_to_wire(update)),
             Err(e) => core_error(e),
         }
     }
@@ -165,14 +141,9 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            directory: PathBuf,
-        }
-        let p: Params = try_parse!(params);
+        let p: AddDirectoryParams = try_parse!(params);
         match self.add_directory(&p.session_id, p.directory).await {
-            Ok(added) => success(serde_json::json!({ "path": added.path })),
+            Ok(added) => success(added),
             Err(e) => core_error(e),
         }
     }
@@ -181,13 +152,9 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            path: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: ValidateDirectoryParams = try_parse!(params);
         match self.validate_add_directory(&p.path).await {
-            Ok(candidate) => success(serde_json::json!({ "path": candidate.path })),
+            Ok(candidate) => success(candidate),
             Err(e) => core_error(e),
         }
     }

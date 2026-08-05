@@ -1,5 +1,5 @@
 use ratatui::text::Line;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(crate) type StyledLine = Line<'static>;
 
@@ -8,7 +8,7 @@ pub(crate) fn display_width(ch: char) -> usize {
 }
 
 pub(crate) fn display_width_str(text: &str) -> usize {
-    text.chars().map(display_width).sum()
+    UnicodeWidthStr::width(text)
 }
 
 pub(crate) fn fit_table_widths(

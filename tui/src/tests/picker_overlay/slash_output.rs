@@ -538,8 +538,11 @@ fn diff_overlay_tabs_follow_selection_and_disambiguate_duplicate_names() {
         },
         mode: DiffOverlayMode::Unstaged,
         selected_file: 5,
+        selected_line: 0,
         line_scroll: 0,
         max_line_scroll: 0,
+        viewport_height: 0,
+        ensure_selection_visible: true,
         files_cache: DiffOverlayFilesCache::default(),
         file_content_cache: DiffOverlayFileContentCache::default(),
     };
@@ -619,6 +622,7 @@ fn diff_overlay_keys_support_vi_file_and_line_navigation() {
         untracked_files: vec!["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()],
     });
     state.max_line_scroll = 4;
+    state.viewport_height = 12;
 
     apply_diff_overlay_key(
         &mut state,
@@ -636,12 +640,14 @@ fn diff_overlay_keys_support_vi_file_and_line_navigation() {
         &mut state,
         &crossterm::event::KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
     );
-    assert_eq!(state.line_scroll, 1);
+    assert_eq!(state.selected_line, 0);
+    assert_eq!(state.line_scroll, 0);
 
     apply_diff_overlay_key(
         &mut state,
         &crossterm::event::KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
     );
+    assert_eq!(state.selected_line, 0);
     assert_eq!(state.line_scroll, 0);
 
     state.line_scroll = 2;
@@ -665,6 +671,96 @@ fn diff_overlay_keys_support_vi_file_and_line_navigation() {
         ),
         DiffOverlayAction::Close
     );
+}
+
+#[test]
+fn diff_overlay_projects_long_source_line_to_reachable_visual_rows() {
+    let long_content = format!("start\t{}e\u{301}end", "混合wide-content-".repeat(20));
+    let mut state = DiffOverlayState::new(WorkspaceDiff {
+        cwd: PathBuf::from("/tmp/project"),
+        status: String::new(),
+        staged_diff: String::new(),
+        unstaged_diff: format!(
+            "diff --git a/long.rs b/long.rs\n--- a/long.rs\n+++ b/long.rs\n@@ -0,0 +1 @@\n+{long_content}\n"
+        ),
+        untracked_files: Vec::new(),
+    });
+    let overlay_area = Rect::new(0, 0, 30, 14);
+    let content_area = Rect::new(0, 0, 20, 6);
+    sync_diff_overlay_bounds(&mut state, overlay_area);
+
+    assert!(state.max_line_scroll > 0);
+    assert_eq!(
+        state.max_line_scroll,
+        state
+            .file_content_cache
+            .visual_rows
+            .len()
+            .saturating_sub(content_area.height as usize)
+    );
+    assert!(
+        state
+            .file_content_cache
+            .visual_rows
+            .iter()
+            .all(|line| styled_line_display_width(line) <= content_area.width as usize + 1),
+        "projected rows must fit the render width (the +1 permits the zero-width combining mark)"
+    );
+    let projected = plain_text_lines(&state.file_content_cache.visual_rows).join("");
+    assert!(!projected.contains('\t'));
+    assert!(projected.contains("e\u{301}end"));
+    assert!(
+        plain_text_lines(&state.file_content_cache.visual_rows)
+            .iter()
+            .all(|line| line.starts_with('›')),
+        "the selected source marker must repeat on continuation rows"
+    );
+
+    state.line_scroll = 0;
+    apply_diff_overlay_key(
+        &mut state,
+        &crossterm::event::KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+    );
+    sync_diff_overlay_bounds(&mut state, overlay_area);
+    assert!(
+        state.line_scroll > 0,
+        "a single wrapped source line must page"
+    );
+    state.line_scroll = state.max_line_scroll;
+    let bottom = state.cached_visible_lines(content_area);
+    assert_eq!(
+        bottom.last(),
+        state.file_content_cache.visual_rows.last(),
+        "the bottom visual row must be reachable without blank overscroll"
+    );
+}
+
+#[test]
+fn diff_overlay_marker_follows_source_selection_instead_of_viewport_top() {
+    let mut state = DiffOverlayState::new(WorkspaceDiff {
+        cwd: PathBuf::from("/tmp/project"),
+        status: String::new(),
+        staged_diff: String::new(),
+        unstaged_diff: "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n".to_string(),
+        untracked_files: Vec::new(),
+    });
+    let overlay_area = Rect::new(0, 0, 40, 16);
+    sync_diff_overlay_bounds(&mut state, overlay_area);
+    apply_diff_overlay_key(
+        &mut state,
+        &crossterm::event::KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
+    sync_diff_overlay_bounds(&mut state, overlay_area);
+
+    assert_eq!(state.selected_line, 1);
+    let rows = plain_text_lines(&state.file_content_cache.visual_rows);
+    let selected_rows = rows
+        .iter()
+        .filter(|line| line.starts_with('›'))
+        .collect::<Vec<_>>();
+    assert_eq!(selected_rows.len(), 1);
+    assert!(selected_rows[0].contains("two"), "{selected_rows:#?}");
+    assert!(!rows[0].starts_with('›'));
 }
 
 #[test]

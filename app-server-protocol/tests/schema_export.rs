@@ -6,6 +6,7 @@
 
 use schemars::generate::SchemaSettings;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 const SCHEMA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/generated/schema");
 
@@ -36,6 +37,148 @@ fn assert_schema_matches<T: schemars::JsonSchema>(name: &str) {
         schema, golden_value,
         "schema drift detected for {name}. Run with UPDATE_SCHEMA=1 to update."
     );
+}
+
+fn assert_method_contract_schema_bundle() {
+    let mut contracts = BTreeMap::new();
+    macro_rules! insert {
+        ($($name:ident),+ $(,)?) => {
+            $(
+                contracts.insert(
+                    stringify!($name).to_string(),
+                    generate_schema::<orbcode_app_server_protocol::$name>(),
+                );
+            )+
+        };
+    }
+
+    insert!(
+        EmptyParams,
+        NoData,
+        SessionIdParams,
+        SessionRenameParams,
+        SessionForkParams,
+        SessionRewindParams,
+        SessionRecordMessageParams,
+        SessionFindByTitleParams,
+        SessionFindByTitleResult,
+        TurnSubmitParams,
+        TurnSubmitResult,
+        TurnCancelResult,
+        TurnInterruptResult,
+        SentResult,
+        PermissionModeResult,
+        PermissionSetModeParams,
+        PermissionRuleParams,
+        SessionPermissionRuleParams,
+        PermissionRuleUpdateResult,
+        AddDirectoryParams,
+        ValidateDirectoryParams,
+        ModelNameResult,
+        ModelOptionsResult,
+        SetModelParams,
+        SetModelResult,
+        ProvidersResult,
+        ThemeParams,
+        ThemeResult,
+        EffortParams,
+        EffortResult,
+        OutputStyleParams,
+        OutputStyleResult,
+        PathResult,
+        KeybindingsFileResult,
+        KeybindingsLoadResult,
+        EditorModeParams,
+        EditorModeResult,
+        OutputStyleOptionsResult,
+        ActiveOutputStyleResult,
+        SettingKeyParams,
+        SettingLockedResult,
+        EnabledParams,
+        EnabledResult,
+        StringPathParams,
+        SandboxExcludedCommandParams,
+        SandboxExcludedCommandResult,
+        AllowAllParams,
+        AllowAllResult,
+        ToolsListResult,
+        ToolInvokeParams,
+        ToolInvokeResult,
+        SkillDefinitionsParams,
+        SkillDefinitionsResult,
+        AgentDefinitionsResult,
+        AgentDefinitionsWithWarningsResult,
+        TaskListParams,
+        TaskListResult,
+        EnterPlanModeResult,
+        AuthLoginParams,
+        AuthLoginResult,
+        AuthLogoutParams,
+        AuthLogoutResult,
+        DiagnosticsCleanupChildSessionsParams,
+        ChildSessionOrphanCleanupResult,
+        AdvancedCapabilitiesResult,
+        LastProviderRequestResult,
+        PreUserInstructionsResult,
+        BackgroundCreateParams,
+        BackgroundCreateResult,
+        BackgroundJobParams,
+        BackgroundCancelResult,
+        BackgroundLogResult,
+        BackgroundEventsResult,
+        BackgroundSubscribeParams,
+        BackgroundSubscribeResult,
+        WorkflowStartParams,
+        WorkflowStartDynamicParams,
+        WorkflowResumeParams,
+        WorkflowTaskResult,
+        McpServerIdParams,
+        McpSessionServerParams,
+        McpServerTrustResult,
+        McpSetTrustParams,
+        McpListToolsResult,
+        McpListResourcesResult,
+        McpReadResourceParams,
+        McpResourceContent,
+        McpListPromptsResult,
+        McpGetPromptParams,
+        McpPromptResult,
+        McpInvokeToolParams,
+        McpToolResult,
+        McpDiagnoseResult,
+        McpRemoveServerResult,
+        McpCapabilitiesResult,
+        McpOAuthOverviewParams,
+        McpOAuthOverview,
+        McpLogoutOAuthTokenResult,
+        AuthOverview,
+        PermissionContext,
+        SandboxLocalSettings,
+        SandboxSettingsUpdate,
+        HookDiscovery,
+    );
+
+    let schema = serde_json::to_value(contracts).expect("contract schemas to JSON");
+    let pretty = serde_json::to_string_pretty(&schema).expect("pretty JSON");
+    let path = format!("{SCHEMA_DIR}/MethodContracts.json");
+    if std::env::var("UPDATE_SCHEMA").is_ok() {
+        std::fs::write(&path, format!("{pretty}\n")).expect("write schema bundle");
+        return;
+    }
+    let golden = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("golden schema not found at {path}. Run with UPDATE_SCHEMA=1 to generate.")
+    });
+    let golden_value: Value = serde_json::from_str(&golden)
+        .unwrap_or_else(|e| panic!("invalid JSON in golden schema {path}: {e}"));
+    assert_eq!(
+        schema, golden_value,
+        "method contract schema bundle drifted"
+    );
+}
+
+#[test]
+fn schema_method_contracts() {
+    assert_method_contract_schema_bundle();
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +259,23 @@ fn schema_server_capabilities() {
 #[test]
 fn schema_bootstrap_params() {
     assert_schema_matches::<orbcode_app_server_protocol::BootstrapParams>("BootstrapParams");
+}
+
+#[test]
+fn schema_mcp_server_input() {
+    assert_schema_matches::<orbcode_app_server_protocol::McpServerInput>("McpServerInput");
+}
+
+#[test]
+fn schema_mcp_server_overview() {
+    assert_schema_matches::<orbcode_app_server_protocol::McpServerOverview>("McpServerOverview");
+}
+
+#[test]
+fn schema_mcp_list_servers_result() {
+    assert_schema_matches::<orbcode_app_server_protocol::McpListServersResult>(
+        "McpListServersResult",
+    );
 }
 
 // ---------------------------------------------------------------------------

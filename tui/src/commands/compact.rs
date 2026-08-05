@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use orbcode_app_server_client::{AppClient, CompactSessionResult};
+use orbcode_app_server_client::{AppClient, CompactDecision, CompactSessionResult};
 use orbcode_protocol::{TranscriptBlock, TranscriptMessage};
 use tokio::sync::mpsc;
 
@@ -58,12 +58,11 @@ impl TuiState {
         // LocalCommandEvent.
         let _compact_command_handle = tokio::spawn(async move {
             if !force
-                && let Ok(value) = client.compact_decision(&session_id).await
-                && let Some(needs) = value.get("NeedsConfirmation")
+                && let Ok(CompactDecision::NeedsConfirmation {
+                    context_percent_used,
+                    threshold_percent,
+                }) = client.compact_decision(&session_id).await
             {
-                let context_percent_used =
-                    needs["context_percent_used"].as_u64().unwrap_or(0) as u32;
-                let threshold_percent = needs["threshold_percent"].as_u64().unwrap_or(0) as u32;
                 let _ = local_command_tx.send(LocalCommandEnvelope::new(
                     session_id.clone(),
                     LocalCommandEvent::CompactNeedsConfirmation {
@@ -77,8 +76,7 @@ impl TuiState {
             let result = client
                 .compact_session(&session_id)
                 .await
-                .map_err(|error| error.to_string())
-                .and_then(parse_compact_session_result);
+                .map_err(|error| error.to_string());
             let _ = local_command_tx.send(LocalCommandEnvelope::new(
                 session_id,
                 LocalCommandEvent::CompactFinished { command, result },
@@ -159,27 +157,6 @@ impl TuiState {
         };
         self.messages.remove(index);
     }
-}
-
-fn parse_compact_session_result(value: serde_json::Value) -> Result<CompactSessionResult, String> {
-    use orbcode_protocol::{SessionRecord, TokenUsage};
-
-    let session: SessionRecord = serde_json::from_value(value["session"].clone())
-        .map_err(|e| format!("protocol deserialization error: {e}"))?;
-    let usage: Option<TokenUsage> = value
-        .get("usage")
-        .filter(|v| !v.is_null())
-        .map(|v| serde_json::from_value(v.clone()))
-        .transpose()
-        .map_err(|e| format!("protocol deserialization error: {e}"))?;
-    Ok(CompactSessionResult {
-        session,
-        original_message_count: value["original_message_count"].as_u64().unwrap_or(0) as usize,
-        compacted_message_count: value["compacted_message_count"].as_u64().unwrap_or(0) as usize,
-        provider_generated: value["provider_generated"].as_bool().unwrap_or(false),
-        fallback_reason: value["fallback_reason"].as_str().map(String::from),
-        usage,
-    })
 }
 
 pub(crate) fn compact_restored_file_detail_lines(

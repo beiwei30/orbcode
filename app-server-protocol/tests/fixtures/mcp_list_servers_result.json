@@ -1,0 +1,28 @@
+[
+  {
+    "id": "docs-server",
+    "transport": "streamable_http",
+    "endpoint": "https://%3Credacted%3E:%3Credacted%3E@example.com/mcp?token=%3Credacted%3E",
+    "args": [
+      "<redacted>",
+      "<redacted>"
+    ],
+    "env": {
+      "DOCS_TOKEN": "<redacted>"
+    },
+    "cwd": "/tmp/project",
+    "headers": {
+      "X-API-Key": "<redacted>"
+    },
+    "enabled": true,
+    "status": "ready",
+    "error": null,
+    "summary": "Docs Server",
+    "auth": {
+      "kind": "header",
+      "name": "Authorization",
+      "value": "<redacted>"
+    },
+    "trust": "unknown"
+  }
+]

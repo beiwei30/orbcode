@@ -4,14 +4,12 @@ use std::{
 };
 
 use anyhow::Result;
-use orbcode_app_server::{
-    AppServer, PermissionDecision, PermissionMode, StreamErrorCategory, StreamEvent, TokenUsage,
-    ToolUseCompletionKind,
-};
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server::AppServer;
+use orbcode_app_server_client::{AppClient, PermissionDecisionWire};
+use orbcode_config::PermissionMode;
 use orbcode_protocol::{
     AskUserCancellationReason, AskUserOption, AskUserQuestionSpec, AskUserResponseOutcome,
-    validate_ask_user_outcome,
+    StreamErrorCategory, StreamEvent, TokenUsage, ToolUseCompletionKind, validate_ask_user_outcome,
 };
 use serde::Serialize;
 
@@ -76,12 +74,11 @@ struct ErrorResponse {
 }
 
 pub(crate) async fn run_headless_prompt(
-    app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     prompt: String,
 ) -> Result<String> {
-    let bootstrap = app_server.bootstrap(session.as_deref()).await?;
+    let bootstrap = client.bootstrap(session.as_deref()).await?;
     println!("session {}", bootstrap.session.session_id);
     println!(
         "provider {} fallback {:?} retries {} permissions {} | tools {} | mcp servers {}",
@@ -95,8 +92,8 @@ pub(crate) async fn run_headless_prompt(
         bootstrap.configured_mcp_server_count
     );
 
-    let mut stream = app_server
-        .submit_turn(&bootstrap.session.session_id, prompt)
+    let mut stream = client
+        .submit_turn_stream(&bootstrap.session.session_id, prompt)
         .await?;
 
     loop {
@@ -113,13 +110,13 @@ pub(crate) async fn run_headless_prompt(
                     Some(StreamEvent::PermissionRequested { request }) => {
                         let approved =
                             headless_permission_decision(&request, bootstrap.permissions.allow_tools, bootstrap.permissions.allow_network);
-                        let _ = app_server
+                        let _ = client
                             .respond_to_permission_request(
                                 &request.request_id,
                                 if approved {
-                                    PermissionDecision::Approve
+                                    PermissionDecisionWire::Approve
                                 } else {
-                                    PermissionDecision::Deny
+                                    PermissionDecisionWire::Deny
                                 },
                             )
                             .await;
@@ -277,7 +274,6 @@ pub(crate) async fn run_headless_prompt(
 }
 
 pub(crate) async fn run_print_mode(
-    app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     positional_prompt: Option<String>,
@@ -285,13 +281,13 @@ pub(crate) async fn run_print_mode(
     input_format: CliInputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let bootstrap = app_server.bootstrap(session.as_deref()).await?;
+    let bootstrap = client.bootstrap(session.as_deref()).await?;
     let session_id = bootstrap.session.session_id.clone();
     let model_name = client
         .model_name()
         .await
         .ok()
-        .and_then(|v| v["model_name"].as_str().map(String::from))
+        .map(|result| result.model_name)
         .unwrap_or_else(|| "unknown".to_string());
     let mut run = HeadlessRun::new(
         output_format,
@@ -315,11 +311,10 @@ pub(crate) async fn run_print_mode(
                     "--print requires a prompt or --input-format stream-json",
                 ),
             };
-            run.run_text_turn(&app_server, &session_id, prompt).await?;
+            run.run_text_turn(client, &session_id, prompt).await?;
         }
         CliInputFormat::StreamJson => {
-            run.run_control_input_loop(&app_server, client, &session_id)
-                .await?;
+            run.run_control_input_loop(client, &session_id).await?;
         }
     }
 
@@ -367,7 +362,7 @@ pub(crate) async fn run_background_worker(
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut received_signal: Option<i32> = None;
 
-    let permissions = app_server.permissions();
+    let permissions = client.permission_overview().await?.permissions;
     let _ = app_server
         .mark_background_running(&job_id, Some(std::process::id()))
         .await;
@@ -382,7 +377,7 @@ pub(crate) async fn run_background_worker(
         .model_name()
         .await
         .ok()
-        .and_then(|v| v["model_name"].as_str().map(String::from))
+        .map(|result| result.model_name)
         .unwrap_or_else(|| "unknown".to_string());
     let mut emitter = StreamJsonEmitter::new(session_id.clone(), model_name.clone());
     let started = std::time::Instant::now();
@@ -391,27 +386,26 @@ pub(crate) async fn run_background_worker(
             .list_tools()
             .await
             .ok()
-            .and_then(|v| v.as_array().cloned())
+            .map(|result| result.into_inner())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|t| t["name"].as_str().map(String::from))
+            .map(|tool| tool.name)
             .collect();
         let mcp_servers: Vec<McpServerInfo> = client
             .list_mcp_servers()
             .await
             .ok()
-            .and_then(|v| v.as_array().cloned())
             .unwrap_or_default()
             .iter()
             .map(|s| McpServerInfo {
-                name: s["id"].as_str().unwrap_or("").to_string(),
-                status: s["status"].as_str().unwrap_or("").to_string(),
+                name: s.id.clone(),
+                status: s.status.as_str().to_string(),
             })
             .collect();
         let permission_mode_value = client.permission_mode().await.ok();
         let permission_mode_str = permission_mode_value
             .as_ref()
-            .and_then(|v| v["mode"].as_str())
+            .map(|result| result.mode.as_str())
             .unwrap_or("default");
         let permission_mode = match permission_mode_str {
             "acceptEdits" => PermissionMode::AcceptEdits,
@@ -436,7 +430,7 @@ pub(crate) async fn run_background_worker(
             .await;
     }
 
-    let mut stream = match app_server.submit_turn(&session_id, prompt.clone()).await {
+    let mut stream = match client.submit_turn_stream(&session_id, prompt.clone()).await {
         Ok(stream) => stream,
         Err(error) => {
             let message = error.to_string();
@@ -507,13 +501,13 @@ pub(crate) async fn run_background_worker(
                     permissions.allow_tools,
                     permissions.allow_network,
                 );
-                let _ = app_server
+                let _ = client
                     .respond_to_permission_request(
                         &request.request_id,
                         if approved {
-                            PermissionDecision::Approve
+                            PermissionDecisionWire::Approve
                         } else {
-                            PermissionDecision::Deny
+                            PermissionDecisionWire::Deny
                         },
                     )
                     .await;
@@ -987,12 +981,12 @@ impl HeadlessRun {
 
     async fn run_text_turn(
         &mut self,
-        app_server: &AppServer,
+        client: &AppClient,
         session_id: &str,
         prompt: String,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = app_server.submit_turn(session_id, prompt).await?;
+        let mut stream = client.submit_turn_stream(session_id, prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
 
@@ -1006,13 +1000,13 @@ impl HeadlessRun {
                         self.allow_tools,
                         self.allow_network,
                     );
-                    let _ = app_server
+                    let _ = client
                         .respond_to_permission_request(
                             &request.request_id,
                             if approved {
-                                PermissionDecision::Approve
+                                PermissionDecisionWire::Approve
                             } else {
-                                PermissionDecision::Deny
+                                PermissionDecisionWire::Deny
                             },
                         )
                         .await;
@@ -1031,12 +1025,7 @@ impl HeadlessRun {
         Ok(())
     }
 
-    async fn run_control_input_loop(
-        &mut self,
-        app_server: &AppServer,
-        client: &AppClient,
-        session_id: &str,
-    ) -> Result<()> {
+    async fn run_control_input_loop(&mut self, client: &AppClient, session_id: &str) -> Result<()> {
         let (tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel::<ControlFrame>();
         // Detached stdin reader; this loop owns shutdown by observing channel
         // closure and EOF frames.
@@ -1056,9 +1045,8 @@ impl HeadlessRun {
                 while stdin_open {
                     match control_rx.recv().await {
                         Some(frame) => {
-                            if let Some(prompt) = self
-                                .handle_idle_frame(frame, app_server, client, session_id)
-                                .await?
+                            if let Some(prompt) =
+                                self.handle_idle_frame(frame, client, session_id).await?
                             {
                                 next_prompt = Some(prompt);
                                 break;
@@ -1074,7 +1062,6 @@ impl HeadlessRun {
             };
 
             self.run_one_control_turn(
-                app_server,
                 client,
                 session_id,
                 prompt,
@@ -1095,7 +1082,6 @@ impl HeadlessRun {
     async fn handle_idle_frame(
         &mut self,
         frame: ControlFrame,
-        app_server: &AppServer,
         client: &AppClient,
         session_id: &str,
     ) -> Result<Option<String>> {
@@ -1106,7 +1092,7 @@ impl HeadlessRun {
                 Ok(None)
             }
             ControlFrame::SetPermissionMode { request_id, mode } => {
-                app_server.set_permission_mode(mode);
+                client.set_permission_mode(mode.as_str()).await?;
                 self.apply_permission_mode(mode);
                 self.emit_control_response(control_response_success(&request_id))?;
                 Ok(None)
@@ -1155,7 +1141,6 @@ impl HeadlessRun {
 
     async fn run_one_control_turn(
         &mut self,
-        app_server: &AppServer,
         client: &AppClient,
         session_id: &str,
         prompt: String,
@@ -1181,7 +1166,6 @@ impl HeadlessRun {
                                         &event,
                                         &mut assistant_text,
                                         turn_started,
-                                        app_server,
                                         client,
                                         &mut held_denials,
                                         &mut pending_asks,
@@ -1200,7 +1184,6 @@ impl HeadlessRun {
                             Some(frame) => {
                                 self.handle_mid_turn_frame(
                                     frame,
-                                    app_server,
                                     client,
                                     session_id,
                                     pending_prompts,
@@ -1211,10 +1194,10 @@ impl HeadlessRun {
                             None => {
                                 *stdin_open = false;
                                 for request_id in held_denials.drain(..) {
-                                    let _ = app_server
+                                    let _ = client
                                         .respond_to_permission_request(
                                             &request_id,
-                                            PermissionDecision::Deny,
+                                            PermissionDecisionWire::Deny,
                                         )
                                         .await;
                                 }
@@ -1231,7 +1214,6 @@ impl HeadlessRun {
                                 &event,
                                 &mut assistant_text,
                                 turn_started,
-                                app_server,
                                 client,
                                 &mut held_denials,
                                 &mut pending_asks,
@@ -1256,7 +1238,6 @@ impl HeadlessRun {
         event: &StreamEvent,
         assistant_text: &mut String,
         turn_started: std::time::Instant,
-        app_server: &AppServer,
         client: &AppClient,
         held_denials: &mut Vec<String>,
         pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
@@ -1297,19 +1278,19 @@ impl HeadlessRun {
                 let approved =
                     headless_permission_decision(&request, self.allow_tools, self.allow_network);
                 if approved {
-                    let _ = app_server
+                    let _ = client
                         .respond_to_permission_request(
                             &request.request_id,
-                            PermissionDecision::Approve,
+                            PermissionDecisionWire::Approve,
                         )
                         .await;
                 } else if hold_denials {
                     held_denials.push(request.request_id);
                 } else {
-                    let _ = app_server
+                    let _ = client
                         .respond_to_permission_request(
                             &request.request_id,
-                            PermissionDecision::Deny,
+                            PermissionDecisionWire::Deny,
                         )
                         .await;
                 }
@@ -1321,7 +1302,6 @@ impl HeadlessRun {
     async fn handle_mid_turn_frame(
         &mut self,
         frame: ControlFrame,
-        app_server: &AppServer,
         client: &AppClient,
         session_id: &str,
         pending_prompts: &mut std::collections::VecDeque<String>,
@@ -1333,7 +1313,7 @@ impl HeadlessRun {
                 self.emit_control_response(control_response_success(&request_id))?;
             }
             ControlFrame::SetPermissionMode { request_id, mode } => {
-                app_server.set_permission_mode(mode);
+                client.set_permission_mode(mode.as_str()).await?;
                 self.apply_permission_mode(mode);
                 self.emit_control_response(control_response_success(&request_id))?;
             }
@@ -1404,48 +1384,26 @@ impl HeadlessRun {
         session_id: &str,
     ) -> serde_json::Value {
         match client.status_overview(session_id).await {
-            Ok(overview) => {
-                // Extract fields from the protocol Value response.
-                serde_json::to_value(SessionStateResponse {
-                    session_id: overview["session_id"].as_str().unwrap_or("").to_string(),
-                    cwd: overview["cwd"].as_str().unwrap_or("").to_string(),
-                    model_display_name: overview["model_display_name"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    model_name: overview["model_name"].as_str().unwrap_or("").to_string(),
-                    model_capabilities: overview["model_capabilities"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    effort_level: overview["effort_level"].as_str().map(|s| match s {
-                        "low" => "low",
-                        "medium" => "medium",
-                        _ => "high",
-                    }),
-                    default_provider: overview["default_provider"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    fallback_provider: overview["fallback_provider"].as_str().map(String::from),
-                    sandbox_mode: overview["sandbox_mode"].as_str().unwrap_or("").to_string(),
-                    persisted_session_count: overview["persisted_session_count"]
-                        .as_u64()
-                        .unwrap_or(0) as usize,
-                    background_job_count: overview["background_job_count"].as_u64().unwrap_or(0)
-                        as usize,
-                    available_tool_count: overview["available_tool_count"].as_u64().unwrap_or(0)
-                        as usize,
-                    configured_mcp_server_count: overview["configured_mcp_server_count"]
-                        .as_u64()
-                        .unwrap_or(0) as usize,
-                })
-                .expect("SessionStateResponse serialization is infallible")
-            }
+            Ok(overview) => serde_json::to_value(SessionStateResponse {
+                session_id: overview.session_id,
+                cwd: overview.cwd.display().to_string(),
+                model_display_name: overview.model_display_name,
+                model_name: overview.model_name,
+                model_capabilities: overview.model_capabilities,
+                effort_level: overview
+                    .effort_level
+                    .map(orbcode_protocol::EffortLevel::as_str),
+                default_provider: overview.default_provider.as_str().to_string(),
+                fallback_provider: overview
+                    .fallback_provider
+                    .map(|provider| provider.as_str().to_string()),
+                sandbox_mode: overview.sandbox_mode,
+                persisted_session_count: overview.persisted_session_count,
+                background_job_count: overview.background_job_count,
+                available_tool_count: overview.available_tool_count,
+                configured_mcp_server_count: overview.configured_mcp_server_count,
+            })
+            .expect("SessionStateResponse serialization is infallible"),
             Err(e) => serde_json::to_value(ErrorResponse {
                 error: e.to_string(),
             })
@@ -1460,39 +1418,29 @@ impl HeadlessRun {
     ) -> serde_json::Value {
         match client.context_overview(session_id).await {
             Ok(overview) => {
-                // The protocol response wraps usage under "context".
-                let ctx = &overview["context"];
-                let usage = if ctx.is_null() { &overview } else { ctx };
-                let cats = &usage["categories"];
+                let usage = overview.usage;
+                let cats = usage.categories;
                 serde_json::to_value(ContextUsageResponse {
-                    model: usage["model"].as_str().unwrap_or("").to_string(),
-                    estimated_tokens: usage["estimated_tokens"].as_u64().unwrap_or(0) as u32,
+                    model: usage.model,
+                    estimated_tokens: usage.estimated_tokens,
                     categories: ContextCategoriesResponse {
-                        system_prompt: cats["system_prompt"].as_u64().unwrap_or(0) as u32,
-                        system_tools: cats["system_tools"].as_u64().unwrap_or(0) as u32,
-                        mcp_tools: cats["mcp_tools"].as_u64().unwrap_or(0) as u32,
-                        memory: cats["memory"].as_u64().unwrap_or(0) as u32,
-                        skills: cats["skills"].as_u64().unwrap_or(0) as u32,
-                        conversation: cats["conversation"].as_u64().unwrap_or(0) as u32,
-                        attachments: cats["attachments"].as_u64().unwrap_or(0) as u32,
-                        uncategorized: cats["uncategorized"].as_u64().unwrap_or(0) as u32,
+                        system_prompt: cats.system_prompt,
+                        system_tools: cats.system_tools,
+                        mcp_tools: cats.mcp_tools,
+                        memory: cats.memory,
+                        skills: cats.skills,
+                        conversation: cats.conversation,
+                        attachments: cats.attachments,
+                        uncategorized: cats.uncategorized,
                     },
-                    context_window: usage["context_window"].as_u64().unwrap_or(0) as u32,
-                    effective_context_window: usage["effective_context_window"]
-                        .as_u64()
-                        .unwrap_or(0) as u32,
-                    free_space_tokens: usage["free_space_tokens"].as_u64().unwrap_or(0) as u32,
-                    percent_left: usage["percent_left"].as_u64().unwrap_or(0) as u32,
-                    is_above_auto_compact_threshold: usage["is_above_auto_compact_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_above_warning_threshold: usage["is_above_warning_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_above_error_threshold: usage["is_above_error_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_at_blocking_limit: usage["is_at_blocking_limit"].as_bool().unwrap_or(false),
+                    context_window: usage.context_window,
+                    effective_context_window: usage.effective_context_window,
+                    free_space_tokens: usage.free_space_tokens,
+                    percent_left: usage.percent_left,
+                    is_above_auto_compact_threshold: usage.is_above_auto_compact_threshold,
+                    is_above_warning_threshold: usage.is_above_warning_threshold,
+                    is_above_error_threshold: usage.is_above_error_threshold,
+                    is_at_blocking_limit: usage.is_at_blocking_limit,
                 })
                 .expect("ContextUsageResponse serialization is infallible")
             }
@@ -1663,13 +1611,12 @@ fn accumulate_usage(total: &mut TokenUsage, delta: &TokenUsage) {
 pub(crate) async fn build_cost_fields(client: &AppClient, session_id: &str) -> CostFields {
     match client.cost_overview(session_id).await {
         Ok(overview) => {
-            let total_cost_usd = overview["cost"]["total_cost_usd"].as_f64().unwrap_or(0.0);
-            let has_unknown = overview["cost"]["has_unknown_model_cost"]
-                .as_bool()
-                .unwrap_or(true);
-            let is_api_priced = overview["cost"]["billing_basis"]
-                .as_str()
-                .is_none_or(|basis| basis == "api");
+            let total_cost_usd = overview.cost.total_cost_usd;
+            let has_unknown = overview.cost.has_unknown_model_cost;
+            let is_api_priced = matches!(
+                overview.cost.billing_basis,
+                orbcode_app_server_client::BillingBasis::Api
+            );
             CostFields {
                 total_cost_usd,
                 pricing_known: !has_unknown && is_api_priced,
@@ -1682,33 +1629,32 @@ pub(crate) async fn build_cost_fields(client: &AppClient, session_id: &str) -> C
 
 pub(crate) async fn build_init_metadata(
     client: &AppClient,
-    bootstrap: &orbcode_app_server::BootstrapState,
+    bootstrap: &orbcode_app_server_client::BootstrapState,
 ) -> InitMetadata {
     let tool_names: Vec<String> = client
         .list_tools()
         .await
         .ok()
-        .and_then(|v| v.as_array().cloned())
+        .map(|result| result.into_inner())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|t| t["name"].as_str().map(String::from))
+        .map(|tool| tool.name)
         .collect();
     let mcp_servers: Vec<McpServerInfo> = client
         .list_mcp_servers()
         .await
         .ok()
-        .and_then(|v| v.as_array().cloned())
         .unwrap_or_default()
         .iter()
         .map(|s| McpServerInfo {
-            name: s["id"].as_str().unwrap_or("").to_string(),
-            status: s["status"].as_str().unwrap_or("").to_string(),
+            name: s.id.clone(),
+            status: s.status.as_str().to_string(),
         })
         .collect();
     let permission_mode_value = client.permission_mode().await.ok();
     let permission_mode_str = permission_mode_value
         .as_ref()
-        .and_then(|v| v["mode"].as_str())
+        .map(|result| result.mode.as_str())
         .unwrap_or("default");
     let permission_mode = match permission_mode_str {
         "acceptEdits" => PermissionMode::AcceptEdits,

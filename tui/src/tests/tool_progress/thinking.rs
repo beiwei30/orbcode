@@ -212,6 +212,41 @@ fn assistant_message_completion_deduplicates_streamed_thinking_from_completed_me
 }
 
 #[test]
+fn thinking_only_completion_commits_one_thinking_block() {
+    let mut state = normal_state("", 0);
+    state.expanded_tool_details = true;
+    state.begin_waiting_animation();
+    state.active_thinking = Some(ActiveThinkingState {
+        text: "thinking-only marker".to_string(),
+        is_streaming: false,
+        completed_at: Some(Instant::now()),
+    });
+
+    state.apply_stream_event(StreamEvent::AssistantMessageCompleted {
+        message: TranscriptMessage::from_blocks(
+            MessageRole::Assistant,
+            vec![TranscriptBlock::Thinking {
+                text: "thinking-only marker".to_string(),
+                signature: None,
+            }],
+        ),
+        provider: ProviderId::Anthropic,
+        fallback_from: None,
+        usage: TokenUsage::default(),
+    });
+
+    let rendered = plain_text_lines(&state.transcript_lines(80));
+    assert_eq!(
+        rendered
+            .iter()
+            .filter(|line| line.contains("thinking-only marker"))
+            .count(),
+        1,
+        "{rendered:#?}"
+    );
+}
+
+#[test]
 fn transcript_lines_keep_active_tool_step_visible_during_tool_execution() {
     let mut state = normal_state("", 0);
     state.request_in_flight = true;

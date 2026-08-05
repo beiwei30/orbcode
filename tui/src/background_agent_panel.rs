@@ -106,7 +106,7 @@ impl BackgroundAgentPanelState {
             return false;
         };
         self.refresh_in_flight = true;
-        let result = app_server.list_background_jobs_summary_typed().await;
+        let result = app_server.list_background_jobs_summary().await;
         self.refresh_in_flight = false;
         let views = match result {
             Ok(value) => value

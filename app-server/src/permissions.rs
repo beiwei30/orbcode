@@ -5,6 +5,7 @@ use orbcode_config::{PermissionMode, PermissionRuleSettingKind, PermissionRuleSe
 use orbcode_core::CoreError;
 
 use super::AppServer;
+use crate::protocol_conversion::permission_context_to_wire;
 
 impl AppServer {
     pub fn permissions(&self) -> orbcode_core::PermissionContext {
@@ -32,7 +33,7 @@ impl AppServer {
             }
         }
         PermissionOverview {
-            permissions: self.permissions(),
+            permissions: permission_context_to_wire(self.permissions()),
             allow_all: self.allow_all(),
             settings_allowed_rules: self
                 .sessions

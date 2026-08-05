@@ -1016,8 +1016,10 @@ fn limit_diff_preview_lines(mut lines: Vec<String>, limit: usize) -> Vec<String>
     if limit == 0 {
         return Vec::new();
     }
-    let omitted = lines.len().saturating_sub(limit);
-    if omitted > 0 {
+    if lines.len() > limit {
+        // The summary itself occupies the final retained slot, so that replaced
+        // real line is omitted too.
+        let omitted = lines.len().saturating_sub(limit.saturating_sub(1));
         lines.truncate(limit);
         if let Some(last) = lines.last_mut() {
             *last = format!("… {omitted} more diff lines");
@@ -1158,5 +1160,36 @@ pub(crate) fn format_tool_result_summary(content: &str, is_error: bool) -> Strin
         String::new()
     } else {
         truncate_chars(&first_line, 96)
+    }
+}
+
+#[cfg(test)]
+mod diff_preview_limit_tests {
+    use super::limit_diff_preview_lines;
+
+    #[test]
+    fn diff_preview_summary_counts_the_replaced_retained_line_as_omitted() {
+        let lines = (1..=5).map(|line| format!("line {line}")).collect();
+        assert_eq!(
+            limit_diff_preview_lines(lines, 3),
+            vec![
+                "line 1".to_string(),
+                "line 2".to_string(),
+                "… 3 more diff lines".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_preview_limit_boundaries_are_exact() {
+        assert!(limit_diff_preview_lines(vec!["one".to_string()], 0).is_empty());
+        assert_eq!(
+            limit_diff_preview_lines(vec!["one".to_string()], 1),
+            vec!["one".to_string()]
+        );
+        assert_eq!(
+            limit_diff_preview_lines(vec!["one".to_string(), "two".to_string()], 1),
+            vec!["… 2 more diff lines".to_string()]
+        );
     }
 }

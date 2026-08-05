@@ -22,14 +22,14 @@ impl TuiState {
     }
 
     pub(crate) async fn open_background_jobs_overlay(&mut self, app_server: &AppClient) {
-        match app_server.list_background_jobs_summary_typed().await {
+        match app_server.list_background_jobs_summary().await {
             Ok(jobs) => {
                 if jobs.is_empty() {
                     self.set_status_line("No background jobs.");
                     return;
                 }
                 self.overlay = Some(OverlayState::BackgroundJobs(
-                    BackgroundJobsOverlayState::new(jobs, self.session_id.clone()),
+                    BackgroundJobsOverlayState::new(jobs.into_inner(), self.session_id.clone()),
                 ));
                 self.set_status_line(
                     "Background jobs: jk select, Enter detail, d cancel, q close.",
@@ -51,7 +51,7 @@ impl TuiState {
             && let Some(job) = state.selected_job()
         {
             let job_id = job.task_id.clone();
-            match app_server.background_job_detail_typed(&job_id).await {
+            match app_server.background_job_detail(&job_id).await {
                 Ok(detail) => {
                     state.set_detail(detail);
                 }
@@ -62,10 +62,10 @@ impl TuiState {
             return;
         }
 
-        match app_server.list_background_jobs_summary_typed().await {
+        match app_server.list_background_jobs_summary().await {
             Ok(jobs) => {
                 if let Some(OverlayState::BackgroundJobs(state)) = self.overlay.as_mut() {
-                    state.update_jobs(jobs);
+                    state.update_jobs(jobs.into_inner());
                 }
             }
             Err(error) => {
@@ -430,10 +430,10 @@ impl TuiState {
             OverlayAction::AddDirectory { command, path } => {
                 self.overlay = None;
                 let path_str = path.to_string_lossy().to_string();
-                match app_server.validate_add_directory_typed(&path_str).await {
+                match app_server.validate_add_directory(&path_str).await {
                     Ok(candidate) => {
                         let result = app_server
-                            .add_directory_typed(&self.session_id, candidate.path)
+                            .add_directory(&self.session_id, &candidate.path.to_string_lossy())
                             .await?;
                         let message = format!(
                             "Added {} as a working directory for this session.",
@@ -458,7 +458,7 @@ impl TuiState {
                 command,
                 session_id,
             } => {
-                let bootstrap = app_server.bootstrap_typed(Some(&session_id)).await?;
+                let bootstrap = app_server.bootstrap(Some(&session_id)).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
                 let status = format!("Session {} resumed.", short_session_id(&self.session_id));
                 self.push_local_slash_command_output(command, status.clone(), None);
@@ -487,7 +487,7 @@ impl TuiState {
                     Err(_) => keep_messages,
                 };
                 let preserved_suggestions = self.mcp_slash_suggestions.clone();
-                let bootstrap = app_server.rewind_session_typed(&session_id, keep).await?;
+                let bootstrap = app_server.rewind_session(&session_id, keep).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
                 self.mcp_slash_suggestions = preserved_suggestions;
                 self.input = restore_prompt;
@@ -501,10 +501,8 @@ impl TuiState {
                 command,
                 session_id,
             } => {
-                let fork = app_server
-                    .fork_session_typed(&session_id, None, None)
-                    .await?;
-                let bootstrap = app_server.bootstrap_typed(Some(&fork.session_id)).await?;
+                let fork = app_server.fork_session(&session_id, None, None).await?;
+                let bootstrap = app_server.bootstrap(Some(&fork.session_id)).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
                 let status = format!(
                     "Forked into session {}.",
@@ -549,7 +547,9 @@ impl TuiState {
                 Ok(true)
             }
             OverlayAction::EditMemory { command, path } => {
-                app_server.ensure_memory_file_typed(path.clone()).await?;
+                app_server
+                    .ensure_memory_file(&path.to_string_lossy())
+                    .await?;
                 self.overlay = None;
                 self.external_editor_request = Some(ExternalEditorRequest {
                     command: command.clone(),
@@ -593,7 +593,7 @@ impl TuiState {
                 Ok(true)
             }
             OverlayAction::CancelBackgroundJob { job_id } => {
-                match app_server.cancel_background_job_typed(&job_id).await {
+                match app_server.cancel_background_job(&job_id).await {
                     Ok(record) => {
                         let status = format!(
                             "Cancelled background job {}.",
@@ -623,7 +623,7 @@ impl TuiState {
                     None
                 };
                 if app_server
-                    .respond_to_permission_request_typed(&request_id, decision.clone())
+                    .respond_to_pending_permission_request(&request_id, decision.clone())
                     .await
                 {
                     if let Some(request) = denied_request {
