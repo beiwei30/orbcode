@@ -259,8 +259,18 @@ impl TranscriptViewportState {
         let selection = self.selection.as_ref()?;
         let (start, end) = selection.normalized_bounds();
         let mut rows = Vec::new();
+        let mut materialized_segment_started = false;
         for row in start.row..=end.row {
-            let line = self.line_for_row(row)?;
+            let Some(line) = self.line_for_row(row) else {
+                // Reflow and windowed rendering can leave a temporary gap in
+                // the selected row range. Copy the first materialized
+                // contiguous segment instead of discarding the whole copy.
+                if materialized_segment_started {
+                    break;
+                }
+                continue;
+            };
+            materialized_segment_started = true;
             rows.push(selected_text_for_line(line, row, start, end));
         }
         let selected = rows.join("\n");
@@ -642,5 +652,53 @@ mod tests {
         let (start, end) = full_line_selection(0);
         let text = selected_text_for_line(&line, 0, start, end);
         assert_eq!(text, "plain content without prefix");
+    }
+
+    #[test]
+    fn selected_text_returns_first_materialized_segment_across_cache_gap() {
+        let mut viewport = TranscriptViewportState {
+            all_lines: vec![Line::from("row zero"), Line::from("row one")],
+            all_lines_start: 0,
+            all_line_count: 5,
+            selection_lines: vec![Line::from("row three"), Line::from("row four")],
+            selection_lines_start: 3,
+            ..TranscriptViewportState::default()
+        };
+        viewport.selection = Some(TranscriptSelectionState {
+            area: Rect::new(0, 0, 40, 5),
+            anchor: TranscriptSelectionPoint { row: 0, column: 0 },
+            focus: TranscriptSelectionPoint {
+                row: 4,
+                column: usize::MAX,
+            },
+        });
+
+        assert_eq!(
+            viewport.selected_text().as_deref(),
+            Some("row zero\nrow one")
+        );
+    }
+
+    #[test]
+    fn selected_text_skips_leading_gap_before_materialized_segment() {
+        let mut viewport = TranscriptViewportState {
+            all_lines: vec![Line::from("row two"), Line::from("row three")],
+            all_lines_start: 2,
+            all_line_count: 4,
+            ..TranscriptViewportState::default()
+        };
+        viewport.selection = Some(TranscriptSelectionState {
+            area: Rect::new(0, 0, 40, 4),
+            anchor: TranscriptSelectionPoint { row: 0, column: 0 },
+            focus: TranscriptSelectionPoint {
+                row: 3,
+                column: usize::MAX,
+            },
+        });
+
+        assert_eq!(
+            viewport.selected_text().as_deref(),
+            Some("row two\nrow three")
+        );
     }
 }

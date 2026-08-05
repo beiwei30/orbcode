@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::render::styled_wrap::{ensure_source_range_visible, project_styled_lines};
 use orbcode_protocol::{
     BackgroundTaskView, BackgroundTaskViewStatus, SessionRecord, TranscriptMessage,
     WorkflowStepView, WorkflowStepViewStatus,
@@ -44,6 +45,10 @@ pub(crate) struct BackgroundJobsOverlayState {
     pub(crate) child_session: Option<BackgroundJobsChildSessionView>,
     pub(crate) scroll: usize,
     pub(crate) max_scroll: usize,
+    detail_scroll: usize,
+    ensure_selection_visible: bool,
+    selected_source_range: Option<(usize, usize)>,
+    source_line_by_visual_row: Vec<usize>,
     pub(crate) lines_cache: BackgroundJobsLinesCache,
     pub(crate) needs_refresh: bool,
 }
@@ -74,6 +79,10 @@ impl BackgroundJobsOverlayState {
             child_session: None,
             scroll: 0,
             max_scroll: 0,
+            detail_scroll: 0,
+            ensure_selection_visible: true,
+            selected_source_range: None,
+            source_line_by_visual_row: Vec::new(),
             lines_cache: BackgroundJobsLinesCache::default(),
             needs_refresh: false,
         }
@@ -115,6 +124,7 @@ impl BackgroundJobsOverlayState {
             messages: session.messages,
         });
         self.view = BackgroundJobsView::ChildSession;
+        self.detail_scroll = self.scroll;
         self.scroll = 0;
         self.lines_cache.invalidate();
     }
@@ -148,20 +158,35 @@ impl BackgroundJobsOverlayState {
         let collapsed_workflow_steps = &self.collapsed_workflow_steps;
         let child_session = &self.child_session;
         let current_session_id = &self.current_session_id;
-        self.lines_cache.refresh(key, || match view {
-            BackgroundJobsView::List => {
-                background_jobs_list_lines(jobs, selected, current_session_id, width)
-            }
-            BackgroundJobsView::Detail => background_job_detail_lines(
-                detail.as_ref(),
-                width,
-                detail_step_selected,
-                collapsed_workflow_steps,
-            ),
-            BackgroundJobsView::ChildSession => {
-                background_jobs_child_session_lines(child_session.as_ref())
-            }
+        let mut projection_metadata = None;
+        let rebuilt = self.lines_cache.refresh(key, || {
+            let logical_lines = match view {
+                BackgroundJobsView::List => {
+                    background_jobs_list_lines(jobs, selected, current_session_id, width)
+                }
+                BackgroundJobsView::Detail => background_job_detail_lines(
+                    detail.as_ref(),
+                    width,
+                    detail_step_selected,
+                    collapsed_workflow_steps,
+                ),
+                BackgroundJobsView::ChildSession => {
+                    background_jobs_child_session_lines(child_session.as_ref())
+                }
+            };
+            let selected_source_range = selected_background_source_range(view, &logical_lines);
+            let projection = project_styled_lines(&logical_lines, width);
+            projection_metadata =
+                Some((selected_source_range, projection.source_line_by_visual_row));
+            projection.visual_rows
         });
+        if rebuilt
+            && let Some((selected_source_range, source_line_by_visual_row)) = projection_metadata
+        {
+            self.selected_source_range = selected_source_range;
+            self.source_line_by_visual_row = source_line_by_visual_row;
+            self.ensure_selection_visible = true;
+        }
         &self.lines_cache.lines
     }
 
@@ -228,6 +253,25 @@ impl BackgroundJobsOverlayState {
         };
         self.detail_step_selected = next_selected;
     }
+}
+
+fn selected_background_source_range(
+    view: BackgroundJobsView,
+    lines: &[StyledLine],
+) -> Option<(usize, usize)> {
+    let selected = lines.iter().position(|line| {
+        line.spans
+            .iter()
+            .any(|span| span.content.as_ref().contains('▸'))
+    })?;
+    let end = if view == BackgroundJobsView::List {
+        selected
+            .saturating_add(1)
+            .min(lines.len().saturating_sub(1))
+    } else {
+        selected
+    };
+    Some((selected, end))
 }
 
 pub(crate) fn apply_background_jobs_key(
@@ -399,10 +443,12 @@ fn apply_detail_key(
         }
         KeyCode::Home | KeyCode::Char('g') => {
             state.scroll = 0;
+            state.ensure_selection_visible = false;
             BackgroundJobsOverlayAction::None
         }
         KeyCode::End | KeyCode::Char('G') => {
             state.scroll = state.max_scroll;
+            state.ensure_selection_visible = false;
             BackgroundJobsOverlayAction::None
         }
         _ => BackgroundJobsOverlayAction::None,
@@ -417,7 +463,7 @@ fn apply_child_session_key(
         KeyCode::Esc | KeyCode::Backspace => {
             state.view = BackgroundJobsView::Detail;
             state.child_session = None;
-            state.scroll = 0;
+            state.scroll = state.detail_scroll;
             state.lines_cache.invalidate();
             BackgroundJobsOverlayAction::None
         }
@@ -425,7 +471,7 @@ fn apply_child_session_key(
         KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
             state.view = BackgroundJobsView::Detail;
             state.child_session = None;
-            state.scroll = 0;
+            state.scroll = state.detail_scroll;
             state.lines_cache.invalidate();
             BackgroundJobsOverlayAction::None
         }
@@ -452,10 +498,12 @@ fn apply_child_session_key(
             }),
         KeyCode::Home | KeyCode::Char('g') => {
             state.scroll = 0;
+            state.ensure_selection_visible = false;
             BackgroundJobsOverlayAction::None
         }
         KeyCode::End | KeyCode::Char('G') => {
             state.scroll = state.max_scroll;
+            state.ensure_selection_visible = false;
             BackgroundJobsOverlayAction::None
         }
         _ => BackgroundJobsOverlayAction::None,
@@ -622,7 +670,6 @@ fn select_workflow_step(state: &mut BackgroundJobsOverlayState, delta: isize) {
         return;
     };
     state.detail_step_selected = next_selected;
-    state.scroll = 0;
     state.lines_cache.invalidate();
 }
 
@@ -651,7 +698,6 @@ fn toggle_selected_workflow_step_group(state: &mut BackgroundJobsOverlayState) -
         state.collapsed_workflow_steps.insert(step_key);
         state.ensure_selected_workflow_step_visible();
     }
-    state.scroll = 0;
     state.lines_cache.invalidate();
     true
 }
@@ -680,7 +726,6 @@ fn set_selected_workflow_step_collapsed(
         state.ensure_selected_workflow_step_visible();
     }
     if changed {
-        state.scroll = 0;
         state.lines_cache.invalidate();
     }
     changed
@@ -700,7 +745,6 @@ fn select_parent_workflow_step(state: &mut BackgroundJobsOverlayState) -> bool {
         return false;
     };
     state.detail_step_selected = parent_index;
-    state.scroll = 0;
     state.lines_cache.invalidate();
     true
 }
@@ -721,7 +765,6 @@ fn select_first_child_workflow_step(state: &mut BackgroundJobsOverlayState) -> b
         return false;
     };
     state.detail_step_selected = child_index;
-    state.scroll = 0;
     state.lines_cache.invalidate();
     true
 }
@@ -733,6 +776,7 @@ fn scroll_by(state: &mut BackgroundJobsOverlayState, delta: isize) {
         state.scroll.saturating_add(delta as usize)
     };
     state.scroll = next.min(state.max_scroll);
+    state.ensure_selection_visible = false;
 }
 
 pub(crate) fn sync_background_jobs_overlay_bounds(
@@ -743,17 +787,18 @@ pub(crate) fn sync_background_jobs_overlay_bounds(
     let line_count = state.cached_lines(area.width.max(1) as usize).len();
     state.max_scroll = line_count.saturating_sub(content_height);
 
-    if state.view == BackgroundJobsView::List && !state.jobs.is_empty() {
-        let header_lines = 2;
-        let lines_per_job = 2;
-        let selected_top = header_lines + state.selected * lines_per_job;
-        let selected_bottom = selected_top + lines_per_job;
-        if selected_bottom > state.scroll + content_height {
-            state.scroll = selected_bottom.saturating_sub(content_height);
-        }
-        if selected_top < state.scroll {
-            state.scroll = selected_top;
-        }
+    if state.ensure_selection_visible
+        && let Some((source_start, source_end)) = state.selected_source_range
+    {
+        state.scroll = ensure_source_range_visible(
+            &state.source_line_by_visual_row,
+            line_count,
+            state.scroll,
+            content_height,
+            source_start,
+            source_end,
+        );
+        state.ensure_selection_visible = false;
     }
 
     state.scroll = state.scroll.min(state.max_scroll);
@@ -781,10 +826,7 @@ pub(crate) fn draw_background_jobs_overlay(
         width: area.width,
         height: area.height.saturating_sub(1),
     };
-    frame.render_widget(
-        Paragraph::new(visible_lines).wrap(Wrap { trim: false }),
-        content_area,
-    );
+    frame.render_widget(Paragraph::new(visible_lines), content_area);
 
     let footer_area = Rect {
         x: area.x,
@@ -1774,7 +1816,7 @@ mod tests {
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
         );
         assert_eq!(state.detail_step_selected, 1);
-        assert_eq!(state.scroll, 0);
+        assert_eq!(state.scroll, 4);
 
         apply_background_jobs_key(
             &mut state,
@@ -2099,5 +2141,134 @@ mod tests {
         state.selected = 1;
         state.update_jobs(vec![make_view("a", BackgroundTaskViewStatus::Running)]);
         assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn narrow_workflow_projection_reaches_bottom_and_keeps_selection_visible() {
+        for width in [20_u16, 40, 80] {
+            let mut detail = make_view("workflow-1", BackgroundTaskViewStatus::Running);
+            detail.kind = BackgroundTaskViewKind::Workflow;
+            detail.description = "A workflow prompt that wraps at narrow widths".repeat(2);
+            detail.workflow_steps = Some(vec![
+                make_workflow_step(
+                    "step.0",
+                    None,
+                    0,
+                    "phase",
+                    "Plan a deliberately long workflow label",
+                    Some("phase output "),
+                ),
+                make_workflow_step(
+                    "step.0.0",
+                    Some("step.0"),
+                    1,
+                    "agent",
+                    "Inspect a deeply nested implementation with a long label",
+                    Some(&"nested output ".repeat(12)),
+                ),
+                make_workflow_step(
+                    "step.1",
+                    None,
+                    0,
+                    "agent",
+                    "Finish the workflow",
+                    Some(&"final output ".repeat(12)),
+                ),
+            ]);
+            let mut state = BackgroundJobsOverlayState::new(
+                vec![make_view("workflow-1", BackgroundTaskViewStatus::Running)],
+                "s".to_string(),
+            );
+            state.set_detail(detail);
+            let area = Rect::new(0, 0, width, 9);
+
+            apply_background_jobs_key(&mut state, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+            apply_background_jobs_key(
+                &mut state,
+                &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            );
+            apply_background_jobs_key(
+                &mut state,
+                &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            );
+            sync_background_jobs_overlay_bounds(&mut state, area);
+
+            let visible = lines_text(
+                &state.cached_visible_lines(width as usize, background_jobs_content_height(area)),
+            );
+            assert!(visible.contains('▸'), "width {width}: {visible}");
+            let expected_max_scroll = state
+                .cached_lines(width as usize)
+                .len()
+                .saturating_sub(background_jobs_content_height(area));
+            assert_eq!(state.max_scroll, expected_max_scroll);
+
+            state.scroll = state.max_scroll;
+            let last_visible = state
+                .cached_visible_lines(width as usize, background_jobs_content_height(area))
+                .last()
+                .cloned();
+            assert_eq!(
+                last_visible,
+                state.cached_lines(width as usize).last().cloned()
+            );
+        }
+    }
+
+    #[test]
+    fn workflow_refresh_and_child_round_trip_preserve_selected_step_anchor() {
+        let mut detail = make_view("workflow-1", BackgroundTaskViewStatus::Running);
+        detail.kind = BackgroundTaskViewKind::Workflow;
+        let mut selected = make_workflow_step(
+            "step.1",
+            None,
+            0,
+            "agent",
+            "Selected child with long output",
+            Some(&"initial output ".repeat(20)),
+        );
+        selected.child_session_id = Some("child-session".to_string());
+        detail.workflow_steps = Some(vec![
+            make_workflow_step("step.0", None, 0, "phase", "First", None),
+            selected,
+        ]);
+        let mut state = BackgroundJobsOverlayState::new(
+            vec![make_view("workflow-1", BackgroundTaskViewStatus::Running)],
+            "s".to_string(),
+        );
+        state.set_detail(detail.clone());
+        state.detail_step_selected = 1;
+        let area = Rect::new(0, 0, 24, 8);
+        sync_background_jobs_overlay_bounds(&mut state, area);
+        let anchored_scroll = state.scroll;
+        assert!(anchored_scroll > 0);
+
+        detail.workflow_steps.as_mut().unwrap()[1].output = Some("grown output ".repeat(40));
+        state.set_detail(detail);
+        sync_background_jobs_overlay_bounds(&mut state, area);
+        let visible =
+            lines_text(&state.cached_visible_lines(24, background_jobs_content_height(area)));
+        assert!(
+            visible.contains('▸'),
+            "selected step lost after growth: {visible}"
+        );
+
+        let detail_scroll = state.scroll;
+        let mut child = SessionRecord::new();
+        child.session_id = "child-session".to_string();
+        child.push_message(TranscriptMessage::new(
+            MessageRole::Assistant,
+            "child output",
+        ));
+        state.set_child_session(child);
+        apply_background_jobs_key(&mut state, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(state.scroll, detail_scroll);
+        sync_background_jobs_overlay_bounds(&mut state, area);
+        let visible =
+            lines_text(&state.cached_visible_lines(24, background_jobs_content_height(area)));
+        assert!(
+            visible.contains('▸'),
+            "selected step lost after child view: {visible}"
+        );
     }
 }

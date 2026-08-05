@@ -9,7 +9,7 @@ use std::sync::{
 use anyhow::Result;
 use crossterm::{
     Command,
-    cursor::{MoveDown, MoveTo, MoveToColumn, RestorePosition, SavePosition, SetCursorStyle},
+    cursor::{MoveTo, SetCursorStyle},
     event::{
         DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
         poll as poll_terminal_event, read as read_terminal_event,
@@ -1088,7 +1088,6 @@ where
                 row_count,
                 cursor,
                 wrap_policy,
-                transcript_width,
             )
         };
         crate::terminal_trace::record_bytes(
@@ -1133,7 +1132,6 @@ where
             row_count,
             cursor,
             wrap_policy,
-            transcript_width,
         )?;
     }
     Write::flush(writer)?;
@@ -1180,7 +1178,6 @@ fn queue_standard_history_insert(
     row_count: u16,
     cursor: Position,
     wrap_policy: HistoryLineWrapPolicy,
-    transcript_width: usize,
 ) -> io::Result<()> {
     if wrap_policy == HistoryLineWrapPolicy::PreWrap {
         queue!(writer, DisableLineWrap)?;
@@ -1207,7 +1204,6 @@ fn queue_standard_history_insert(
         queue!(writer, MoveTo(0, cursor_top))?;
         for line in lines {
             queue!(writer, Print("\r\n"))?;
-            clear_soft_wrap_continuation_rows(writer, line, transcript_width)?;
             queue_styled_line(writer, line)?;
             queue!(
                 writer,
@@ -1320,31 +1316,6 @@ fn queue_styled_line(writer: &mut impl Write, line: &StyledLine) -> io::Result<(
         queue_style(writer, span.style)?;
         queue!(writer, Print(span.content.as_ref()))?;
     }
-    Ok(())
-}
-
-fn clear_soft_wrap_continuation_rows(
-    writer: &mut impl Write,
-    line: &StyledLine,
-    transcript_width: usize,
-) -> io::Result<()> {
-    let physical_rows = styled_line_display_width(line)
-        .max(1)
-        .div_ceil(transcript_width.max(1));
-    if physical_rows <= 1 {
-        return Ok(());
-    }
-
-    queue!(writer, SavePosition)?;
-    for _ in 1..physical_rows {
-        queue!(
-            writer,
-            MoveDown(1),
-            MoveToColumn(0),
-            Clear(ClearType::UntilNewLine)
-        )?;
-    }
-    queue!(writer, RestorePosition)?;
     Ok(())
 }
 

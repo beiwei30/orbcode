@@ -802,8 +802,14 @@ impl TuiState {
                     self.current_turn_total_tokens.saturating_add(usage_total);
                 self.streamed_response_chars = self.streamed_response_chars.max(usage_output_chars);
                 if let Some(thinking_message) = self.take_completed_thinking_message() {
-                    message = Self::remove_duplicate_completed_thinking(&thinking_message, message);
-                    self.push_message_and_flush_history(thinking_message);
+                    let completion_contains_thinking =
+                        message_contains_matching_thinking_block(&message, &thinking_message);
+                    let completion_has_non_thinking = message_has_non_thinking_block(&message);
+                    if !completion_contains_thinking || completion_has_non_thinking {
+                        message =
+                            Self::remove_duplicate_completed_thinking(&thinking_message, message);
+                        self.push_message_and_flush_history(thinking_message);
+                    }
                 }
                 let has_tool_use = message
                     .blocks

@@ -1128,6 +1128,18 @@ async fn mock_provider_fatal_scenario_returns_fatal_error() {
 }
 
 #[tokio::test]
+async fn mock_provider_interrupted_scenario_returns_interrupted_error() {
+    let request = provider_test_request("mock://anthropic?scenario=interrupted".to_string());
+    let error = provider_for(ProviderId::Anthropic)
+        .generate(&request)
+        .await
+        .expect_err("mock interrupted failure");
+    assert_eq!(error.kind, ProviderErrorKind::Interrupted);
+    assert_eq!(error.category, StreamErrorCategory::Interrupted);
+    assert!(error.suggestion.is_none());
+}
+
+#[tokio::test]
 async fn mock_provider_ratelimit_scenario_carries_429_and_retry_after() {
     let request = provider_test_request("mock://anthropic?scenario=ratelimit".to_string());
     let error = provider_for(ProviderId::Anthropic)

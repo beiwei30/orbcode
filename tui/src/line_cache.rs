@@ -28,13 +28,17 @@ impl<K: PartialEq> LinesCache<K> {
         self.key = None;
     }
 
-    pub(crate) fn refresh(&mut self, key: K, build_lines: impl FnOnce() -> Vec<StyledLine>) {
+    pub(crate) fn refresh(
+        &mut self,
+        key: K,
+        build_lines: impl FnOnce() -> Vec<StyledLine>,
+    ) -> bool {
         if self.key.as_ref() == Some(&key) {
             #[cfg(test)]
             {
                 self.hits += 1;
             }
-            return;
+            return false;
         }
 
         self.key = Some(key);
@@ -43,5 +47,6 @@ impl<K: PartialEq> LinesCache<K> {
         {
             self.misses += 1;
         }
+        true
     }
 }

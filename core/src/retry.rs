@@ -78,6 +78,9 @@ pub async fn execute_stream_with_retry_and_fallback(
                     )
                     .await
                     .map_err(|fallback_error| {
+                        if fallback_error.kind == ProviderErrorKind::Interrupted {
+                            return CoreError::Cancelled;
+                        }
                         CoreError::RetryExhausted(ProviderFailure {
                             message: format!(
                                 "primary provider {} failed after {} attempt(s) [{}]: {}{}; fallback {} failed after {} attempt(s) [{}]: {}{}",
@@ -98,6 +101,10 @@ pub async fn execute_stream_with_retry_and_fallback(
                     });
             }
 
+            if primary_error.kind == ProviderErrorKind::Interrupted {
+                return Err(CoreError::Cancelled);
+            }
+
             let message = match primary_error.kind {
                 ProviderErrorKind::Retryable => format!(
                     "provider {} failed after {} attempt(s) [{}]: {}{}",
@@ -114,14 +121,7 @@ pub async fn execute_stream_with_retry_and_fallback(
                     primary_error.message,
                     format_suggestion(primary_error.suggestion.as_deref()),
                 ),
-                ProviderErrorKind::Interrupted => format!(
-                    "provider {} was interrupted after {} attempt(s) [{}]: {}{}",
-                    primary_error.provider,
-                    primary_error.attempts,
-                    primary_error.category.label(),
-                    primary_error.message,
-                    format_suggestion(primary_error.suggestion.as_deref()),
-                ),
+                ProviderErrorKind::Interrupted => unreachable!("handled above"),
             };
             Err(CoreError::ProviderFailed(ProviderFailure {
                 message,

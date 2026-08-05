@@ -241,6 +241,7 @@ pub(crate) fn core_error(err: CoreError) -> ResponseResult {
         CoreError::ActiveTurn(_) => (ErrorCode::ActiveTurn, err.to_string()),
         CoreError::NoActiveTurn(_) => (ErrorCode::NoActiveTurn, err.to_string()),
         CoreError::PermissionDenied(_) => (ErrorCode::PermissionDenied, err.to_string()),
+        CoreError::Cancelled => (ErrorCode::InternalError, err.to_string()),
         CoreError::ProviderFailed(_) | CoreError::RetryExhausted(_) => {
             (ErrorCode::ProviderFailed, err.to_string())
         }
@@ -444,6 +445,7 @@ mod tests {
                 CoreError::NoActiveTurn("s1".into()),
                 ErrorCode::NoActiveTurn,
             ),
+            (CoreError::Cancelled, ErrorCode::InternalError),
             (
                 CoreError::PermissionDenied("denied".into()),
                 ErrorCode::PermissionDenied,

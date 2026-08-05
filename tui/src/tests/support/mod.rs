@@ -80,7 +80,7 @@ pub(super) use crate::history_cell::cells::{
     build_tool_cell, transcript_cells_from_messages,
 };
 pub(super) use crate::history_cell::collapsed_activity::{
-    CollapsedActivityGroup, build_collapsed_activity_group,
+    CollapsedActivityGroup, build_collapsed_activity_group, collapsed_activity_summary_text,
     render_collapsed_activity_group_cell_lines, render_collapsed_activity_group_lines,
 };
 pub(super) use crate::history_cell::local_note::{

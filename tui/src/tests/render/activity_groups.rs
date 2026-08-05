@@ -134,6 +134,55 @@ fn collapsed_activity_group_distinguishes_failed_reads_in_summary() {
 }
 
 #[test]
+fn collapsed_activity_group_counts_duplicate_paths_by_read_operation() {
+    let cwd = PathBuf::from("/Users/user/github/sample-repo");
+    let path = "/Users/user/github/sample-repo/package.json";
+    let messages = vec![
+        TranscriptMessage::from_blocks(
+            MessageRole::Assistant,
+            vec![
+                TranscriptBlock::ToolUse {
+                    id: "tool-read-first".to_string(),
+                    name: "Read".to_string(),
+                    input: format!(r#"{{"file_path":"{path}"}}"#),
+                },
+                TranscriptBlock::ToolUse {
+                    id: "tool-read-second".to_string(),
+                    name: "Read".to_string(),
+                    input: format!(r#"{{"file_path":"{path}"}}"#),
+                },
+            ],
+        ),
+        TranscriptMessage::from_blocks(
+            MessageRole::User,
+            vec![
+                TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-read-first".to_string(),
+                    content: "ok".to_string().into(),
+                    is_error: false,
+                    metadata: None,
+                },
+                TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-read-second".to_string(),
+                    content: "read failed".to_string().into(),
+                    is_error: true,
+                    metadata: None,
+                },
+            ],
+        ),
+    ];
+
+    let (group, _) = build_collapsed_activity_group(&messages, 0, &cwd).unwrap();
+    assert_eq!(group.read_paths, vec!["package.json".to_string()]);
+    assert_eq!(group.read_count(), 2);
+    assert_eq!(group.failed_read_count(), 1);
+    assert_eq!(
+        collapsed_activity_summary_text(&group, false),
+        "Read 1 file, 1 file failed"
+    );
+}
+
+#[test]
 fn collapsed_activity_group_labels_grep_regex_without_json_quotes() {
     let cwd = PathBuf::from("/Users/user/github/sample-repo");
     let messages = vec![TranscriptMessage::from_blocks(
