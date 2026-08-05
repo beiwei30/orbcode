@@ -63,12 +63,12 @@ impl AppServer {
         }
 
         self.read_state
-            .seed_current_file(&canonical, u128::from(mtime))
+            .seed_current_file(&requested, u128::from(mtime))
             .await
             .map_err(CoreError::Config)?;
         Ok(SeedReadStateResult {
             session_id: session_id.to_string(),
-            path: canonical,
+            path: requested,
             mtime,
             seeded: true,
         })
@@ -246,6 +246,65 @@ mod tests {
             "orbcode-app-server-{label}-{}-{unique}",
             std::process::id()
         ))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn seeded_read_state_matches_file_tool_path_under_symlinked_cwd() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("home");
+        let real_cwd = root.path().join("real-workspace");
+        let linked_cwd = root.path().join("linked-workspace");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&real_cwd)
+            .await
+            .expect("real cwd");
+        std::os::unix::fs::symlink(&real_cwd, &linked_cwd).expect("symlink cwd");
+
+        let file = real_cwd.join("seeded.txt");
+        tokio::fs::write(&file, "alpha\n").await.expect("seed file");
+        let mtime = tokio::fs::metadata(&file)
+            .await
+            .expect("metadata")
+            .modified()
+            .expect("mtime")
+            .duration_since(UNIX_EPOCH)
+            .expect("after epoch")
+            .as_millis() as u64;
+
+        let app = AppServer::new(
+            &linked_cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                allow_tools: Some(true),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+        let bootstrap = app.bootstrap(None).await.expect("bootstrap");
+
+        let seeded = app
+            .seed_read_state(&bootstrap.session.session_id, "seeded.txt", mtime)
+            .await
+            .expect("seed read state");
+        assert_eq!(seeded.path, linked_cwd.join("seeded.txt"));
+
+        app.invoke_tool(
+            "file-edit",
+            json!({
+                "file_path": "seeded.txt",
+                "old_string": "alpha",
+                "new_string": "omega"
+            })
+            .to_string(),
+        )
+        .await
+        .expect("edit through symlinked cwd");
+        assert_eq!(
+            tokio::fs::read_to_string(file).await.expect("edited file"),
+            "omega\n"
+        );
     }
 
     struct FakeHttpResponse {
