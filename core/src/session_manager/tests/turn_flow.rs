@@ -271,7 +271,8 @@ async fn empty_response_after_successful_workflow_tool_result_finishes_turn() {
                         "task_id": "workflow-541b91f4a2de475e9a377a4d26e795c3",
                         "status": "started"
                     })
-                    .to_string(),
+                    .to_string()
+                    .into(),
                     is_error: false,
                     metadata: None,
                 }],

@@ -470,3 +470,526 @@ async fn loads_typescript_transcript_with_truncated_tail_and_unknown_compact_bou
         "assistant text remains visible in provider chain",
     );
 }
+
+async fn write_transcript_lines(
+    manager: &SessionManager,
+    session_id: &str,
+    lines: &[Value],
+) -> std::path::PathBuf {
+    let path = manager.transcript_store.path(session_id);
+    tokio::fs::create_dir_all(path.parent().expect("transcript parent"))
+        .await
+        .expect("create transcript parent");
+    let payload = lines
+        .iter()
+        .map(|line| serde_json::to_string(line).expect("serialize transcript line"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    tokio::fs::write(&path, payload)
+        .await
+        .expect("write transcript lines");
+    path
+}
+
+fn parsed_transcript_lines(contents: &str) -> Vec<Value> {
+    contents
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("parse transcript line"))
+        .collect()
+}
+
+#[tokio::test]
+async fn rewind_preserves_loaded_prompt_and_per_line_provenance() {
+    let manager = test_manager().await;
+    let session_id = "byte-fidelity-rewind";
+    let path = write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "rewind-user-1",
+                "parentUuid": null,
+                "timestamp": "2026-08-04T01:00:00.000Z",
+                "promptId": "typescript-original-prompt",
+                "gitBranch": "historical-main",
+                "provider": "future-provider-v9",
+                "message": {"role": "user", "content": "keep one"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "rewind-assistant-1",
+                "parentUuid": "rewind-user-1",
+                "timestamp": "2026-08-04T01:00:01.000Z",
+                "gitBranch": null,
+                "provider": null,
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-old",
+                    "content": [{"type": "text", "text": "keep two"}]
+                }
+            }),
+            json!({
+                "type": "user",
+                "uuid": "rewind-user-2",
+                "parentUuid": "rewind-assistant-1",
+                "timestamp": "2026-08-04T01:00:02.000Z",
+                "promptId": null,
+                "gitBranch": "discarded-branch",
+                "provider": "anthropic",
+                "message": {"role": "user", "content": "discard me"}
+            }),
+        ],
+    )
+    .await;
+    manager
+        .transcript_store
+        .record_session_hints(
+            session_id,
+            orbcode_session_store::SessionWriteHints {
+                git_branch: Some("current-branch".to_string()),
+                provider: Some(ProviderId::OpenAi),
+            },
+        )
+        .await;
+
+    let rewound = manager
+        .rewind_session(session_id, 2)
+        .await
+        .expect("rewind loaded transcript");
+    assert_eq!(rewound.messages.len(), 2);
+    let rewritten = parsed_transcript_lines(
+        &tokio::fs::read_to_string(path)
+            .await
+            .expect("read rewound transcript"),
+    );
+    assert_eq!(rewritten.len(), 2);
+    assert_eq!(rewritten[0]["promptId"], "typescript-original-prompt");
+    assert_eq!(rewritten[0]["gitBranch"], "historical-main");
+    assert_eq!(rewritten[0]["provider"], "future-provider-v9");
+    assert!(rewritten[1].get("promptId").is_none());
+    assert_eq!(rewritten[1]["gitBranch"], Value::Null);
+    assert_eq!(rewritten[1]["provider"], Value::Null);
+}
+
+#[tokio::test]
+async fn repair_keeps_loaded_provenance_and_decorates_only_synthetic_result() {
+    let manager = test_manager().await;
+    let session_id = "byte-fidelity-repair";
+    let path = write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "repair-user",
+                "parentUuid": null,
+                "timestamp": "2026-08-04T02:00:00.000Z",
+                "promptId": "repair-original-prompt",
+                "gitBranch": "repair-old-branch",
+                "provider": "future-provider-v9",
+                "message": {"role": "user", "content": "run the tool"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "repair-assistant",
+                "parentUuid": "repair-user",
+                "timestamp": "2026-08-04T02:00:01.000Z",
+                "gitBranch": null,
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-old",
+                    "content": [{"type": "tool_use", "id": "repair-tool", "name": "Read", "input": {"path": "README.md"}}]
+                }
+            }),
+        ],
+    )
+    .await;
+    manager
+        .transcript_store
+        .record_session_hints(
+            session_id,
+            orbcode_session_store::SessionWriteHints {
+                git_branch: Some("repair-current-branch".to_string()),
+                provider: Some(ProviderId::OpenAi),
+            },
+        )
+        .await;
+    let mut session = manager
+        .load_session(session_id)
+        .await
+        .expect("load repair source");
+    session.messages = repair_missing_tool_results(session.messages);
+    assert_eq!(session.messages.len(), 3);
+    assert!(session.messages[2].transcript_provenance.is_none());
+    manager
+        .transcript_store
+        .persist_full_session(&session)
+        .await
+        .expect("persist repaired transcript");
+
+    let rewritten = parsed_transcript_lines(
+        &tokio::fs::read_to_string(path)
+            .await
+            .expect("read repaired transcript"),
+    );
+    assert_eq!(rewritten[0]["promptId"], "repair-original-prompt");
+    assert_eq!(rewritten[0]["gitBranch"], "repair-old-branch");
+    assert_eq!(rewritten[0]["provider"], "future-provider-v9");
+    assert_eq!(rewritten[1]["gitBranch"], Value::Null);
+    assert!(rewritten[1].get("provider").is_none());
+    let synthetic = rewritten.last().expect("synthetic tool result line");
+    assert!(synthetic.get("promptId").and_then(Value::as_str).is_some());
+    assert_eq!(synthetic["gitBranch"], "repair-current-branch");
+    assert_eq!(synthetic["provider"], "openai");
+    assert_eq!(
+        synthetic["message"]["content"][0]["content"],
+        MISSING_TOOL_RESULT
+    );
+}
+
+#[tokio::test]
+async fn fork_regenerates_line_identity_but_keeps_structured_tool_result_semantics() {
+    let manager = test_manager().await;
+    let session_id = "byte-fidelity-fork";
+    let original_tool_content = json!([
+        {"type": "text", "text": "first"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}},
+        {"type": "structured", "payload": {"answer": 42}}
+    ]);
+    write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "fork-user",
+                "parentUuid": null,
+                "timestamp": "2026-08-04T03:00:00.000Z",
+                "promptId": "fork-source-prompt",
+                "gitBranch": "fork-source-branch",
+                "provider": "future-provider-v9",
+                "message": {"role": "user", "content": "inspect"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "fork-assistant",
+                "parentUuid": "fork-user",
+                "timestamp": "2026-08-04T03:00:01.000Z",
+                "provider": "future-provider-v9",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-old",
+                    "content": [{"type": "tool_use", "id": "fork-tool", "name": "Inspect", "input": {}}]
+                }
+            }),
+            json!({
+                "type": "user",
+                "uuid": "fork-result",
+                "parentUuid": "fork-assistant",
+                "timestamp": "2026-08-04T03:00:02.000Z",
+                "promptId": null,
+                "provider": "future-provider-v9",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "fork-tool", "content": original_tool_content, "is_error": false}]
+                }
+            }),
+        ],
+    )
+    .await;
+
+    let fork = manager
+        .fork_session(session_id, Some("fidelity fork".to_string()), None)
+        .await
+        .expect("fork transcript");
+    assert!(
+        fork.messages
+            .iter()
+            .all(|message| message.transcript_provenance.is_none())
+    );
+    assert_ne!(fork.messages[0].id, "fork-user");
+    let fork_content = fork.messages[2]
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            TranscriptBlock::ToolResult { content, .. } => Some(content),
+            _ => None,
+        })
+        .expect("forked tool result");
+    assert!(matches!(
+        fork_content.loaded_field(),
+        Some(orbcode_protocol::TranscriptJsonField::Value(Value::Array(items)))
+            if items.len() == 3
+    ));
+
+    let fork_lines = parsed_transcript_lines(
+        &tokio::fs::read_to_string(manager.transcript_store.path(&fork.session_id))
+            .await
+            .expect("read fork transcript"),
+    );
+    let fork_user = fork_lines
+        .iter()
+        .find(|line| line["uuid"] == fork.messages[0].id)
+        .expect("forked root user line");
+    assert_ne!(fork_user["promptId"], "fork-source-prompt");
+    assert_eq!(
+        fork_user["provider"],
+        manager.effective_config().default_provider.as_str()
+    );
+    let fork_result = fork_lines
+        .iter()
+        .find(|line| line["uuid"] == fork.messages[2].id)
+        .expect("forked tool result line");
+    assert_eq!(
+        fork_result["message"]["content"][0]["content"],
+        original_tool_content
+    );
+
+    let request = manager
+        .provider_request_for_session(
+            &fork.session_id,
+            "continue",
+            manager.context_preview().await,
+            &[],
+            false,
+            false,
+        )
+        .await
+        .expect("fork provider request");
+    assert!(request.messages.iter().any(|message| {
+        message.blocks.iter().any(|block| {
+            matches!(
+                block,
+                TranscriptBlock::ToolResult { content, .. }
+                    if matches!(
+                        content.loaded_field(),
+                        Some(orbcode_protocol::TranscriptJsonField::Value(Value::Array(items)))
+                            if items.len() == 3
+                    )
+            )
+        })
+    }));
+}
+
+#[tokio::test]
+async fn compact_before_current_prompt_preserves_loaded_suffix_provenance() {
+    let manager = test_manager().await;
+    let session_id = "byte-fidelity-partial-compact";
+    let path = write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "compact-old-user",
+                "parentUuid": null,
+                "timestamp": "2026-08-04T04:00:00.000Z",
+                "promptId": "compact-old-prompt",
+                "gitBranch": "old-branch",
+                "provider": "future-provider-v9",
+                "message": {"role": "user", "content": "old prompt"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "compact-old-assistant",
+                "parentUuid": "compact-old-user",
+                "timestamp": "2026-08-04T04:00:01.000Z",
+                "gitBranch": "old-answer-branch",
+                "provider": "future-provider-v9",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-old",
+                    "content": [{"type": "text", "text": "old answer"}]
+                }
+            }),
+            json!({
+                "type": "user",
+                "uuid": "compact-current-user",
+                "parentUuid": "compact-old-assistant",
+                "timestamp": "2026-08-04T04:00:02.000Z",
+                "promptId": "compact-current-original-prompt",
+                "gitBranch": null,
+                "provider": "future-current-provider",
+                "message": {"role": "user", "content": "current prompt"}
+            }),
+        ],
+    )
+    .await;
+    manager
+        .transcript_store
+        .record_session_hints(
+            session_id,
+            orbcode_session_store::SessionWriteHints {
+                git_branch: Some("compact-process-branch".to_string()),
+                provider: Some(ProviderId::OpenAi),
+            },
+        )
+        .await;
+
+    let result = manager
+        .compact_session_before_current_prompt(session_id, "current prompt")
+        .await
+        .expect("partial compaction")
+        .expect("compaction ran");
+    assert_eq!(result.session.messages.len(), 2);
+    assert!(result.session.messages[0].transcript_provenance.is_none());
+    assert_eq!(
+        result.session.messages[1]
+            .transcript_provenance
+            .as_ref()
+            .expect("retained loaded suffix")
+            .prompt_id,
+        orbcode_protocol::TranscriptJsonField::Value(json!("compact-current-original-prompt"))
+    );
+
+    let rewritten = parsed_transcript_lines(
+        &tokio::fs::read_to_string(path)
+            .await
+            .expect("read partially compacted transcript"),
+    );
+    assert!(
+        rewritten
+            .iter()
+            .all(|line| line["uuid"] != "compact-old-user"
+                && line["uuid"] != "compact-old-assistant")
+    );
+    let summary = &rewritten[0];
+    assert_eq!(summary["gitBranch"], "compact-process-branch");
+    assert_eq!(summary["provider"], "openai");
+    let suffix = rewritten
+        .iter()
+        .find(|line| line["uuid"] == "compact-current-user")
+        .expect("retained current prompt");
+    assert_eq!(suffix["promptId"], "compact-current-original-prompt");
+    assert_eq!(suffix["gitBranch"], Value::Null);
+    assert_eq!(suffix["provider"], "future-current-provider");
+}
+
+#[tokio::test]
+async fn full_compaction_replaces_history_with_new_hint_decorated_record() {
+    let manager = test_manager().await;
+    let session_id = "byte-fidelity-full-compact";
+    let path = write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "full-compact-user",
+                "parentUuid": null,
+                "timestamp": "2026-08-04T05:00:00.000Z",
+                "promptId": "deleted-prompt",
+                "gitBranch": "deleted-branch",
+                "provider": "future-provider-v9",
+                "message": {"role": "user", "content": "history to summarize"}
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "full-compact-assistant",
+                "parentUuid": "full-compact-user",
+                "timestamp": "2026-08-04T05:00:01.000Z",
+                "provider": "future-provider-v9",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-old",
+                    "content": [{"type": "text", "text": "answer to summarize"}]
+                }
+            }),
+        ],
+    )
+    .await;
+    manager
+        .transcript_store
+        .record_session_hints(
+            session_id,
+            orbcode_session_store::SessionWriteHints {
+                git_branch: Some("full-compact-current".to_string()),
+                provider: Some(ProviderId::OpenAi),
+            },
+        )
+        .await;
+
+    let result = manager
+        .compact_session(session_id)
+        .await
+        .expect("full compact");
+    assert_eq!(result.session.messages.len(), 1);
+    assert!(result.session.messages[0].transcript_provenance.is_none());
+    let rewritten = parsed_transcript_lines(
+        &tokio::fs::read_to_string(path)
+            .await
+            .expect("read full compaction"),
+    );
+    assert_eq!(rewritten.len(), 1);
+    assert_ne!(rewritten[0]["uuid"], "full-compact-user");
+    assert_ne!(rewritten[0]["uuid"], "full-compact-assistant");
+    assert!(rewritten[0].get("promptId").is_none());
+    assert_eq!(rewritten[0]["gitBranch"], "full-compact-current");
+    assert_eq!(rewritten[0]["provider"], "openai");
+}
+
+#[tokio::test]
+async fn background_snapshot_uses_source_aware_policy_for_mixed_messages() {
+    let manager = test_manager().await;
+    let loaded = orbcode_session_store::decode_session_transcript_with_outcome(
+        "background-loaded".to_string(),
+        &serde_json::to_string(&json!({
+            "type": "user",
+            "uuid": "background-loaded-user",
+            "parentUuid": null,
+            "timestamp": "2026-08-04T06:00:00.000Z",
+            "promptId": "background-original-prompt",
+            "gitBranch": null,
+            "provider": "future-provider-v9",
+            "message": {"role": "user", "content": "loaded child history"}
+        }))
+        .expect("serialize loaded child line"),
+    )
+    .session
+    .expect("decode loaded child message")
+    .messages
+    .remove(0);
+    let new_message = TranscriptMessage::new(MessageRole::User, "new child turn");
+    let new_id = new_message.id.clone();
+    let child_id = "byte-fidelity-background-child";
+    let agent = orbcode_tools::AgentToolInput {
+        description: "fidelity child".to_string(),
+        prompt: "continue child".to_string(),
+        subagent_type: Some("general-purpose".to_string()),
+        run_in_background: true,
+    };
+
+    manager
+        .persist_child_agent_transcript_snapshot(
+            child_id,
+            &agent,
+            "general-purpose",
+            None,
+            &[loaded, new_message],
+        )
+        .await;
+    let path = manager.child_session_store.transcript_path_for(child_id);
+    let lines = parsed_transcript_lines(
+        &tokio::fs::read_to_string(path)
+            .await
+            .expect("read background snapshot"),
+    );
+    let historical = lines
+        .iter()
+        .find(|line| line["uuid"] == "background-loaded-user")
+        .expect("loaded background line");
+    assert_eq!(historical["promptId"], "background-original-prompt");
+    assert_eq!(historical["gitBranch"], Value::Null);
+    assert_eq!(historical["provider"], "future-provider-v9");
+    let fresh = lines
+        .iter()
+        .find(|line| line["uuid"] == new_id)
+        .expect("fresh background line");
+    assert!(fresh.get("promptId").and_then(Value::as_str).is_some());
+    assert_eq!(
+        fresh["provider"],
+        manager.effective_config().default_provider.as_str()
+    );
+}

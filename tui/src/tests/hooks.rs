@@ -128,7 +128,7 @@ fn failed_read_card_hides_completed_post_tool_failure_hook_progress() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-large".to_string(),
-                content: "Failed during execution".to_string(),
+                content: "Failed during execution".to_string().into(),
                 is_error: true,
                 metadata: Some(metadata),
             }],

@@ -173,7 +173,7 @@ fn tool_activity_card_uses_agent_metadata_summary() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "API Error: 400 模型提供方限流".to_string(),
+                    content: "API Error: 400 模型提供方限流".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"status\":\"completed\",\"totalToolUseCount\":3,\"totalTokens\":0,\"totalDurationMs\":14941,\"content\":[{\"type\":\"text\",\"text\":\"API Error: 400 模型提供方限流\"}]}".to_string()),
                 }],
@@ -218,7 +218,7 @@ fn tool_activity_card_prefers_tool_summary_metadata_and_structured_details() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "task-update".to_string(),
-                    content: "{\"id\":\"transcript-rendering\",\"status\":\"in_progress\"}".to_string(),
+                    content: "{\"id\":\"transcript-rendering\",\"status\":\"in_progress\"}".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"status\":\"completed\",\"summary\":\"Updated task `transcript-rendering`.\",\"changedPaths\":[\"/tmp/tasks/transcript-rendering.json\"],\"content\":[{\"type\":\"text\",\"text\":\"{\\\"id\\\":\\\"transcript-rendering\\\"}\"}]}".to_string()),
                 }],
@@ -351,7 +351,7 @@ fn tool_activity_card_matches_delayed_result_after_intervening_tool_message() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: String::new(),
+                content: String::new().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -385,7 +385,7 @@ fn tool_activity_card_matches_result_after_hook_context() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: String::new(),
+                content: String::new().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -484,7 +484,7 @@ fn expanded_agent_card_renders_embedded_progress_transcript() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "## Summary\nThe CLI flow has two entry points.".to_string(),
+                    content: "## Summary\nThe CLI flow has two entry points.".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -547,7 +547,9 @@ fn permission_denied_card_renders_hook_progress_status() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-tool".to_string(),
-                content: "permission denied for tool `Bash` by configured deny rule".to_string(),
+                content: "permission denied for tool `Bash` by configured deny rule"
+                    .to_string()
+                    .into(),
                 is_error: true,
                 metadata: Some(metadata),
             }],
@@ -619,7 +621,9 @@ fn permission_denied_card_renders_hook_progress_error_detail() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-tool".to_string(),
-                content: "permission denied for tool `Bash` by configured deny rule".to_string(),
+                content: "permission denied for tool `Bash` by configured deny rule"
+                    .to_string()
+                    .into(),
                 is_error: true,
                 metadata: Some(metadata),
             }],

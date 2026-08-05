@@ -1231,7 +1231,7 @@ fn bash_streaming_to_completed_produces_one_committed_block() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "bash-1".to_string(),
-            content: "total 60".to_string(),
+            content: "total 60".to_string().into(),
             is_error: false,
             metadata: None,
         }],

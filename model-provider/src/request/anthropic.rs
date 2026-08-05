@@ -1,6 +1,8 @@
 use std::fmt::Write as _;
 
-use orbcode_protocol::{EffortLevel, MessageRole, TranscriptBlock, TranscriptMessage, TurnContext};
+use orbcode_protocol::{
+    EffortLevel, MessageRole, ToolResultContent, TranscriptBlock, TranscriptMessage, TurnContext,
+};
 use serde_json::{Value, json};
 
 use crate::ProviderRequest;
@@ -505,9 +507,83 @@ fn anthropic_block(block: &TranscriptBlock) -> Option<Value> {
         } => Some(json!({
             "type": "tool_result",
             "tool_use_id": tool_use_id,
-            "content": truncate_tool_result_for_provider(content),
+            "content": anthropic_tool_result_content(content),
             "is_error": is_error,
         })),
         _ => None,
+    }
+}
+
+fn anthropic_tool_result_content(content: &ToolResultContent) -> Value {
+    let value = content.anthropic_value();
+    match value {
+        Value::String(text) => Value::String(truncate_tool_result_for_provider(&text)),
+        Value::Array(_) => {
+            let compact = serde_json::to_string(&value).unwrap_or_else(|_| value.to_string());
+            let truncated = truncate_tool_result_for_provider(&compact);
+            if truncated == compact {
+                value
+            } else {
+                Value::String(truncated)
+            }
+        }
+        // `ToolResultContent::anthropic_value` currently returns only string
+        // or array, but keep this deterministic if that evolves.
+        other => {
+            let compact = serde_json::to_string(&other).unwrap_or_else(|_| other.to_string());
+            Value::String(truncate_tool_result_for_provider(&compact))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_result_content_tests {
+    use orbcode_protocol::TranscriptJsonField;
+
+    use super::*;
+
+    #[test]
+    fn mixed_loaded_content_preserves_supported_blocks_and_member_order() {
+        let original = json!([
+            {"type": "text", "text": "first"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}},
+            {"type": "structured", "payload": {"answer": 42}},
+            {"type": "text", "text": "last"}
+        ]);
+        let content = ToolResultContent::from_loaded(TranscriptJsonField::Value(original));
+
+        let mapped = anthropic_tool_result_content(&content);
+        let items = mapped.as_array().expect("native content array");
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0], json!({"type": "text", "text": "first"}));
+        assert_eq!(items[1]["type"], "image");
+        assert_eq!(
+            serde_json::from_str::<Value>(items[2]["text"].as_str().expect("JSON text"))
+                .expect("structured member JSON"),
+            json!({"type": "structured", "payload": {"answer": 42}})
+        );
+        assert_eq!(items[3], json!({"type": "text", "text": "last"}));
+    }
+
+    #[test]
+    fn null_absent_and_object_map_to_valid_lossless_strings() {
+        let absent = ToolResultContent::from_loaded(TranscriptJsonField::Absent);
+        let null = ToolResultContent::from_loaded(TranscriptJsonField::Null);
+        let object = ToolResultContent::from_loaded(TranscriptJsonField::Value(json!({
+            "answer": 42,
+            "nested": [true, null]
+        })));
+
+        assert_eq!(anthropic_tool_result_content(&absent), "");
+        assert_eq!(anthropic_tool_result_content(&null), "");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                anthropic_tool_result_content(&object)
+                    .as_str()
+                    .expect("object JSON")
+            )
+            .expect("parse object projection"),
+            json!({"answer": 42, "nested": [true, null]})
+        );
     }
 }

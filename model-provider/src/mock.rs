@@ -440,7 +440,7 @@ fn last_tool_result_content(request: &ProviderRequest) -> Option<String> {
         .rev()
         .flat_map(|message| message.blocks.iter().rev())
         .find_map(|block| match block {
-            TranscriptBlock::ToolResult { content, .. } => Some(content.clone()),
+            TranscriptBlock::ToolResult { content, .. } => Some(content.to_string()),
             _ => None,
         })
 }

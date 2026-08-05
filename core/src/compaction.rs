@@ -586,7 +586,7 @@ pub(crate) fn microcompact_tool_results(
             {
                 continue;
             }
-            *content = MICROCOMPACT_TOOL_RESULT_PLACEHOLDER.to_string();
+            content.replace_text(MICROCOMPACT_TOOL_RESULT_PLACEHOLDER);
             *metadata = None;
             cleared += 1;
             changed = true;
@@ -773,7 +773,7 @@ mod tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: tool_use_id.to_string(),
-                content: content.to_string(),
+                content: content.into(),
                 is_error: false,
                 metadata: Some("{\"status\":\"completed\"}".to_string()),
             }],
@@ -869,6 +869,50 @@ mod tests {
             messages[2].blocks.as_slice(),
             [TranscriptBlock::ToolResult { content, .. }] if content == &big
         ));
+    }
+
+    #[test]
+    fn microcompact_invalidates_loaded_structured_tool_result_payload() {
+        let original = serde_json::json!([
+            {"type": "text", "text": "x".repeat(1_000)},
+            {"type": "image", "source": {"data": "AA=="}}
+        ]);
+        let mut messages = vec![
+            TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-loaded".to_string(),
+                    content: orbcode_protocol::ToolResultContent::from_loaded(
+                        orbcode_protocol::TranscriptJsonField::Value(original),
+                    ),
+                    is_error: false,
+                    metadata: Some("{\"status\":\"completed\"}".to_string()),
+                }],
+            ),
+            TranscriptMessage::new(MessageRole::User, "current prompt"),
+        ];
+
+        assert_eq!(
+            microcompact_tool_results(&mut messages, 1, MICROCOMPACT_MIN_RESULT_CHARS),
+            1
+        );
+        let [
+            TranscriptBlock::ToolResult {
+                content, metadata, ..
+            },
+        ] = messages[0].blocks.as_slice()
+        else {
+            panic!("expected one tool result");
+        };
+        assert_eq!(content, MICROCOMPACT_TOOL_RESULT_PLACEHOLDER);
+        assert!(content.loaded_field().is_none());
+        assert_eq!(
+            content.transcript_field(),
+            orbcode_protocol::TranscriptJsonField::Value(serde_json::Value::String(
+                MICROCOMPACT_TOOL_RESULT_PLACEHOLDER.to_string()
+            ))
+        );
+        assert!(metadata.is_none());
     }
 
     #[test]

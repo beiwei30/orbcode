@@ -16,7 +16,7 @@ fn collapsed_activity_group_summarizes_search_and_read_sequences() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-search".to_string(),
-                content: "src/main.tsx".to_string(),
+                content: "src/main.tsx".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -34,7 +34,7 @@ fn collapsed_activity_group_summarizes_search_and_read_sequences() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-read".to_string(),
-                content: "{\n  \"name\": \"sample-repo\"\n}".to_string(),
+                content: "{\n  \"name\": \"sample-repo\"\n}".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -95,20 +95,21 @@ fn collapsed_activity_group_distinguishes_failed_reads_in_summary() {
             vec![
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-read-ok".to_string(),
-                    content: "{\n  \"name\": \"sample-repo\"\n}".to_string(),
+                    content: "{\n  \"name\": \"sample-repo\"\n}".to_string().into(),
                     is_error: false,
                     metadata: None,
                 },
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-read-failed".to_string(),
                     content: "File content (50513 tokens) exceeds maximum allowed tokens (25000)."
-                        .to_string(),
+                        .to_string()
+                        .into(),
                     is_error: true,
                     metadata: None,
                 },
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-list".to_string(),
-                    content: "main.tsx".to_string(),
+                    content: "main.tsx".to_string().into(),
                     is_error: false,
                     metadata: None,
                 },
@@ -316,7 +317,7 @@ fn tool_result_user_messages_render_as_results_not_prompts() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "tool-1".to_string(),
-            content: "completed".to_string(),
+            content: "completed".to_string().into(),
             is_error: false,
             metadata: None,
         }],
@@ -384,7 +385,7 @@ fn mixed_assistant_text_and_tool_use_preserves_text_and_result_card() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: String::new(),
+                content: String::new().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -424,7 +425,7 @@ fn assistant_text_after_tool_use_does_not_orphan_result_card() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: String::new(),
+                content: String::new().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -466,7 +467,7 @@ fn assistant_text_after_collapsible_tool_use_does_not_orphan_activity_group() {
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-search".to_string(),
                     content: "4594:    impl ToolProgressReporter for RecordingProgressReporter {"
-                        .to_string(),
+                        .to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -505,7 +506,7 @@ fn mixed_user_text_and_tool_result_preserves_text_and_result_card() {
                 },
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: String::new(),
+                    content: String::new().into(),
                     is_error: false,
                     metadata: None,
                 },
@@ -549,7 +550,7 @@ fn committed_transcript_suppresses_orphan_scalar_tool_results_after_handled_tool
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-list".to_string(),
-                content: "55".to_string(),
+                content: "55".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -636,25 +637,25 @@ fn grouped_failed_reads_do_not_reappear_after_later_permission_queue() {
         vec![
             TranscriptBlock::ToolResult {
                 tool_use_id: "read-core".to_string(),
-                content: "mod core;".to_string(),
+                content: "mod core;".to_string().into(),
                 is_error: false,
                 metadata: None,
             },
             TranscriptBlock::ToolResult {
                 tool_use_id: "read-tools".to_string(),
-                content: "tool execution failed: too many tokens".to_string(),
+                content: "tool execution failed: too many tokens".to_string().into(),
                 is_error: true,
                 metadata: None,
             },
             TranscriptBlock::ToolResult {
                 tool_use_id: "read-tui".to_string(),
-                content: "tool execution failed: file too large".to_string(),
+                content: "tool execution failed: file too large".to_string().into(),
                 is_error: true,
                 metadata: None,
             },
             TranscriptBlock::ToolResult {
                 tool_use_id: "read-mcp".to_string(),
-                content: "mod mcp;".to_string(),
+                content: "mod mcp;".to_string().into(),
                 is_error: false,
                 metadata: None,
             },
@@ -729,7 +730,9 @@ fn committed_failed_live_activity_does_not_render_after_later_thinking() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "read-missing".to_string(),
-            content: "io error: No such file or directory (os error 2)".to_string(),
+            content: "io error: No such file or directory (os error 2)"
+                .to_string()
+                .into(),
             is_error: true,
             metadata: None,
         }],
@@ -961,7 +964,7 @@ fn completed_tool_history_cell_can_rerender_collapsed_and_expanded_from_structur
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "completed output".to_string(),
+                    content: "completed output".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -1033,7 +1036,7 @@ fn activity_group_matches_results_across_post_tool_hook_context() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-find".to_string(),
-                content: "src/main.rs".to_string(),
+                content: "src/main.rs".to_string().into(),
                 is_error: false,
                 metadata: Some(r#"{"summary":"Executed `rg TODO src`."}"#.to_string()),
             }],
@@ -1043,7 +1046,7 @@ fn activity_group_matches_results_across_post_tool_hook_context() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-list".to_string(),
-                content: "total 8\n-rw-r--r-- Cargo.toml".to_string(),
+                content: "total 8\n-rw-r--r-- Cargo.toml".to_string().into(),
                 is_error: false,
                 metadata: Some(r#"{"summary":"Executed `ls -la`."}"#.to_string()),
             }],
@@ -1095,7 +1098,7 @@ fn activity_group_matches_result_after_unrelated_tool_results() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-rust-lines".to_string(),
-                    content: "  88991 total".to_string(),
+                    content: "  88991 total".to_string().into(),
                     is_error: false,
                     metadata: Some(
                         r#"{"summary":"Executed `find orbcode -name \"*.rs\" -type f | xargs wc -l | tail -1`."}"#
@@ -1107,7 +1110,7 @@ fn activity_group_matches_result_after_unrelated_tool_results() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-ts-lines".to_string(),
-                    content: "  524312 total".to_string(),
+                    content: "  524312 total".to_string().into(),
                     is_error: false,
                     metadata: Some(
                         r#"{"summary":"Executed `find src -name \"*.ts*\" -type f | xargs wc -l | tail -1`."}"#
@@ -1120,7 +1123,7 @@ fn activity_group_matches_result_after_unrelated_tool_results() {
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-list".to_string(),
                     content: "total 4\ndrwxr-xr-x 58 user staff 1856 May 17 12:17 ."
-                        .to_string(),
+                        .to_string().into(),
                     is_error: false,
                     metadata: Some(
                         r#"{"summary":"Executed `ls -la src/tools/ | head -30`."}"#
@@ -1168,7 +1171,7 @@ fn activity_group_matches_result_after_unrelated_tool_use() {
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-search".to_string(),
                     content: "4594:    impl ToolProgressReporter for RecordingProgressReporter {"
-                        .to_string(),
+                        .to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -1177,7 +1180,7 @@ fn activity_group_matches_result_after_unrelated_tool_use() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-lines".to_string(),
-                    content: "  524312 total".to_string(),
+                    content: "  524312 total".to_string().into(),
                     is_error: false,
                     metadata: Some(
                         r#"{"summary":"Executed `find src -name \"*.ts\" -o -name \"*.tsx\" | xargs wc -l | tail -1`."}"#
@@ -1233,7 +1236,7 @@ fn activity_group_matches_all_results_after_unrelated_tool_use() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-large-tui".to_string(),
-                    content: "tool execution failed: File content (1699496 bytes) exceeds maximum allowed size (262144 bytes). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.".to_string(),
+                    content: "tool execution failed: File content (1699496 bytes) exceeds maximum allowed size (262144 bytes). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.".to_string().into(),
                     is_error: true,
                     metadata: None,
                 }],
@@ -1242,7 +1245,7 @@ fn activity_group_matches_all_results_after_unrelated_tool_use() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-cli".to_string(),
-                    content: "use std::io::{self, Write};\nuse anyhow::Result;".to_string(),
+                    content: "use std::io::{self, Write};\nuse anyhow::Result;".to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -1251,7 +1254,7 @@ fn activity_group_matches_all_results_after_unrelated_tool_use() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-large-tools".to_string(),
-                    content: "tool execution failed: File content (55926 tokens) exceeds maximum allowed tokens (25000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.".to_string(),
+                    content: "tool execution failed: File content (55926 tokens) exceeds maximum allowed tokens (25000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.".to_string().into(),
                     is_error: true,
                     metadata: None,
                 }],
@@ -1260,7 +1263,7 @@ fn activity_group_matches_all_results_after_unrelated_tool_use() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "count-ts".to_string(),
-                    content: "2799".to_string(),
+                    content: "2799".to_string().into(),
                     is_error: false,
                     metadata: Some(
                         r#"{"summary":"Executed `find src -name \"*.ts*\" -type f | wc -l`."}"#

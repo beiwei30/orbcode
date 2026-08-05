@@ -578,7 +578,7 @@ async fn microcompact_clears_old_tool_results_before_provider_request() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: big_result.clone(),
+                    content: big_result.clone().into(),
                     is_error: false,
                     metadata: None,
                 }],

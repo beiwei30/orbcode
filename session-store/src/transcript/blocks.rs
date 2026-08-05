@@ -3,8 +3,9 @@ use std::fmt::Write as _;
 
 use chrono::Utc;
 use orbcode_protocol::{
-    MessageCostAttribution, MessageRole, ProviderId, TranscriptBlock, TranscriptMessage,
-    blocks_have_renderable_content, visible_content_from_blocks,
+    MessageCostAttribution, MessageRole, ProviderId, ToolResultContent, TranscriptBlock,
+    TranscriptLineProvenance, TranscriptMessage, blocks_have_renderable_content,
+    visible_content_from_blocks,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -96,7 +97,7 @@ pub(crate) fn transcript_message_from_record(
 
     let cost_attribution = record
         .provider
-        .as_deref()
+        .as_str()
         .and_then(ProviderId::parse)
         .zip(
             record
@@ -136,6 +137,11 @@ pub(crate) fn transcript_message_from_record(
         created_at,
         is_synthetic: false,
         cost_attribution,
+        transcript_provenance: Some(TranscriptLineProvenance {
+            prompt_id: record.prompt_id.clone(),
+            git_branch: record.git_branch.clone(),
+            provider: record.provider.clone(),
+        }),
     })
 }
 
@@ -190,7 +196,7 @@ fn block_from_raw(block: RawContentBlock) -> Option<TranscriptBlock> {
             tool_use_id: tool_result
                 .tool_use_id
                 .unwrap_or_else(|| "tool-result".to_string()),
-            content: extract_tool_result_content(tool_result.content.as_ref()),
+            content: ToolResultContent::from_loaded(tool_result.content),
             is_error: tool_result.is_error.unwrap_or(false),
             metadata: None,
         }),
@@ -214,34 +220,6 @@ pub(crate) fn serialize_block_payload(value: Option<&Value>) -> String {
     serde_json::to_string_pretty(value)
         .or_else(|_| serde_json::to_string(value))
         .unwrap_or_default()
-}
-
-fn extract_tool_result_content(value: Option<&Value>) -> String {
-    let Some(value) = value else {
-        return String::new();
-    };
-
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|item| {
-                item.get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| {
-                        item.get("content")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .or_else(|| item.as_str().map(str::to_string))
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => serde_json::to_string_pretty(value)
-            .or_else(|_| serde_json::to_string(value))
-            .unwrap_or_default(),
-    }
 }
 
 fn attach_tool_result_metadata(record: &TranscriptRecord, blocks: &mut [TranscriptBlock]) {

@@ -1017,7 +1017,7 @@ fn completed_tool_followed_by_next_cell_no_large_gap() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -1196,7 +1196,7 @@ fn completed_tool_then_next_active_has_no_chrome_interleave() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -1475,7 +1475,7 @@ fn tool_streaming_then_completed_card_has_no_chrome_interleave() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -3074,7 +3074,8 @@ fn multi_tool_streaming_scrollback_never_contains_viewport_chrome() {
         let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
         result_msg.blocks.push(TranscriptBlock::ToolResult {
             tool_use_id: format!("tool-{round}"),
-            content: format!("output line 1 from round {round}\noutput line 2\noutput line 3"),
+            content: format!("output line 1 from round {round}\noutput line 2\noutput line 3")
+                .into(),
             is_error: false,
             metadata: None,
         });

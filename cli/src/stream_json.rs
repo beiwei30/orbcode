@@ -787,7 +787,7 @@ fn blocks_to_content(blocks: &[TranscriptBlock], role: MessageRole) -> Vec<Value
                         "tool_use_id".to_string(),
                         Value::String(tool_use_id.clone()),
                     );
-                    map.insert("content".to_string(), Value::String(content.clone()));
+                    map.insert("content".to_string(), Value::String(content.to_string()));
                     map.insert("is_error".to_string(), Value::Bool(*is_error));
                     Some(Value::Object(map))
                 }
@@ -866,7 +866,7 @@ mod tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: tool_use_id.to_string(),
-                content: content.to_string(),
+                content: content.into(),
                 is_error,
                 metadata: None,
             }],

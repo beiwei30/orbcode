@@ -361,7 +361,7 @@ fn completed_tool_rounds(
                         last = Some((
                             tool_use.clone(),
                             ToolResultSnapshot {
-                                content: content.clone(),
+                                content: content.to_string(),
                                 is_error: *is_error,
                             },
                         ));

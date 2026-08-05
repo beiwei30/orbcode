@@ -228,7 +228,8 @@ fn extract_embedded_message_blocks(value: Option<&Value>) -> Vec<TranscriptBlock
                             .unwrap_or(false);
                         blocks.push(TranscriptBlock::ToolResult {
                             tool_use_id,
-                            content: extract_embedded_tool_result_content(item.get("content")),
+                            content: extract_embedded_tool_result_content(item.get("content"))
+                                .into(),
                             is_error,
                             metadata: None,
                         });

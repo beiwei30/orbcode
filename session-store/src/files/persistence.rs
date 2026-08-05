@@ -187,7 +187,8 @@ impl TranscriptFileStore {
         message: &TranscriptMessage,
         parent_uuid: Option<&str>,
     ) -> Result<(), SessionStoreError> {
-        self.append_entries(
+        let decorate_with_hints = message.transcript_provenance.is_none();
+        self.append_entries_with_hint_policy(
             session_id,
             transcript_entries(
                 &self.cwd_for(session_id),
@@ -196,6 +197,7 @@ impl TranscriptFileStore {
                 message,
                 parent_uuid,
             ),
+            decorate_with_hints,
         )
         .await
     }
@@ -256,7 +258,9 @@ impl TranscriptFileStore {
                 message,
                 parent_uuid.as_deref(),
             ) {
-                Self::decorate_entry_with_hints(&mut entry, &hints);
+                if message.transcript_provenance.is_none() {
+                    Self::decorate_entry_with_hints(&mut entry, &hints);
+                }
                 lines.push(serde_json::to_string(&entry)?);
             }
             parent_uuid = Some(message.id.clone());
@@ -301,12 +305,24 @@ impl TranscriptFileStore {
     pub(crate) async fn append_entries(
         &self,
         session_id: &str,
+        entries: Vec<Value>,
+    ) -> Result<(), SessionStoreError> {
+        self.append_entries_with_hint_policy(session_id, entries, true)
+            .await
+    }
+
+    async fn append_entries_with_hint_policy(
+        &self,
+        session_id: &str,
         mut entries: Vec<Value>,
+        decorate_with_hints: bool,
     ) -> Result<(), SessionStoreError> {
         let hints = self.hints_for(session_id).await;
         let mut payload = String::new();
         for entry in entries.iter_mut() {
-            Self::decorate_entry_with_hints(entry, &hints);
+            if decorate_with_hints {
+                Self::decorate_entry_with_hints(entry, &hints);
+            }
             payload.push_str(&serde_json::to_string(&entry)?);
             payload.push('\n');
         }

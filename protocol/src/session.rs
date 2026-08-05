@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::provider::{EffortLevel, ProviderId};
@@ -18,6 +19,246 @@ pub enum MessageRole {
     System,
     User,
     Assistant,
+}
+
+/// Presence-aware JSON field state retained by the transcript codec.
+///
+/// Transcript rewrites need to distinguish a missing key from an explicit
+/// `null`; both are semantically different from a present value. This type is
+/// deliberately used only by codec-private provenance and owned tool-result
+/// content, never as part of the public message wire shape.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum TranscriptJsonField {
+    #[default]
+    Absent,
+    Null,
+    Value(Value),
+}
+
+impl TranscriptJsonField {
+    pub fn from_present_value(value: Value) -> Self {
+        if value.is_null() {
+            Self::Null
+        } else {
+            Self::Value(value)
+        }
+    }
+
+    pub fn as_value(&self) -> Option<&Value> {
+        match self {
+            Self::Absent => None,
+            Self::Null => Some(&Value::Null),
+            Self::Value(value) => Some(value),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Value(Value::String(value)) => Some(value),
+            Self::Absent | Self::Null | Self::Value(_) => None,
+        }
+    }
+}
+
+/// Original presence/value state for the narrow set of transcript line fields
+/// whose fidelity must survive a full rewrite.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TranscriptLineProvenance {
+    pub prompt_id: TranscriptJsonField,
+    pub git_branch: TranscriptJsonField,
+    pub provider: TranscriptJsonField,
+}
+
+/// Owned tool-result content with one authoritative mutation path.
+///
+/// Public serde remains a string for compatibility. When content came from a
+/// transcript, `loaded` retains the original absent/null/value state for disk
+/// persistence and provider-specific reconstruction. Replacing the visible
+/// text intentionally clears that loaded representation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolResultContent {
+    text: String,
+    loaded: Option<TranscriptJsonField>,
+}
+
+impl ToolResultContent {
+    pub fn new_text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            loaded: None,
+        }
+    }
+
+    pub fn from_loaded(field: TranscriptJsonField) -> Self {
+        let text = tool_result_text_projection(&field);
+        Self {
+            text,
+            loaded: Some(field),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    pub fn loaded_field(&self) -> Option<&TranscriptJsonField> {
+        self.loaded.as_ref()
+    }
+
+    /// Field state to write into an on-disk `tool_result` block.
+    pub fn transcript_field(&self) -> TranscriptJsonField {
+        self.loaded
+            .clone()
+            .unwrap_or_else(|| TranscriptJsonField::Value(Value::String(self.text.clone())))
+    }
+
+    /// Complete deterministic string representation for providers whose tool
+    /// output field only accepts strings.
+    pub fn provider_string(&self) -> String {
+        match self.loaded.as_ref() {
+            Some(TranscriptJsonField::Value(Value::String(value))) => value.clone(),
+            Some(TranscriptJsonField::Value(value)) => compact_json(value),
+            Some(TranscriptJsonField::Absent | TranscriptJsonField::Null) => String::new(),
+            None => self.text.clone(),
+        }
+    }
+
+    /// Native Anthropic representation. Supported content blocks remain native
+    /// and in order; unsupported array members are losslessly represented as
+    /// text blocks at the same position.
+    pub fn anthropic_value(&self) -> Value {
+        match self.loaded.as_ref() {
+            Some(TranscriptJsonField::Value(Value::String(value))) => Value::String(value.clone()),
+            Some(TranscriptJsonField::Value(Value::Array(items))) => {
+                Value::Array(items.iter().map(anthropic_tool_result_member).collect())
+            }
+            Some(TranscriptJsonField::Value(value)) => Value::String(compact_json(value)),
+            Some(TranscriptJsonField::Absent | TranscriptJsonField::Null) => {
+                Value::String(String::new())
+            }
+            None => Value::String(self.text.clone()),
+        }
+    }
+
+    pub fn replace_text(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+        self.loaded = None;
+    }
+}
+
+impl Default for ToolResultContent {
+    fn default() -> Self {
+        Self::new_text(String::new())
+    }
+}
+
+impl From<String> for ToolResultContent {
+    fn from(value: String) -> Self {
+        Self::new_text(value)
+    }
+}
+
+impl From<&str> for ToolResultContent {
+    fn from(value: &str) -> Self {
+        Self::new_text(value)
+    }
+}
+
+impl std::ops::Deref for ToolResultContent {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for ToolResultContent {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for ToolResultContent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for ToolResultContent {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for ToolResultContent {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for ToolResultContent {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl Serialize for ToolResultContent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolResultContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::new_text)
+    }
+}
+
+fn tool_result_text_projection(field: &TranscriptJsonField) -> String {
+    match field {
+        TranscriptJsonField::Absent | TranscriptJsonField::Null => String::new(),
+        TranscriptJsonField::Value(Value::String(text)) => text.clone(),
+        TranscriptJsonField::Value(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("content").and_then(Value::as_str))
+                    .or_else(|| item.as_str())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        TranscriptJsonField::Value(value) => serde_json::to_string_pretty(value)
+            .or_else(|_| serde_json::to_string(value))
+            .unwrap_or_default(),
+    }
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn anthropic_tool_result_member(value: &Value) -> Value {
+    let supported = value.as_object().is_some_and(|object| {
+        matches!(
+            object.get("type").and_then(Value::as_str),
+            Some("text" | "image" | "document" | "search_result")
+        )
+    });
+    if supported {
+        value.clone()
+    } else if let Value::String(text) = value {
+        serde_json::json!({ "type": "text", "text": text })
+    } else {
+        serde_json::json!({ "type": "text", "text": compact_json(value) })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,7 +280,7 @@ pub enum TranscriptBlock {
     },
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: ToolResultContent,
         is_error: bool,
         #[serde(default)]
         metadata: Option<String>,
@@ -64,6 +305,10 @@ pub struct TranscriptMessage {
     /// omitted from app-server and stream-json message payloads.
     #[serde(skip)]
     pub cost_attribution: Option<MessageCostAttribution>,
+    /// Original transcript-line field states. Omitted from every public wire
+    /// representation; `None` identifies a newly created message.
+    #[serde(skip)]
+    pub transcript_provenance: Option<TranscriptLineProvenance>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +351,7 @@ impl TranscriptMessage {
             created_at: Utc::now(),
             is_synthetic: false,
             cost_attribution: None,
+            transcript_provenance: None,
         }
     }
 
@@ -561,6 +807,79 @@ fn truncate_title(input: &str) -> String {
 mod tests {
     use super::*;
     use crate::usage::TokenUsage;
+    use serde_json::json;
+
+    #[test]
+    fn tool_result_content_keeps_public_string_wire_shape() {
+        let content = ToolResultContent::from_loaded(TranscriptJsonField::Value(json!([
+            {"type": "text", "text": "visible"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+        ])));
+        let block = TranscriptBlock::ToolResult {
+            tool_use_id: "tool-1".to_string(),
+            content,
+            is_error: false,
+            metadata: None,
+        };
+
+        let serialized = serde_json::to_value(&block).expect("serialize block");
+        assert_eq!(serialized["content"], "visible");
+        let decoded: TranscriptBlock =
+            serde_json::from_value(serialized).expect("deserialize block");
+        let TranscriptBlock::ToolResult { content, .. } = decoded else {
+            panic!("expected tool result");
+        };
+        assert_eq!(content, "visible");
+        assert!(content.loaded_field().is_none());
+    }
+
+    #[test]
+    fn loaded_tool_result_preserves_shape_and_invalidates_on_mutation() {
+        let original = json!([
+            {"type": "text", "text": "first"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}},
+            {"type": "structured", "payload": {"answer": 42}},
+            {"type": "text", "text": "last"}
+        ]);
+        let mut content =
+            ToolResultContent::from_loaded(TranscriptJsonField::Value(original.clone()));
+
+        assert_eq!(content.as_str(), "first\nlast");
+        assert_eq!(
+            content.transcript_field(),
+            TranscriptJsonField::Value(original.clone())
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&content.provider_string()).expect("provider JSON"),
+            original
+        );
+        assert_eq!(content.clone(), content);
+
+        content.replace_text("compacted");
+        assert_eq!(content.as_str(), "compacted");
+        assert_eq!(
+            content.transcript_field(),
+            TranscriptJsonField::Value(Value::String("compacted".to_string()))
+        );
+        assert!(content.loaded_field().is_none());
+    }
+
+    #[test]
+    fn loaded_tool_result_distinguishes_absent_null_and_value() {
+        let absent = ToolResultContent::from_loaded(TranscriptJsonField::Absent);
+        let null = ToolResultContent::from_loaded(TranscriptJsonField::Null);
+        let object = ToolResultContent::from_loaded(TranscriptJsonField::Value(json!({"x": 1})));
+
+        assert_eq!(absent.transcript_field(), TranscriptJsonField::Absent);
+        assert_eq!(null.transcript_field(), TranscriptJsonField::Null);
+        assert_eq!(
+            object.transcript_field(),
+            TranscriptJsonField::Value(json!({"x": 1}))
+        );
+        assert_eq!(absent.provider_string(), "");
+        assert_eq!(null.provider_string(), "");
+        assert_eq!(object.provider_string(), r#"{"x":1}"#);
+    }
 
     #[test]
     fn transcript_message_content_omits_thinking_blocks() {

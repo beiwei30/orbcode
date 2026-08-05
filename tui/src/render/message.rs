@@ -232,7 +232,7 @@ fn parse_legacy_flattened_tool_result(content: &str) -> Option<TranscriptBlock> 
 
     Some(TranscriptBlock::ToolResult {
         tool_use_id: tool_use_id.to_string(),
-        content: tail.trim_start_matches('\n').to_string(),
+        content: tail.trim_start_matches('\n').to_string().into(),
         is_error,
         metadata: None,
     })

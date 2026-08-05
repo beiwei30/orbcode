@@ -311,7 +311,7 @@ fn compact_restored_file_detail_lines_include_recent_read_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-1".to_string(),
-                content: "one\ntwo\nthree\n".to_string(),
+                content: "one\ntwo\nthree\n".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],

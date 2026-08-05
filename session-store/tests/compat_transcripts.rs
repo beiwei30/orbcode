@@ -14,12 +14,14 @@ use orbcode_model_provider::{
     ProviderRequest, ProviderRequestOptions, build_anthropic_request_body,
 };
 use orbcode_protocol::{
-    EffortLevel, MessageRole, PermissionRequest, SessionRecord, TranscriptBlock, TurnContext,
+    EffortLevel, MessageRole, PermissionRequest, ProviderId, SessionRecord, TranscriptBlock,
+    TranscriptJsonField, TurnContext,
 };
 use orbcode_session_store::{
-    PERSISTED_OUTPUT_CLOSING_TAG, PERSISTED_OUTPUT_TAG, decode_session_transcript_with_outcome,
+    PERSISTED_OUTPUT_CLOSING_TAG, PERSISTED_OUTPUT_TAG, SessionStore, SessionWriteHints,
+    decode_session_transcript_with_outcome,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,6 +152,43 @@ fn normalized(value: &Value) -> String {
     normalize_line(&serde_json::to_string(value).expect("serialize value"))
 }
 
+fn byte_fidelity_projection(contents: &str) -> std::collections::BTreeMap<String, Value> {
+    let mut projection = std::collections::BTreeMap::new();
+    for value in contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    {
+        let Some(uuid) = value.get("uuid").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut fields = serde_json::Map::new();
+        for key in ["promptId", "gitBranch", "provider"] {
+            if let Some(field) = value.get(key) {
+                fields.insert(key.to_string(), field.clone());
+            }
+        }
+        if let Some(tool_result) = value
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .and_then(|blocks| {
+                blocks
+                    .iter()
+                    .find(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+            })
+        {
+            fields.insert(
+                "toolResultContent".to_string(),
+                json!({
+                    "present": tool_result.get("content").is_some(),
+                    "value": tool_result.get("content").cloned().unwrap_or(Value::Null),
+                }),
+            );
+        }
+        projection.insert(uuid.to_string(), Value::Object(fields));
+    }
+    projection
+}
+
 fn first_tool_use(session: &SessionRecord) -> Option<(&str, &str, &str)> {
     session
         .messages
@@ -194,6 +233,179 @@ fn assert_tool_use_results_are_paired(session: &SessionRecord) {
     assert_eq!(
         use_count, result_count,
         "tool_use/tool_result count mismatch"
+    );
+}
+
+#[tokio::test]
+async fn compat_byte_fidelity_load_rewrite_is_idempotent_and_source_aware() {
+    let fixture = load_named(FixtureCategory::Transcripts, "byte_fidelity_schema")
+        .expect("byte-fidelity fixture present");
+    let original_projection = byte_fidelity_projection(&fixture.contents);
+    let temp = tempfile::tempdir().expect("temp transcript directory");
+    let session_id = "byte-fidelity-schema";
+    let transcript_path = temp.path().join(format!("{session_id}.jsonl"));
+    tokio::fs::write(&transcript_path, &fixture.contents)
+        .await
+        .expect("copy fixture transcript");
+    let store = SessionStore::new(
+        temp.path().to_path_buf(),
+        std::path::PathBuf::from("/current/project"),
+        "claude-current-model".to_string(),
+    );
+    store
+        .record_session_hints(
+            session_id,
+            SessionWriteHints {
+                git_branch: Some("current-process-branch".to_string()),
+                provider: Some(ProviderId::OpenAi),
+            },
+        )
+        .await;
+
+    let mut session = store.load_session(session_id).await.expect("load fixture");
+    assert_eq!(
+        session.messages[0]
+            .transcript_provenance
+            .as_ref()
+            .expect("loaded provenance")
+            .prompt_id,
+        TranscriptJsonField::Value(Value::String(
+            "ts-prompt-not-derived-from-message-uuid".to_string()
+        ))
+    );
+    assert_eq!(
+        session.messages[1]
+            .transcript_provenance
+            .as_ref()
+            .expect("loaded provenance")
+            .git_branch,
+        TranscriptJsonField::Null
+    );
+    assert_eq!(
+        session.messages[1]
+            .transcript_provenance
+            .as_ref()
+            .expect("loaded provenance")
+            .provider,
+        TranscriptJsonField::Value(Value::String("future-provider-v9".to_string()))
+    );
+    assert_eq!(
+        session.messages[2]
+            .transcript_provenance
+            .as_ref()
+            .expect("loaded provenance")
+            .prompt_id,
+        TranscriptJsonField::Null
+    );
+    assert_eq!(
+        session.messages[4]
+            .transcript_provenance
+            .as_ref()
+            .expect("loaded provenance")
+            .prompt_id,
+        TranscriptJsonField::Absent
+    );
+
+    let structured_content = session.messages[2]
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            TranscriptBlock::ToolResult { content, .. } => Some(content),
+            _ => None,
+        })
+        .expect("structured tool result");
+    assert_eq!(structured_content.as_str(), "first text\nlast text");
+    assert!(matches!(
+        structured_content.loaded_field(),
+        Some(TranscriptJsonField::Value(Value::Array(items))) if items.len() == 4
+    ));
+
+    let new_message = orbcode_protocol::TranscriptMessage::new(MessageRole::User, "new turn");
+    let new_message_id = new_message.id.clone();
+    session.push_message(new_message);
+    store
+        .persist_full_session(&session)
+        .await
+        .expect("first full rewrite");
+    let first_rewrite = tokio::fs::read_to_string(&transcript_path)
+        .await
+        .expect("read first rewrite");
+    let first_projection = byte_fidelity_projection(&first_rewrite);
+
+    for (uuid, expected) in &original_projection {
+        assert_eq!(
+            first_projection.get(uuid),
+            Some(expected),
+            "loaded record {uuid} changed targeted field state/value"
+        );
+    }
+    let new_fields = first_projection
+        .get(&new_message_id)
+        .expect("new message projection");
+    assert_eq!(new_fields["gitBranch"], "current-process-branch");
+    assert_eq!(new_fields["provider"], "openai");
+    assert!(new_fields.get("promptId").and_then(Value::as_str).is_some());
+
+    let reloaded = store
+        .load_session(session_id)
+        .await
+        .expect("reload first rewrite");
+    store
+        .persist_full_session(&reloaded)
+        .await
+        .expect("second full rewrite");
+    let second_rewrite = tokio::fs::read_to_string(&transcript_path)
+        .await
+        .expect("read second rewrite");
+    assert_eq!(
+        byte_fidelity_projection(&first_rewrite),
+        byte_fidelity_projection(&second_rewrite),
+        "target field projection must be idempotent after load/rewrite"
+    );
+}
+
+#[test]
+fn compat_byte_fidelity_provider_request_keeps_all_tool_result_members() {
+    let session = decode_transcript_fixture("byte_fidelity_schema");
+    let request_messages = anthropic_messages_for(&session);
+    let tool_result_content = request_messages
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .flat_map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        .and_then(|block| block.get("content"))
+        .and_then(Value::as_array)
+        .expect("native Anthropic tool-result content array");
+
+    assert_eq!(tool_result_content.len(), 4);
+    assert_eq!(
+        tool_result_content[0],
+        json!({"type": "text", "text": "first text"})
+    );
+    assert_eq!(tool_result_content[1]["type"], "image");
+    assert_eq!(
+        tool_result_content[1]["source"]["data"],
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            tool_result_content[2]["text"]
+                .as_str()
+                .expect("structured JSON text")
+        )
+        .expect("parse structured member"),
+        json!({"type": "structured", "payload": {"answer": 42, "flags": [true, null]}})
+    );
+    assert_eq!(
+        tool_result_content[3],
+        json!({"type": "text", "text": "last text"})
     );
 }
 

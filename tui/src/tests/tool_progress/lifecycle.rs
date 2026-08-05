@@ -275,7 +275,7 @@ fn tool_result_message_commits_tool_result_without_history_flush() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "file list".to_string(),
+                content: "file list".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -757,7 +757,7 @@ fn live_bash_progress_burst_stays_low_noise_before_and_after_result() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-large-live".to_string(),
-                content,
+                content: content.into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -821,7 +821,7 @@ fn post_large_bash_result_waiting_state_stays_low_noise() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-large-wait".to_string(),
-                content,
+                content: content.into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -941,7 +941,7 @@ fn active_turn_multi_tool_pending_after_other_result_stays_running() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-complete".to_string(),
-                content: "  84913 total".to_string(),
+                content: "  84913 total".to_string().into(),
                 is_error: false,
                 metadata: Some(
                     r#"{"summary":"Executed `find orbcode -type f -name \"*.rs\" ! -path \"*/target/*\" | wc -l`."}"#
@@ -995,7 +995,7 @@ fn active_turn_group_pending_with_trailing_hook_context_stays_active() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "tool-complete".to_string(),
-            content: "./orbcode/Cargo.toml".to_string(),
+            content: "./orbcode/Cargo.toml".to_string().into(),
             is_error: false,
             metadata: Some(
                 r#"{"summary":"Executed `find . -type f -name \"*.rs\" | head -20`."}"#.to_string(),
@@ -1113,6 +1113,7 @@ fn legacy_flattened_tool_messages_render_without_raw_markers() {
         created_at: Utc::now(),
         is_synthetic: false,
         cost_attribution: None,
+        transcript_provenance: None,
     };
     let user = TranscriptMessage {
         id: "user-tool-result".to_string(),
@@ -1124,6 +1125,7 @@ fn legacy_flattened_tool_messages_render_without_raw_markers() {
         created_at: Utc::now(),
         is_synthetic: false,
         cost_attribution: None,
+        transcript_provenance: None,
     };
 
     let rendered = [assistant, user]

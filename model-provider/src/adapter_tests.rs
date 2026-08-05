@@ -60,7 +60,7 @@ fn large_bash_tool_result_request(base_url: String) -> ProviderRequest {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-large-bash".to_string(),
-                content: large_bash_tool_result_content(),
+                content: large_bash_tool_result_content().into(),
                 is_error: false,
                 metadata: Some(
                     json!({
@@ -102,7 +102,7 @@ async fn stub_tool_response_keeps_small_tool_result_content() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "/tmp/project".to_string(),
+                content: "/tmp/project".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -133,7 +133,7 @@ async fn stub_tool_response_truncates_large_tool_result_preview() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "line\n".repeat(12_000),
+                content: "line\n".repeat(12_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -173,7 +173,7 @@ async fn stub_tool_result_preview_keeps_tail_on_line_boundary() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content,
+                content: content.into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -634,7 +634,7 @@ fn anthropic_request_body_truncates_oversized_tool_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "a".repeat(MAX_PROVIDER_TOOL_RESULT_CHARS + 50_000),
+                content: "a".repeat(MAX_PROVIDER_TOOL_RESULT_CHARS + 50_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1024,7 +1024,7 @@ fn openai_request_body_converts_messages_tools_and_schema() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "toolu_1".to_string(),
-                content: "file.txt".to_string(),
+                content: "file.txt".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1239,7 +1239,7 @@ async fn stub_then_directive_chains_second_tool_call() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "toolu-session-1".to_string(),
-                content: "".to_string(),
+                content: "".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1279,7 +1279,7 @@ async fn stub_then_directive_ends_after_all_rounds() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "toolu-1".to_string(),
-                content: "".to_string(),
+                content: "".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1296,7 +1296,7 @@ async fn stub_then_directive_ends_after_all_rounds() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "toolu-2".to_string(),
-                content: "/tmp".to_string(),
+                content: "/tmp".into(),
                 is_error: false,
                 metadata: None,
             }],

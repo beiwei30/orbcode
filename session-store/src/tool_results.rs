@@ -184,7 +184,7 @@ impl ToolResultStore {
                     continue;
                 };
                 if let Some(replacement) = replacements.get(tool_use_id) {
-                    *content = replacement.clone();
+                    content.replace_text(replacement.clone());
                 }
             }
         }
@@ -241,7 +241,7 @@ fn collect_tool_result_budget_groups(
                         message_index,
                         block_index,
                         tool_use_id: tool_use_id.clone(),
-                        content: content.clone(),
+                        content: content.to_string(),
                         size: content.chars().count(),
                     });
                 }
@@ -336,7 +336,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{index}"),
-                    content: "x".repeat(45_000),
+                    content: "x".repeat(45_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -387,7 +387,7 @@ mod tests {
                     MessageRole::User,
                     vec![TranscriptBlock::ToolResult {
                         tool_use_id: format!("tool-a-{i}"),
-                        content: "r".repeat(10_000),
+                        content: "r".repeat(10_000).into(),
                         is_error: false,
                         metadata: None,
                     }],
@@ -411,7 +411,7 @@ mod tests {
                     MessageRole::User,
                     vec![TranscriptBlock::ToolResult {
                         tool_use_id: format!("tool-b-{i}"),
-                        content: "s".repeat(10_000),
+                        content: "s".repeat(10_000).into(),
                         is_error: false,
                         metadata: None,
                     }],
@@ -454,7 +454,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{i}"),
-                    content: "x".repeat(45_000),
+                    content: "x".repeat(45_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -548,7 +548,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{i}"),
-                    content: "z".repeat(RESULT_CHARS),
+                    content: "z".repeat(RESULT_CHARS).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -603,7 +603,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-tool".to_string(),
-                    content: "r".repeat(190_000),
+                    content: "r".repeat(190_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -612,7 +612,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-tool".to_string(),
-                    content: "b".repeat(20_000),
+                    content: "b".repeat(20_000).into(),
                     is_error: false,
                     metadata: None,
                 }],

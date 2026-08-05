@@ -201,7 +201,7 @@ pub fn apply_long_session_tool_run(state: &mut TuiState, index: usize, progress_
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id,
-                content: format!("long session tool result {index}"),
+                content: format!("long session tool result {index}").into(),
                 is_error: false,
                 metadata: None,
             }],

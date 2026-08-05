@@ -525,7 +525,10 @@ protocol	pub_use	session::SessionId
 protocol	pub_use	session::SessionRecord
 protocol	pub_use	session::SessionStatus
 protocol	pub_use	session::SessionSummary
+protocol	pub_use	session::ToolResultContent
 protocol	pub_use	session::TranscriptBlock
+protocol	pub_use	session::TranscriptJsonField
+protocol	pub_use	session::TranscriptLineProvenance
 protocol	pub_use	session::TranscriptMessage
 protocol	pub_use	session::TurnContext
 protocol	pub_use	session::WorktreeState

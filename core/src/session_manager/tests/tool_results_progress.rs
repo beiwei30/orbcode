@@ -1772,7 +1772,7 @@ async fn aggregate_tool_result_budget_replaces_largest_group_members() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: format!("tool-{index}"),
-                content: "x".repeat(45_000),
+                content: "x".repeat(45_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1831,7 +1831,7 @@ async fn aggregate_tool_result_budget_skips_read_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-tool".to_string(),
-                content: "r".repeat(190_000),
+                content: "r".repeat(190_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1840,7 +1840,7 @@ async fn aggregate_tool_result_budget_skips_read_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-tool".to_string(),
-                content: "b".repeat(20_000),
+                content: "b".repeat(20_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1912,7 +1912,7 @@ async fn provider_request_for_session_repairs_and_summarizes_tool_round_contract
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-2".to_string(),
-                    content: "src/lib.rs".to_string(),
+                    content: "src/lib.rs".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -2060,13 +2060,13 @@ async fn agent_loop_provider_request_strips_fallback_orphan_tool_results() {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-fallback-old".to_string(),
-                        content: "discarded fallback attempt".to_string(),
+                        content: "discarded fallback attempt".into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-current".to_string(),
-                        content: "current result".to_string(),
+                        content: "current result".into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -2265,7 +2265,7 @@ async fn persists_progress_messages_as_separate_transcript_entries() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "Done reading files.".to_string(),
+                    content: "Done reading files.".into(),
                     is_error: false,
                     metadata: Some(
                         json!({
