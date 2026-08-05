@@ -102,10 +102,9 @@ pub(super) async fn handle_set_mode(
 ) -> Result<()> {
     let session_id = request.session_id.to_string();
     let mode_id = request.mode_id.to_string();
-    let _session_guard = match lock_adapter_control_mutable(&state, &session_id).await {
-        Ok(guard) => guard,
-        Err(error) => return responder.respond_with_error(error),
-    };
+    if let Err(error) = ensure_adapter_control_mutable(&state.sessions, &session_id).await {
+        return responder.respond_with_error(error);
+    }
     let Some(mode) = permission_mode_from_acp(&mode_id) else {
         return responder.respond_with_error(invalid_params(format!(
             "unsupported session mode id: {mode_id}"
@@ -131,10 +130,9 @@ pub(super) async fn handle_set_config_option(
     let session_id = request.session_id.to_string();
     let config_id = request.config_id.to_string();
     let value = request.value.to_string();
-    let _session_guard = match lock_adapter_control_mutable(&state, &session_id).await {
-        Ok(guard) => guard,
-        Err(error) => return responder.respond_with_error(error),
-    };
+    if let Err(error) = ensure_adapter_control_mutable(&state.sessions, &session_id).await {
+        return responder.respond_with_error(error);
+    }
     let result = match config_id.as_str() {
         MODEL_CONFIG_ID => {
             let model = (value != DEFAULT_CONFIG_VALUE).then_some(value);
@@ -172,14 +170,11 @@ pub(super) async fn handle_set_config_option(
     }
 }
 
-async fn lock_adapter_control_mutable<'a>(
-    state: &'a AcpSdkState,
+async fn ensure_adapter_control_mutable(
+    sessions: &tokio::sync::Mutex<std::collections::HashMap<String, super::AcpSessionState>>,
     session_id: &str,
-) -> std::result::Result<
-    tokio::sync::MutexGuard<'a, std::collections::HashMap<String, super::AcpSessionState>>,
-    agent_client_protocol::Error,
-> {
-    let sessions = state.sessions.lock().await;
+) -> std::result::Result<(), agent_client_protocol::Error> {
+    let sessions = sessions.lock().await;
     let Some(session) = sessions.get(session_id) else {
         return Err(invalid_params(format!(
             "unknown ACP session_id: {session_id}"
@@ -190,7 +185,7 @@ async fn lock_adapter_control_mutable<'a>(
             "session {session_id} has an active prompt; change controls after it completes or is cancelled"
         )));
     }
-    Ok(sessions)
+    Ok(())
 }
 
 fn acp_mode_id(mode: PermissionMode) -> &'static str {
@@ -250,7 +245,10 @@ fn control_error(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use orbcode_app_server_protocol::{PermissionMode, SessionModelOption};
+    use tokio::sync::Mutex;
 
     use super::*;
 
@@ -299,5 +297,21 @@ mod tests {
         assert_eq!(options[1]["id"], THOUGHT_LEVEL_CONFIG_ID);
         assert_eq!(options[1]["currentValue"], "high");
         assert_eq!(options[1]["category"], "thought_level");
+    }
+
+    #[tokio::test]
+    async fn mutable_control_check_releases_sessions_lock_before_returning() {
+        let sessions = Mutex::new(HashMap::from([(
+            "session".to_string(),
+            super::super::AcpSessionState::default(),
+        )]));
+
+        ensure_adapter_control_mutable(&sessions, "session")
+            .await
+            .expect("session controls are mutable");
+
+        let _sessions = sessions
+            .try_lock()
+            .expect("mutable check must release the sessions lock before AppClient awaits");
     }
 }
