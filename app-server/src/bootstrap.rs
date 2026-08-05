@@ -53,6 +53,7 @@ impl AppServer {
             }
             Err(error) => return Err(error),
         };
+        self.set_active_session_id(&session.session_id);
         self.bootstrap_state(session, bootstrap_event, true).await
     }
 
@@ -79,6 +80,7 @@ impl AppServer {
                 params.session_mcp_servers,
             )
             .await?;
+        self.set_active_session_id(&session.session_id);
         self.bootstrap_state(session, bootstrap_event, false).await
     }
 
@@ -105,6 +107,7 @@ impl AppServer {
                 params.session_mcp_servers,
             )
             .await?;
+        self.set_active_session_id(&session.session_id);
         self.bootstrap_state(session, bootstrap_event, false).await
     }
 

@@ -43,6 +43,11 @@ pub struct ProviderRequest {
 /// endpoint) are explicitly skipped rather than silently sent.
 #[derive(Clone, Debug, Default)]
 pub struct ProviderRequestOptions {
+    /// Per-session Anthropic extended-thinking budget. When set it takes
+    /// precedence over the effort-derived budget for this request. Providers
+    /// without a numeric thinking-budget contract ignore it; validation lives
+    /// at the app-server control boundary.
+    pub max_thinking_tokens: Option<u32>,
     /// Caps the assistant turn's output tokens. Maps to `max_tokens` on both
     /// Anthropic and OpenAI request bodies. When `None`, the provider uses
     /// the historical 4096 + thinking-budget default.

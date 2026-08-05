@@ -583,6 +583,7 @@ fn method_constants_are_stable() {
         "settings/model_name",
         "settings/model_options",
         "settings/set_model",
+        "settings/set_thinking_budget",
         "settings/providers",
         "settings/theme",
         "settings/set_theme",
@@ -612,6 +613,7 @@ fn method_constants_are_stable() {
         "usage/stats",
         // MCP
         "mcp/list_servers",
+        "mcp/status",
         "mcp/server_trust",
         "mcp/set_trust",
         "mcp/list_tools",
@@ -636,6 +638,7 @@ fn method_constants_are_stable() {
         "tools/task_list",
         "tools/enter_plan",
         "tools/agents_with_warnings",
+        "tools/seed_read_state",
         // Auth
         "auth/overview",
         "auth/login",
@@ -665,6 +668,7 @@ fn method_constants_are_stable() {
         "background/events",
         "background/list_summary",
         "background/subscribe",
+        "background/cancel_async",
         // Workflows
         "workflow/list",
         "workflow/start",
@@ -720,6 +724,10 @@ fn method_strings_pinned() {
     assert_eq!(method::SETTINGS_MODEL_NAME, "settings/model_name");
     assert_eq!(method::SETTINGS_MODEL_OPTIONS, "settings/model_options");
     assert_eq!(method::SETTINGS_SET_MODEL, "settings/set_model");
+    assert_eq!(
+        method::SETTINGS_SET_THINKING_BUDGET,
+        "settings/set_thinking_budget"
+    );
     assert_eq!(method::SETTINGS_PROVIDERS, "settings/providers");
     assert_eq!(method::SETTINGS_THEME, "settings/theme");
     assert_eq!(method::SETTINGS_SET_THEME, "settings/set_theme");
@@ -739,6 +747,7 @@ fn method_strings_pinned() {
     assert_eq!(method::USAGE_COST, "usage/cost");
     assert_eq!(method::USAGE_STATS, "usage/stats");
     assert_eq!(method::MCP_LIST_SERVERS, "mcp/list_servers");
+    assert_eq!(method::MCP_STATUS, "mcp/status");
     assert_eq!(method::MCP_SERVER_TRUST, "mcp/server_trust");
     assert_eq!(method::MCP_SET_TRUST, "mcp/set_trust");
     assert_eq!(method::MCP_LIST_TOOLS, "mcp/list_tools");
@@ -758,12 +767,14 @@ fn method_strings_pinned() {
     assert_eq!(method::TOOLS_AGENTS, "tools/agents");
     assert_eq!(method::TOOLS_PLAN, "tools/plan");
     assert_eq!(method::TOOLS_TASK_LIST, "tools/task_list");
+    assert_eq!(method::TOOLS_SEED_READ_STATE, "tools/seed_read_state");
     assert_eq!(method::BACKGROUND_CREATE, "background/create");
     assert_eq!(method::BACKGROUND_LIST, "background/list");
     assert_eq!(method::BACKGROUND_DETAIL, "background/detail");
     assert_eq!(method::BACKGROUND_CANCEL, "background/cancel");
     assert_eq!(method::BACKGROUND_LOG, "background/log");
     assert_eq!(method::BACKGROUND_SUBSCRIBE, "background/subscribe");
+    assert_eq!(method::BACKGROUND_CANCEL_ASYNC, "background/cancel_async");
     assert_eq!(method::AUTH_OVERVIEW, "auth/overview");
     assert_eq!(method::AUTH_LOGIN, "auth/login");
     assert_eq!(method::AUTH_LOGOUT, "auth/logout");

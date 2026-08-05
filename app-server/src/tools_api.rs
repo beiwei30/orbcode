@@ -1,4 +1,4 @@
-use orbcode_app_server_protocol::PlanOverview;
+use orbcode_app_server_protocol::{PlanOverview, SeedReadStateResult};
 use orbcode_config::load_agent_definitions_with_warnings;
 use orbcode_core::{CoreError, mcp_permission_target};
 use orbcode_protocol::ProviderToolDefinition;
@@ -18,6 +18,60 @@ const MCP_SKILL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 impl AppServer {
     pub fn list_tools(&self) -> Vec<orbcode_tools::ToolSpec> {
         self.tools.planned().to_vec()
+    }
+
+    /// Seed the exact stale-write state used by normal Read/Edit/Write calls.
+    pub async fn seed_read_state(
+        &self,
+        session_id: &str,
+        path: &str,
+        mtime: u64,
+    ) -> Result<SeedReadStateResult, CoreError> {
+        self.ensure_active_session(session_id)?;
+        let config = self.sessions.effective_config();
+        let requested = std::path::PathBuf::from(path);
+        let requested = if requested.is_absolute() {
+            requested
+        } else {
+            config.cwd.join(requested)
+        };
+        let canonical = tokio::fs::canonicalize(&requested).await.map_err(|error| {
+            CoreError::Config(format!(
+                "cannot seed missing or inaccessible file {}: {error}",
+                requested.display()
+            ))
+        })?;
+
+        let additional_directories = self.sessions.additional_directories();
+        let mut allowed_roots = Vec::new();
+        for root in std::iter::once(config.cwd.as_path()).chain(
+            additional_directories
+                .iter()
+                .map(std::path::PathBuf::as_path),
+        ) {
+            if let Ok(root) = tokio::fs::canonicalize(root).await
+                && !allowed_roots.iter().any(|existing| existing == &root)
+            {
+                allowed_roots.push(root);
+            }
+        }
+        if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+            return Err(CoreError::PermissionDenied(format!(
+                "read-state path is outside the session workspace: {}",
+                canonical.display()
+            )));
+        }
+
+        self.read_state
+            .seed_current_file(&canonical, u128::from(mtime))
+            .await
+            .map_err(CoreError::Config)?;
+        Ok(SeedReadStateResult {
+            session_id: session_id.to_string(),
+            path: canonical,
+            mtime,
+            seeded: true,
+        })
     }
 
     pub async fn list_diagnostic_tools(&self) -> Vec<ProviderToolDefinition> {

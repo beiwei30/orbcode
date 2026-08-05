@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -50,6 +50,10 @@ impl ReadRecord {
 #[derive(Debug, Default)]
 pub struct FileReadState {
     entries: Mutex<HashMap<PathBuf, ReadRecord>>,
+    /// Paths changed through this state owner during the current process. A
+    /// host may seed an observed pre-edit read, but never rewrite history after
+    /// Orbcode has already mutated that path.
+    mutated_paths: Mutex<HashSet<PathBuf>>,
     /// When set, the table is loaded from this file on construction and rewritten
     /// after every mutation, so independent one-shot `orbcode tool` processes (Read
     /// then Edit) share read state across invocations.
@@ -72,6 +76,7 @@ impl FileReadState {
             .unwrap_or_default();
         Self {
             entries: Mutex::new(entries),
+            mutated_paths: Mutex::new(HashSet::new()),
             persist_path: Some(path),
         }
     }
@@ -122,8 +127,90 @@ impl FileReadState {
     /// recorded range is cleared (full read) so the content-identity fallback
     /// applies.
     pub async fn record_write(&self, path: &Path, timestamp_ms: u128, content: String) {
+        self.mutated_paths.lock().await.insert(path.to_path_buf());
         self.record_read(path, timestamp_ms, content, None, None)
             .await;
+    }
+
+    /// Seed a whole-file read only when the host-provided mtime still exactly
+    /// identifies the current file and Orbcode has not already mutated it.
+    /// The file is read by the runtime itself; host metadata never supplies the
+    /// cached content and therefore cannot bypass the later content/mtime guard.
+    pub async fn seed_current_file(
+        &self,
+        path: &Path,
+        expected_mtime_ms: u128,
+    ) -> Result<(), String> {
+        if self.mutated_paths.lock().await.contains(path) {
+            return Err(format!(
+                "cannot seed read state after file mutation: {}",
+                path.display()
+            ));
+        }
+
+        let before = tokio::fs::metadata(path)
+            .await
+            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+        if !before.is_file() {
+            return Err(format!("read-state path is not a file: {}", path.display()));
+        }
+        let before_mtime = mtime_ms(&before);
+        if before_mtime != expected_mtime_ms {
+            return Err(format!(
+                "read-state mtime mismatch for {}: expected {expected_mtime_ms}, current {before_mtime}",
+                path.display()
+            ));
+        }
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|error| format!("cannot read {} as UTF-8: {error}", path.display()))?;
+        let after = tokio::fs::metadata(path)
+            .await
+            .map_err(|error| format!("cannot recheck {}: {error}", path.display()))?;
+        let after_mtime = mtime_ms(&after);
+        if after_mtime != expected_mtime_ms {
+            return Err(format!(
+                "file changed while seeding read state: {}",
+                path.display()
+            ));
+        }
+
+        // Serialize the final mutation check with record_write's marker. If a
+        // write won the race after the I/O above, reject instead of replacing
+        // the post-write record with a host-seeded one.
+        let mutated = self.mutated_paths.lock().await;
+        if mutated.contains(path) {
+            return Err(format!(
+                "cannot seed read state after file mutation: {}",
+                path.display()
+            ));
+        }
+        let mut entries = self.entries.lock().await;
+        if let Some(existing) = entries.get(path) {
+            if existing.timestamp_ms == expected_mtime_ms
+                && existing.content == content
+                && existing.is_full_read()
+            {
+                return Ok(());
+            }
+            return Err(format!(
+                "conflicting read-state entry already exists for {}",
+                path.display()
+            ));
+        }
+        entries.insert(
+            path.to_path_buf(),
+            ReadRecord {
+                timestamp_ms: expected_mtime_ms,
+                content,
+                offset: None,
+                limit: None,
+            },
+        );
+        self.persist(&entries).await;
+        drop(entries);
+        drop(mutated);
+        Ok(())
     }
 
     /// Returns `true` when an edit must be rejected as stale.
@@ -251,6 +338,44 @@ mod tests {
             .await;
         assert!(!state.edit_is_stale(&path(), 3_000, "rewritten").await);
         assert!(!state.write_is_stale(&path(), 3_000).await);
+    }
+
+    #[tokio::test]
+    async fn validated_seed_rejects_mismatch_and_post_mutation_seed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("seed.txt");
+        tokio::fs::write(&file, "observed").await.expect("write");
+        let metadata = tokio::fs::metadata(&file).await.expect("metadata");
+        let mtime = mtime_ms(&metadata);
+        let state = FileReadState::new();
+
+        assert!(state.seed_current_file(&file, mtime + 1).await.is_err());
+        state
+            .seed_current_file(&file, mtime)
+            .await
+            .expect("valid seed");
+        state
+            .seed_current_file(&file, mtime)
+            .await
+            .expect("identical seed is idempotent");
+        assert!(!state.edit_is_stale(&file, mtime, "observed").await);
+
+        state
+            .record_write(&file, mtime, "changed".to_string())
+            .await;
+        assert!(state.seed_current_file(&file, mtime).await.is_err());
+
+        let conflicting = FileReadState::new();
+        conflicting
+            .record_read(&file, mtime, "different".to_string(), None, None)
+            .await;
+        assert!(
+            conflicting
+                .seed_current_file(&file, mtime)
+                .await
+                .expect_err("conflicting entry")
+                .contains("conflicting read-state entry")
+        );
     }
 
     #[tokio::test]

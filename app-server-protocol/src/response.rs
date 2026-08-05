@@ -107,6 +107,7 @@ pub struct ContextOverview {
     pub context: TurnContext,
     pub usage: ContextUsageOverview,
     pub report: ContextDiagnosticsReport,
+    pub max_thinking_tokens: Option<u32>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -119,6 +120,7 @@ pub struct StatusOverview {
     pub model_capabilities: Vec<String>,
     pub small_fast_model_display_name: String,
     pub effort_level: Option<EffortLevel>,
+    pub max_thinking_tokens: Option<u32>,
     pub default_provider: ProviderId,
     pub fallback_provider: Option<ProviderId>,
     pub max_retries: usize,
@@ -132,6 +134,59 @@ pub struct StatusOverview {
     pub configured_mcp_server_count: usize,
     pub enabled_mcp_capability_count: usize,
     pub policy: PolicyOverview,
+}
+
+/// Secret-free status projection for a configured MCP server.
+///
+/// Mutation-only configuration (endpoint, arguments, environment, headers and
+/// auth values) is deliberately absent from this read DTO.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerOverview {
+    pub id: String,
+    pub transport: String,
+    pub enabled: bool,
+    pub status: String,
+    pub trust: String,
+    pub summary: String,
+    pub auth_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModelChangeResult {
+    pub provider: ProviderId,
+    pub model: String,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ThinkingBudgetResult {
+    pub session_id: String,
+    pub max_thinking_tokens: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SeedReadStateResult {
+    pub session_id: String,
+    pub path: PathBuf,
+    pub mtime: u64,
+    pub seeded: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsyncCancellationResultKind {
+    Signalled,
+    AlreadyTerminal,
+    NotFound,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CancelAsyncTaskResult {
+    pub session_id: String,
+    pub task_id: String,
+    pub outcome: AsyncCancellationResultKind,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -253,5 +308,44 @@ impl DoctorReport {
             }
             counts
         })
+    }
+}
+
+#[cfg(test)]
+mod control_dto_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_status_projection_has_no_mutation_secret_fields() {
+        let value = serde_json::to_value(McpServerOverview {
+            id: "docs".to_string(),
+            transport: "http".to_string(),
+            enabled: true,
+            status: "ready".to_string(),
+            trust: "trusted".to_string(),
+            summary: "Documentation".to_string(),
+            auth_mode: "header".to_string(),
+            error: None,
+        })
+        .expect("MCP status JSON");
+        for forbidden in ["endpoint", "args", "env", "headers", "auth"] {
+            assert!(
+                value.get(forbidden).is_none(),
+                "unexpected field {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn async_cancellation_outcomes_round_trip() {
+        for outcome in [
+            AsyncCancellationResultKind::Signalled,
+            AsyncCancellationResultKind::AlreadyTerminal,
+            AsyncCancellationResultKind::NotFound,
+        ] {
+            let value = serde_json::to_value(outcome).expect("serialize");
+            let parsed = serde_json::from_value(value).expect("deserialize");
+            assert_eq!(outcome, parsed);
+        }
     }
 }

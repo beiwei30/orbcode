@@ -85,6 +85,7 @@ pub struct AppServer {
     tools: ToolRegistry,
     mcp: McpRegistry,
     read_state: std::sync::Arc<orbcode_tools::FileReadState>,
+    active_session_id: Arc<std::sync::RwLock<Option<String>>>,
     active_streams: protocol_handler::turns::ActiveStreams,
 }
 
@@ -155,9 +156,7 @@ impl AppServer {
         sessions.refresh_output_styles().await;
         let background = BackgroundManager::new(sessions.config().home_dir.clone());
         let _ = background_agent::reconcile_orphaned_agents(&sessions.config().home_dir).await;
-        let read_state = Arc::new(orbcode_tools::FileReadState::with_persistence(
-            sessions.config().home_dir.join("file-read-state.json"),
-        ));
+        let read_state = sessions.read_state();
 
         Ok(Self {
             sessions,
@@ -166,8 +165,29 @@ impl AppServer {
             tools,
             mcp,
             read_state,
+            active_session_id: Arc::new(std::sync::RwLock::new(None)),
             active_streams: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         })
+    }
+
+    pub(crate) fn set_active_session_id(&self, session_id: &str) {
+        let mut guard = match self.active_session_id.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = Some(session_id.to_string());
+    }
+
+    pub(crate) fn ensure_active_session(&self, session_id: &str) -> Result<(), CoreError> {
+        let guard = match self.active_session_id.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if guard.as_deref() == Some(session_id) {
+            Ok(())
+        } else {
+            Err(CoreError::SessionNotFound(session_id.to_string()))
+        }
     }
 
     /// Returns a handle to the active stream subscription map.

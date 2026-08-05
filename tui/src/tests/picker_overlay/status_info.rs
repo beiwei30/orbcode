@@ -3,6 +3,7 @@ use crate::tests::support::*;
 #[test]
 fn render_context_overview_uses_grid_and_legend_breakdown() {
     let overview = ContextOverview {
+        max_thinking_tokens: None,
         context: TurnContext {
             cwd: "/tmp/project".to_string(),
             current_date: "2026-05-06".to_string(),
@@ -63,6 +64,7 @@ fn render_context_overview_uses_grid_and_legend_breakdown() {
 #[test]
 fn render_context_overview_lists_memory_source_diagnostics() {
     let overview = ContextOverview {
+        max_thinking_tokens: None,
         context: TurnContext {
             cwd: "/tmp/project".to_string(),
             current_date: "2026-05-06".to_string(),
@@ -579,6 +581,7 @@ fn render_stats_overview_shows_activity_heatmap() {
 #[test]
 fn render_status_overview_includes_session_and_runtime_summary() {
     let overview = StatusOverview {
+        max_thinking_tokens: None,
         session_id: "12345678-90ab-cdef-1234-567890abcdef".to_string(),
         cwd: PathBuf::from("/tmp/project"),
         home_dir: PathBuf::from("/tmp/home"),
@@ -672,6 +675,7 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
     use orbcode_app_server::{PolicyConflictOverview, PolicyOverview, PolicySourceOverview};
 
     let overview = StatusOverview {
+        max_thinking_tokens: None,
         session_id: "policy-session".to_string(),
         cwd: PathBuf::from("/tmp/project"),
         home_dir: PathBuf::from("/tmp/home"),

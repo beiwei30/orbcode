@@ -83,6 +83,7 @@ pub(crate) struct Cli {
         long = "input-format",
         value_enum,
         value_name = "FORMAT",
+        long_help = "Input format for headless / print mode (text or NDJSON stream).\n\nDuplex stream-json controls: initialize, interrupt, can_use_tool (CLI to host), set_permission_mode, get_session_state, get_context_usage, mcp_status, set_model, set_max_thinking_tokens, seed_read_state, cancel_async_message. rewind_files is recognized but unsupported because transcript rewind does not restore files.",
         global = true
     )]
     pub input_format: Option<CliInputFormat>,
@@ -732,7 +733,30 @@ pub(crate) enum CliMcpAuthCommand {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+    use orbcode_protocol::{SUPPORTED_CONTROL_SUBTYPES, UNSUPPORTED_CONTROL_SUBTYPES};
+
     use super::*;
+
+    #[test]
+    fn control_support_inventory_matches_help_and_readme() {
+        let help = Cli::command().render_long_help().to_string();
+        let readme = include_str!("../../README.md");
+        for subtype in SUPPORTED_CONTROL_SUBTYPES {
+            assert!(help.contains(subtype), "long help missing {subtype}");
+            assert!(
+                readme.contains(&format!("`{subtype}`")),
+                "README missing {subtype}"
+            );
+        }
+        for subtype in UNSUPPORTED_CONTROL_SUBTYPES {
+            assert!(help.contains(subtype), "long help missing {subtype}");
+            assert!(
+                readme.contains(&format!("`{subtype}`")) && readme.contains("unsupported"),
+                "README must document {subtype} as unsupported"
+            );
+        }
+    }
 
     #[test]
     fn cli_parses_print_flag_with_positional_prompt() {

@@ -11,6 +11,10 @@ impl AppServer {
         success(self.list_mcp_servers().await)
     }
 
+    pub(super) async fn handle_mcp_status(&self, _params: Option<Value>) -> ResponseResult {
+        success(self.mcp_status().await)
+    }
+
     pub(super) async fn handle_mcp_server_trust(&self, params: Option<Value>) -> ResponseResult {
         #[derive(Deserialize)]
         struct Params {

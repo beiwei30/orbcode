@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 
 use anyhow::Result;
 use orbcode_app_server::{
@@ -6,6 +7,13 @@ use orbcode_app_server::{
     ToolUseCompletionKind,
 };
 use orbcode_app_server_client::AppClient;
+use orbcode_protocol::{
+    AsyncCancellationOutcome, ControlRequest, ControlRequestEnvelope, SUPPORTED_CONTROL_SUBTYPES,
+    SdkAsyncCancellationResponse, SdkContextCategoriesResponse, SdkContextUsageResponse,
+    SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse, SdkModelChangeResponse,
+    SdkSeedReadStateResponse, SdkSessionStateResponse, SdkThinkingBudgetResponse,
+    ToolPermissionResult,
+};
 use serde::Serialize;
 
 use crate::args::{CliInputFormat, CliOutputFormat};
@@ -13,68 +21,86 @@ use crate::control::{ControlFrame, parse_control_line};
 use crate::exit_code::{HeadlessOutcome, classify_outcome};
 use crate::stream_json::{
     CostFields, InitMetadata, McpServerInfo, StreamJsonEmitter, control_response_error,
-    control_response_success, control_response_success_with_data,
+    control_response_success,
 };
 
-/// Typed representation of the session-state control response payload.
-#[derive(Serialize)]
-struct SessionStateResponse {
-    session_id: String,
-    cwd: String,
-    model_display_name: String,
-    model_name: String,
-    model_capabilities: Vec<String>,
-    effort_level: Option<&'static str>,
-    default_provider: String,
-    fallback_provider: Option<String>,
-    sandbox_mode: String,
-    persisted_session_count: usize,
-    background_job_count: usize,
-    available_tool_count: usize,
-    configured_mcp_server_count: usize,
+struct JsonWriteCommand {
+    sequence: u64,
+    value: serde_json::Value,
+    completion: std_mpsc::SyncSender<std::result::Result<(), String>>,
 }
 
-/// Typed representation of the context-usage control response payload.
-#[derive(Serialize)]
-struct ContextUsageResponse {
-    model: String,
-    estimated_tokens: u32,
-    categories: ContextCategoriesResponse,
-    context_window: u32,
-    effective_context_window: u32,
-    free_space_tokens: u32,
-    percent_left: u32,
-    is_above_auto_compact_threshold: bool,
-    is_above_warning_threshold: bool,
-    is_above_error_threshold: bool,
-    is_at_blocking_limit: bool,
+/// All duplex stdout records pass through one sequence-aware writer worker.
+#[derive(Clone)]
+struct OrderedJsonWriter {
+    gate: Arc<Mutex<u64>>,
+    sender: std_mpsc::Sender<JsonWriteCommand>,
 }
 
-#[derive(Serialize)]
-struct ContextCategoriesResponse {
-    system_prompt: u32,
-    system_tools: u32,
-    mcp_tools: u32,
-    memory: u32,
-    skills: u32,
-    conversation: u32,
-    attachments: u32,
-    uncategorized: u32,
+impl Default for OrderedJsonWriter {
+    fn default() -> Self {
+        let (sender, receiver) = std_mpsc::channel::<JsonWriteCommand>();
+        std::thread::Builder::new()
+            .name("orbcode-stream-json-writer".to_string())
+            .spawn(move || {
+                let mut expected_sequence = 0_u64;
+                let mut terminal_error: Option<String> = None;
+                while let Ok(command) = receiver.recv() {
+                    let result = if command.sequence != expected_sequence {
+                        Err(format!(
+                            "stdout sequence mismatch: expected {expected_sequence}, got {}",
+                            command.sequence
+                        ))
+                    } else if let Some(error) = terminal_error.as_ref() {
+                        Err(error.clone())
+                    } else {
+                        write_json_line(&command.value).map_err(|error| error.to_string())
+                    };
+                    expected_sequence = command.sequence.saturating_add(1);
+                    if let Err(error) = &result {
+                        terminal_error.get_or_insert_with(|| error.clone());
+                    }
+                    let _ = command.completion.send(result);
+                }
+            })
+            .expect("spawn stream-json writer worker");
+        Self {
+            gate: Arc::new(Mutex::new(0)),
+            sender,
+        }
+    }
 }
 
-/// Error-case response for control queries.
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
+impl OrderedJsonWriter {
+    fn write(&self, value: &serde_json::Value) -> Result<()> {
+        let mut next_sequence = self
+            .gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("stdout writer lock poisoned"))?;
+        let sequence = *next_sequence;
+        *next_sequence = next_sequence.saturating_add(1);
+        let (completion, completed) = std_mpsc::sync_channel(1);
+        self.sender
+            .send(JsonWriteCommand {
+                sequence,
+                value: value.clone(),
+                completion,
+            })
+            .map_err(|_| anyhow::anyhow!("stdout writer worker stopped"))?;
+        completed
+            .recv()
+            .map_err(|_| anyhow::anyhow!("stdout writer worker stopped"))?
+            .map_err(anyhow::Error::msg)
+    }
 }
 
 pub(crate) async fn run_headless_prompt(
-    app_server: AppServer,
+    _app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     prompt: String,
 ) -> Result<String> {
-    let bootstrap = app_server.bootstrap(session.as_deref()).await?;
+    let bootstrap = client.bootstrap(session.as_deref()).await?;
     println!("session {}", bootstrap.session.session_id);
     println!(
         "provider {} fallback {:?} retries {} permissions {} | tools {} | mcp servers {}",
@@ -88,8 +114,8 @@ pub(crate) async fn run_headless_prompt(
         bootstrap.configured_mcp_server_count
     );
 
-    let mut stream = app_server
-        .submit_turn(&bootstrap.session.session_id, prompt)
+    let mut stream = client
+        .submit_turn_typed(&bootstrap.session.session_id, &prompt)
         .await?;
 
     loop {
@@ -106,8 +132,8 @@ pub(crate) async fn run_headless_prompt(
                     Some(StreamEvent::PermissionRequested { request }) => {
                         let approved =
                             headless_permission_decision(&request, bootstrap.permissions.allow_tools, bootstrap.permissions.allow_network);
-                        let _ = app_server
-                            .respond_to_permission_request(
+                        let _ = client
+                            .respond_to_permission_request_decision(
                                 &request.request_id,
                                 if approved {
                                     PermissionDecision::Approve
@@ -267,7 +293,7 @@ pub(crate) async fn run_headless_prompt(
 }
 
 pub(crate) async fn run_print_mode(
-    app_server: AppServer,
+    _app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     positional_prompt: Option<String>,
@@ -275,14 +301,13 @@ pub(crate) async fn run_print_mode(
     input_format: CliInputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let bootstrap = app_server.bootstrap(session.as_deref()).await?;
+    let bootstrap = client.bootstrap(session.as_deref()).await?;
     let session_id = bootstrap.session.session_id.clone();
     let model_name = client
-        .model_name()
+        .status_overview_typed(&session_id)
         .await
-        .ok()
-        .and_then(|v| v["model_name"].as_str().map(String::from))
-        .unwrap_or_else(|| "unknown".to_string());
+        .map(|overview| overview.model_name)
+        .unwrap_or_else(|_| "unknown".to_string());
     let mut run = HeadlessRun::new(
         output_format,
         verbose,
@@ -290,11 +315,16 @@ pub(crate) async fn run_print_mode(
         bootstrap.permissions.allow_tools,
         bootstrap.permissions.allow_network,
     );
+    if let Ok(mode) = client.permission_mode_name().await
+        && let Some(mode) = PermissionMode::parse(&mode)
+    {
+        run.apply_permission_mode(mode);
+    }
 
     if matches!(output_format, CliOutputFormat::StreamJson) {
         let meta = build_init_metadata(client, &bootstrap).await;
         let init = run.emitter.build_system_init(&meta);
-        write_json_line(&init)?;
+        run.write_json(&init)?;
     }
 
     match input_format {
@@ -305,11 +335,10 @@ pub(crate) async fn run_print_mode(
                     "--print requires a prompt or --input-format stream-json",
                 ),
             };
-            run.run_text_turn(&app_server, &session_id, prompt).await?;
+            run.run_text_turn(client, &session_id, prompt).await?;
         }
         CliInputFormat::StreamJson => {
-            run.run_control_input_loop(&app_server, client, &session_id)
-                .await?;
+            run.run_control_input_loop(client, &session_id).await?;
         }
     }
 
@@ -329,7 +358,7 @@ pub(crate) async fn run_print_mode(
             }
         }
         CliOutputFormat::Json | CliOutputFormat::StreamJson => {
-            write_json_line(&result_payload)?;
+            run.write_json(&result_payload)?;
         }
     }
 
@@ -353,11 +382,16 @@ pub(crate) async fn run_background_worker(
     session_id: String,
     prompt: String,
 ) -> Result<()> {
+    // Explicit boundary exception: this is the private worker subprocess, not
+    // the duplex SDK runner. Durable background-job lifecycle, event-file, and
+    // log mutations below stay on AppServer until those worker-only operations
+    // gain protocol DTOs. Turn, permissions, settings, and introspection cross
+    // AppClient.
     #[cfg(unix)]
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut received_signal: Option<i32> = None;
 
-    let permissions = app_server.permissions();
+    let permissions = client.permission_overview_typed().await?.permissions;
     let _ = app_server
         .mark_background_running(&job_id, Some(std::process::id()))
         .await;
@@ -369,40 +403,29 @@ pub(crate) async fn run_background_worker(
         .await?;
 
     let model_name = client
-        .model_name()
+        .status_overview_typed(&session_id)
         .await
-        .ok()
-        .and_then(|v| v["model_name"].as_str().map(String::from))
-        .unwrap_or_else(|| "unknown".to_string());
+        .map(|overview| overview.model_name)
+        .unwrap_or_else(|_| "unknown".to_string());
     let mut emitter = StreamJsonEmitter::new(session_id.clone(), model_name.clone());
     let started = std::time::Instant::now();
     {
-        let tool_names: Vec<String> = client
-            .list_tools()
+        let tool_names = client.list_tool_names().await.unwrap_or_default();
+        let mcp_servers = client
+            .mcp_status()
             .await
-            .ok()
-            .and_then(|v| v.as_array().cloned())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|t| t["name"].as_str().map(String::from))
-            .collect();
-        let mcp_servers: Vec<McpServerInfo> = client
-            .list_mcp_servers()
-            .await
-            .ok()
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
-            .iter()
-            .map(|s| McpServerInfo {
-                name: s["id"].as_str().unwrap_or("").to_string(),
-                status: s["status"].as_str().unwrap_or("").to_string(),
+            .map(|server| McpServerInfo {
+                name: server.id,
+                status: server.status,
             })
             .collect();
-        let permission_mode_value = client.permission_mode().await.ok();
-        let permission_mode_str = permission_mode_value
-            .as_ref()
-            .and_then(|v| v["mode"].as_str())
-            .unwrap_or("default");
+        let permission_mode_name = client
+            .permission_mode_name()
+            .await
+            .unwrap_or_else(|_| "default".to_string());
+        let permission_mode_str = permission_mode_name.as_str();
         let permission_mode = match permission_mode_str {
             "acceptEdits" => PermissionMode::AcceptEdits,
             "bypassPermissions" => PermissionMode::BypassPermissions,
@@ -426,7 +449,7 @@ pub(crate) async fn run_background_worker(
             .await;
     }
 
-    let mut stream = match app_server.submit_turn(&session_id, prompt.clone()).await {
+    let mut stream = match client.submit_turn_typed(&session_id, &prompt).await {
         Ok(stream) => stream,
         Err(error) => {
             let message = error.to_string();
@@ -497,8 +520,8 @@ pub(crate) async fn run_background_worker(
                     permissions.allow_tools,
                     permissions.allow_network,
                 );
-                let _ = app_server
-                    .respond_to_permission_request(
+                let _ = client
+                    .respond_to_permission_request_decision(
                         &request.request_id,
                         if approved {
                             PermissionDecision::Approve
@@ -828,6 +851,46 @@ enum EventOutcome {
     Permission(orbcode_protocol::PermissionRequest),
 }
 
+enum ControlAction {
+    None,
+    Prompt(String),
+}
+
+// This hot-path value lives only across one `select!`; boxing every large
+// StreamEvent would add an allocation to every streamed delta.
+#[allow(clippy::large_enum_variant)]
+enum TurnInput {
+    Control(Option<ControlFrame>),
+    Stream(Option<StreamEvent>),
+}
+
+/// Deterministically alternate priority when both a stdin control and turn
+/// event are ready. A control flood therefore cannot starve provider events,
+/// while controls (including interrupt and queued prompts) still make progress.
+async fn next_turn_input(
+    control_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ControlFrame>,
+    stream: &mut tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
+    stdin_open: bool,
+    prefer_control: bool,
+) -> TurnInput {
+    if !stdin_open {
+        return TurnInput::Stream(stream.recv().await);
+    }
+    if prefer_control {
+        tokio::select! {
+            biased;
+            frame = control_rx.recv() => TurnInput::Control(frame),
+            event = stream.recv() => TurnInput::Stream(event),
+        }
+    } else {
+        tokio::select! {
+            biased;
+            event = stream.recv() => TurnInput::Stream(event),
+            frame = control_rx.recv() => TurnInput::Control(frame),
+        }
+    }
+}
+
 struct HeadlessRun {
     output_format: CliOutputFormat,
     verbose: bool,
@@ -845,6 +908,8 @@ struct HeadlessRun {
     permission_denied: bool,
     started: std::time::Instant,
     api_duration_ms: u64,
+    writer: OrderedJsonWriter,
+    permission_mode: PermissionMode,
 }
 
 impl HeadlessRun {
@@ -872,6 +937,8 @@ impl HeadlessRun {
             permission_denied: false,
             started: std::time::Instant::now(),
             api_duration_ms: 0,
+            writer: OrderedJsonWriter::default(),
+            permission_mode: PermissionMode::Default,
         }
     }
 
@@ -892,7 +959,7 @@ impl HeadlessRun {
             let records = self.emitter.process(event);
             if matches!(self.output_format, CliOutputFormat::StreamJson) {
                 for record in records {
-                    write_json_line(&record)?;
+                    self.writer.write(&record)?;
                 }
             }
         }
@@ -974,12 +1041,12 @@ impl HeadlessRun {
 
     async fn run_text_turn(
         &mut self,
-        app_server: &AppServer,
+        client: &AppClient,
         session_id: &str,
         prompt: String,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = app_server.submit_turn(session_id, prompt).await?;
+        let mut stream = client.submit_turn_typed(session_id, &prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
 
@@ -993,8 +1060,8 @@ impl HeadlessRun {
                         self.allow_tools,
                         self.allow_network,
                     );
-                    let _ = app_server
-                        .respond_to_permission_request(
+                    let _ = client
+                        .respond_to_permission_request_decision(
                             &request.request_id,
                             if approved {
                                 PermissionDecision::Approve
@@ -1018,12 +1085,7 @@ impl HeadlessRun {
         Ok(())
     }
 
-    async fn run_control_input_loop(
-        &mut self,
-        app_server: &AppServer,
-        client: &AppClient,
-        session_id: &str,
-    ) -> Result<()> {
+    async fn run_control_input_loop(&mut self, client: &AppClient, session_id: &str) -> Result<()> {
         let (tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel::<ControlFrame>();
         // Detached stdin reader; this loop owns shutdown by observing channel
         // closure and EOF frames.
@@ -1031,9 +1093,16 @@ impl HeadlessRun {
 
         let mut pending_prompts: std::collections::VecDeque<String> =
             std::collections::VecDeque::new();
+        let mut pending_permissions = std::collections::HashMap::<String, String>::new();
+        let mut server_request_rx =
+            client.take_server_request_receiver().await.ok_or_else(|| {
+                anyhow::anyhow!("headless control server-request receiver unavailable")
+            })?;
+        let mut server_requests_open = true;
         let mut stdin_open = true;
 
-        loop {
+        let result = async {
+            loop {
             let prompt = if let Some(prompt) = pending_prompts.pop_front() {
                 prompt
             } else if !stdin_open {
@@ -1041,17 +1110,46 @@ impl HeadlessRun {
             } else {
                 let mut next_prompt = None;
                 while stdin_open {
-                    match control_rx.recv().await {
-                        Some(frame) => {
-                            if let Some(prompt) = self
-                                .handle_idle_frame(frame, app_server, client, session_id)
-                                .await?
-                            {
-                                next_prompt = Some(prompt);
-                                break;
+                    tokio::select! {
+                        biased;
+                        maybe_request = server_request_rx.recv(), if server_requests_open => {
+                            match maybe_request {
+                                Some(request) => self
+                                    .handle_server_request(
+                                        request,
+                                        client,
+                                        session_id,
+                                        &mut pending_permissions,
+                                        true,
+                                    )
+                                    .await?,
+                                None => server_requests_open = false,
                             }
                         }
-                        None => stdin_open = false,
+                        maybe_frame = control_rx.recv() => {
+                            match maybe_frame {
+                                Some(frame) => match self
+                                    .dispatch_control_frame(
+                                        frame,
+                                        client,
+                                        session_id,
+                                        &mut pending_permissions,
+                                    )
+                                    .await?
+                                {
+                                    ControlAction::Prompt(prompt) => {
+                                        next_prompt = Some(prompt);
+                                        break;
+                                    }
+                                    ControlAction::None => {}
+                                },
+                                None => {
+                                    stdin_open = false;
+                                    self.deny_pending_permissions(client, &mut pending_permissions)
+                                        .await;
+                                }
+                            }
+                        }
                     }
                 }
                 match next_prompt {
@@ -1061,56 +1159,252 @@ impl HeadlessRun {
             };
 
             self.run_one_control_turn(
-                app_server,
                 client,
                 session_id,
                 prompt,
                 &mut control_rx,
                 &mut pending_prompts,
+                &mut pending_permissions,
                 &mut stdin_open,
+                &mut server_request_rx,
+                &mut server_requests_open,
             )
             .await?;
 
             if self.last_error.is_some() || self.was_cancelled {
                 break;
             }
-        }
+            }
 
-        Ok(())
+            Ok(())
+        }
+        .await;
+
+        self.deny_pending_permissions(client, &mut pending_permissions)
+            .await;
+        result
     }
 
-    async fn handle_idle_frame(
+    async fn dispatch_control_frame(
         &mut self,
         frame: ControlFrame,
-        app_server: &AppServer,
         client: &AppClient,
         session_id: &str,
-    ) -> Result<Option<String>> {
+        pending_permissions: &mut std::collections::HashMap<String, String>,
+    ) -> Result<ControlAction> {
         match frame {
-            ControlFrame::UserPrompt(text) => Ok(Some(text)),
+            ControlFrame::UserPrompt(text) => Ok(ControlAction::Prompt(text)),
+            ControlFrame::Initialize { request_id } => {
+                match self.build_initialize_response(client, session_id).await {
+                    Ok(data) => self.emit_typed_control_success(&request_id, &data)?,
+                    Err(error) => {
+                        self.emit_control_response(control_response_error(&request_id, &error))?
+                    }
+                }
+                Ok(ControlAction::None)
+            }
             ControlFrame::Interrupt { request_id } => {
+                let _ = client.interrupt_turn(session_id).await;
                 self.emit_control_response(control_response_success(&request_id))?;
-                Ok(None)
+                Ok(ControlAction::None)
             }
             ControlFrame::SetPermissionMode { request_id, mode } => {
-                app_server.set_permission_mode(mode);
-                self.apply_permission_mode(mode);
-                self.emit_control_response(control_response_success(&request_id))?;
-                Ok(None)
+                match client.set_permission_mode(mode.as_str()).await {
+                    Ok(_) => {
+                        self.apply_permission_mode(mode);
+                        self.emit_control_response(control_response_success(&request_id))?;
+                    }
+                    Err(error) => self.emit_control_response(control_response_error(
+                        &request_id,
+                        &error.to_string(),
+                    ))?,
+                }
+                Ok(ControlAction::None)
             }
             ControlFrame::GetSessionState { request_id } => {
-                let data = self.build_session_state_response(client, session_id).await;
-                self.emit_control_response(control_response_success_with_data(&request_id, data))?;
-                Ok(None)
+                match self.build_session_state_response(client, session_id).await {
+                    Ok(data) => self.emit_typed_control_success(&request_id, &data)?,
+                    Err(error) => {
+                        self.emit_control_response(control_response_error(&request_id, &error))?
+                    }
+                }
+                Ok(ControlAction::None)
             }
             ControlFrame::GetContextUsage { request_id } => {
-                let data = self.build_context_usage_response(client, session_id).await;
-                self.emit_control_response(control_response_success_with_data(&request_id, data))?;
-                Ok(None)
+                match self.build_context_usage_response(client, session_id).await {
+                    Ok(data) => self.emit_typed_control_success(&request_id, &data)?,
+                    Err(error) => {
+                        self.emit_control_response(control_response_error(&request_id, &error))?
+                    }
+                }
+                Ok(ControlAction::None)
             }
-            ControlFrame::SetMaxThinkingTokens { request_id, .. } => {
-                self.emit_control_response(max_thinking_tokens_unsupported(&request_id))?;
-                Ok(None)
+            ControlFrame::McpStatus { request_id } => {
+                match self.build_mcp_status_response(client).await {
+                    Ok(data) => self.emit_typed_control_success(&request_id, &data)?,
+                    Err(error) => {
+                        self.emit_control_response(control_response_error(&request_id, &error))?
+                    }
+                }
+                Ok(ControlAction::None)
+            }
+            ControlFrame::SetModel { request_id, model } => {
+                match client.set_session_model_override(session_id, model).await {
+                    Ok(result) => self.emit_typed_control_success(
+                        &request_id,
+                        &SdkModelChangeResponse {
+                            provider: result.provider.as_str().to_string(),
+                            model: result.model,
+                            display_name: result.display_name,
+                        },
+                    )?,
+                    Err(error) => self.emit_control_response(control_response_error(
+                        &request_id,
+                        &error.to_string(),
+                    ))?,
+                }
+                Ok(ControlAction::None)
+            }
+            ControlFrame::SetMaxThinkingTokens {
+                request_id,
+                max_thinking_tokens,
+            } => {
+                match client
+                    .set_max_thinking_tokens(session_id, max_thinking_tokens)
+                    .await
+                {
+                    Ok(result) => self.emit_typed_control_success(
+                        &request_id,
+                        &SdkThinkingBudgetResponse {
+                            max_thinking_tokens: result.max_thinking_tokens,
+                        },
+                    )?,
+                    Err(error) => self.emit_control_response(control_response_error(
+                        &request_id,
+                        &error.to_string(),
+                    ))?,
+                }
+                Ok(ControlAction::None)
+            }
+            ControlFrame::SeedReadState {
+                request_id,
+                path,
+                mtime,
+            } => {
+                match client.seed_read_state(session_id, &path, mtime).await {
+                    Ok(result) => self.emit_typed_control_success(
+                        &request_id,
+                        &SdkSeedReadStateResponse {
+                            path: result.path.to_string_lossy().into_owned(),
+                            mtime: result.mtime,
+                            seeded: result.seeded,
+                        },
+                    )?,
+                    Err(error) => self.emit_control_response(control_response_error(
+                        &request_id,
+                        &error.to_string(),
+                    ))?,
+                }
+                Ok(ControlAction::None)
+            }
+            ControlFrame::RewindFiles { request_id } => {
+                self.emit_control_response(control_response_error(
+                    &request_id,
+                    "unsupported control request subtype `rewind_files`: Orbcode has no file checkpoint contract; transcript rewind is intentionally not substituted",
+                ))?;
+                Ok(ControlAction::None)
+            }
+            ControlFrame::CancelAsyncMessage {
+                request_id,
+                message_uuid,
+            } => {
+                match client.cancel_async_task(session_id, &message_uuid).await {
+                    Ok(result) => {
+                        let outcome = match result.outcome {
+                            orbcode_app_server_client::AsyncCancellationResultKind::Signalled => {
+                                AsyncCancellationOutcome::Signalled
+                            }
+                            orbcode_app_server_client::AsyncCancellationResultKind::AlreadyTerminal => {
+                                AsyncCancellationOutcome::AlreadyTerminal
+                            }
+                            orbcode_app_server_client::AsyncCancellationResultKind::NotFound => {
+                                AsyncCancellationOutcome::NotFound
+                            }
+                        };
+                        self.emit_typed_control_success(
+                            &request_id,
+                            &SdkAsyncCancellationResponse {
+                                task_id: result.task_id,
+                                outcome,
+                                cancelled: matches!(outcome, AsyncCancellationOutcome::Signalled),
+                            },
+                        )?;
+                    }
+                    Err(error) => self.emit_control_response(control_response_error(
+                        &request_id,
+                        &error.to_string(),
+                    ))?,
+                }
+                Ok(ControlAction::None)
+            }
+            ControlFrame::ServerResponse { request_id, result } => {
+                let Some(expected_tool_use_id) = pending_permissions.get(&request_id).cloned()
+                else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "duplicate or late can_use_tool response",
+                    ))?;
+                    return Ok(ControlAction::None);
+                };
+                let permission_result = match result {
+                    Ok(value) => match serde_json::from_value::<ToolPermissionResult>(value) {
+                        Ok(result) => Ok(result),
+                        Err(error) => {
+                            self.emit_control_response(control_response_error(
+                                &request_id,
+                                &format!("invalid can_use_tool response: {error}"),
+                            ))?;
+                            return Ok(ControlAction::None);
+                        }
+                    },
+                    Err(error) => Err(error),
+                };
+                let (decision, interrupt, returned_tool_use_id) = match permission_result {
+                    Ok(ToolPermissionResult::Allow { tool_use_id, .. }) => {
+                        (PermissionDecision::Approve, false, tool_use_id)
+                    }
+                    Ok(ToolPermissionResult::Deny {
+                        interrupt,
+                        tool_use_id,
+                        ..
+                    }) => (PermissionDecision::Deny, interrupt, tool_use_id),
+                    Err(_) => (PermissionDecision::Deny, false, None),
+                };
+                if returned_tool_use_id
+                    .as_deref()
+                    .is_some_and(|id| id != expected_tool_use_id)
+                {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "can_use_tool response toolUseID does not match the pending request",
+                    ))?;
+                    return Ok(ControlAction::None);
+                }
+                if client
+                    .respond_to_permission_request_typed(&request_id, decision)
+                    .await
+                {
+                    pending_permissions.remove(&request_id);
+                    if interrupt {
+                        let _ = client.interrupt_turn(session_id).await;
+                    }
+                } else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "duplicate or late can_use_tool response",
+                    ))?;
+                }
+                Ok(ControlAction::None)
             }
             ControlFrame::Unsupported {
                 request_id,
@@ -1120,102 +1414,95 @@ impl HeadlessRun {
                     &request_id,
                     &format!("unsupported control request subtype `{subtype}`"),
                 ))?;
-                Ok(None)
+                Ok(ControlAction::None)
             }
-            ControlFrame::Ignore => Ok(None),
+            ControlFrame::Ignore => Ok(ControlAction::None),
             ControlFrame::ParseError {
                 request_id,
                 message,
             } => {
                 self.report_parse_error(request_id, message)?;
-                Ok(None)
+                Ok(ControlAction::None)
             }
         }
     }
 
     async fn run_one_control_turn(
         &mut self,
-        app_server: &AppServer,
         client: &AppClient,
         session_id: &str,
         prompt: String,
         control_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ControlFrame>,
         pending_prompts: &mut std::collections::VecDeque<String>,
+        pending_permissions: &mut std::collections::HashMap<String, String>,
         stdin_open: &mut bool,
+        server_request_rx: &mut tokio::sync::mpsc::Receiver<
+            orbcode_app_server_client::ServerRequestEnvelope,
+        >,
+        server_requests_open: &mut bool,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = app_server.submit_turn(session_id, prompt).await?;
+        let mut stream = client.submit_turn_typed(session_id, &prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
-        let mut held_denials: Vec<String> = Vec::new();
+        let mut prefer_control = true;
 
         loop {
-            if *stdin_open {
-                tokio::select! {
-                    maybe_event = stream.recv() => {
-                        match maybe_event {
-                            Some(event) => {
-                                if self
-                                    .handle_control_turn_event(
-                                        &event,
-                                        &mut assistant_text,
-                                        turn_started,
-                                        app_server,
-                                        &mut held_denials,
-                                        true,
-                                    )
-                                    .await?
-                                {
-                                    break;
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                    maybe_frame = control_rx.recv() => {
-                        match maybe_frame {
-                            Some(frame) => {
-                                self.handle_mid_turn_frame(
-                                    frame,
-                                    app_server,
-                                    client,
-                                    session_id,
-                                    pending_prompts,
-                                )
-                                .await?;
-                            }
-                            None => {
-                                *stdin_open = false;
-                                for request_id in held_denials.drain(..) {
-                                    let _ = app_server
-                                        .respond_to_permission_request(
-                                            &request_id,
-                                            PermissionDecision::Deny,
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
+            // Server requests retain first priority so a permission callback is
+            // exposed promptly. Stdin controls and stream events alternate
+            // same-tick priority through `next_turn_input`, preventing either
+            // side from starving the other under sustained load.
+            tokio::select! {
+                biased;
+                maybe_request = server_request_rx.recv(), if *server_requests_open => {
+                    match maybe_request {
+                        Some(request) => self
+                            .handle_server_request(
+                                request,
+                                client,
+                                session_id,
+                                pending_permissions,
+                                *stdin_open,
+                            )
+                            .await?,
+                        None => *server_requests_open = false,
                     }
                 }
-            } else {
-                match stream.recv().await {
-                    Some(event) => {
-                        if self
-                            .handle_control_turn_event(
-                                &event,
-                                &mut assistant_text,
-                                turn_started,
-                                app_server,
-                                &mut held_denials,
-                                false,
-                            )
-                            .await?
-                        {
-                            break;
+                input = next_turn_input(control_rx, &mut stream, *stdin_open, prefer_control) => {
+                    match input {
+                        TurnInput::Control(Some(frame)) => {
+                            prefer_control = false;
+                            if let ControlAction::Prompt(prompt) = self
+                                .dispatch_control_frame(
+                                    frame,
+                                    client,
+                                    session_id,
+                                    pending_permissions,
+                                )
+                                .await?
+                            {
+                                pending_prompts.push_back(prompt);
+                            }
+                        }
+                        TurnInput::Control(None) => {
+                            *stdin_open = false;
+                            self.deny_pending_permissions(client, pending_permissions).await;
+                        }
+                        TurnInput::Stream(Some(event)) => {
+                            prefer_control = true;
+                            match self.record_event(&event, &mut assistant_text, turn_started)? {
+                                EventOutcome::Terminal => {
+                                    self.deny_pending_permissions(client, pending_permissions).await;
+                                    break;
+                                }
+                                EventOutcome::Continue | EventOutcome::Permission(_) => {}
+                            }
+                        }
+                        TurnInput::Stream(None) => {
+                                self.deny_pending_permissions(client, pending_permissions).await;
+                                break;
                         }
                     }
-                    None => break,
                 }
             }
         }
@@ -1224,197 +1511,227 @@ impl HeadlessRun {
         Ok(())
     }
 
-    async fn handle_control_turn_event(
+    async fn handle_server_request(
         &mut self,
-        event: &StreamEvent,
-        assistant_text: &mut String,
-        turn_started: std::time::Instant,
-        app_server: &AppServer,
-        held_denials: &mut Vec<String>,
-        hold_denials: bool,
-    ) -> Result<bool> {
-        match self.record_event(event, assistant_text, turn_started)? {
-            EventOutcome::Continue => Ok(false),
-            EventOutcome::Terminal => Ok(true),
-            EventOutcome::Permission(request) => {
-                let approved =
-                    headless_permission_decision(&request, self.allow_tools, self.allow_network);
-                if approved {
-                    let _ = app_server
-                        .respond_to_permission_request(
-                            &request.request_id,
-                            PermissionDecision::Approve,
-                        )
-                        .await;
-                } else if hold_denials {
-                    held_denials.push(request.request_id);
-                } else {
-                    let _ = app_server
-                        .respond_to_permission_request(
-                            &request.request_id,
-                            PermissionDecision::Deny,
-                        )
-                        .await;
-                }
-                Ok(false)
-            }
-        }
-    }
-
-    async fn handle_mid_turn_frame(
-        &mut self,
-        frame: ControlFrame,
-        app_server: &AppServer,
+        envelope: orbcode_app_server_client::ServerRequestEnvelope,
         client: &AppClient,
         session_id: &str,
-        pending_prompts: &mut std::collections::VecDeque<String>,
+        pending_permissions: &mut std::collections::HashMap<String, String>,
+        stdin_open: bool,
     ) -> Result<()> {
-        match frame {
-            ControlFrame::Interrupt { request_id } => {
-                let _ = client.interrupt_turn(session_id).await;
-                self.emit_control_response(control_response_success(&request_id))?;
-            }
-            ControlFrame::SetPermissionMode { request_id, mode } => {
-                app_server.set_permission_mode(mode);
-                self.apply_permission_mode(mode);
-                self.emit_control_response(control_response_success(&request_id))?;
-            }
-            ControlFrame::GetSessionState { request_id } => {
-                let data = self.build_session_state_response(client, session_id).await;
-                self.emit_control_response(control_response_success_with_data(&request_id, data))?;
-            }
-            ControlFrame::GetContextUsage { request_id } => {
-                let data = self.build_context_usage_response(client, session_id).await;
-                self.emit_control_response(control_response_success_with_data(&request_id, data))?;
-            }
-            ControlFrame::SetMaxThinkingTokens { request_id, .. } => {
-                self.emit_control_response(max_thinking_tokens_unsupported(&request_id))?;
-            }
-            ControlFrame::UserPrompt(text) => pending_prompts.push_back(text),
-            ControlFrame::Unsupported {
-                request_id,
-                subtype,
-            } => {
-                self.emit_control_response(control_response_error(
-                    &request_id,
-                    &format!("unsupported control request subtype `{subtype}`"),
-                ))?;
-            }
-            ControlFrame::Ignore => {}
-            ControlFrame::ParseError {
-                request_id,
-                message,
-            } => self.report_parse_error(request_id, message)?,
+        if envelope.method != "permission/request" {
+            client
+                .reject_server_request(
+                    envelope.id,
+                    format!(
+                        "headless SDK control channel cannot handle server request `{}`",
+                        envelope.method
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+        let request: orbcode_protocol::PermissionRequest =
+            match serde_json::from_value(envelope.params) {
+                Ok(request) => request,
+                Err(error) => {
+                    client
+                        .reject_server_request(
+                            envelope.id,
+                            format!("invalid permission server request: {error}"),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+            };
+        if request.session_id != session_id {
+            let _ = client
+                .respond_to_permission_request_typed(&request.request_id, PermissionDecision::Deny)
+                .await;
+            return Ok(());
+        }
+        if !stdin_open {
+            let _ = client
+                .respond_to_permission_request_typed(&request.request_id, PermissionDecision::Deny)
+                .await;
+            return Ok(());
+        }
+
+        let input = serde_json::from_str(&request.tool_input)
+            .unwrap_or_else(|_| serde_json::Value::String(request.tool_input.clone()));
+        let permission_request_id = request.request_id.clone();
+        pending_permissions.insert(permission_request_id.clone(), request.tool_use_id.clone());
+        let frame = ControlRequestEnvelope::new(
+            permission_request_id.clone(),
+            ControlRequest::CanUseTool {
+                tool_name: request.tool_name,
+                input,
+                tool_use_id: request.tool_use_id,
+                blocked_path: None,
+                decision_reason: None,
+            },
+        );
+        if let Err(error) = self.writer.write(&serde_json::to_value(frame)?) {
+            pending_permissions.remove(&permission_request_id);
+            let _ = client
+                .respond_to_permission_request_typed(
+                    &permission_request_id,
+                    PermissionDecision::Deny,
+                )
+                .await;
+            return Err(error);
         }
         Ok(())
+    }
+
+    async fn deny_pending_permissions(
+        &self,
+        client: &AppClient,
+        pending_permissions: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut ids = client.pending_permission_request_ids().await;
+        for id in pending_permissions.keys() {
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        for request_id in ids {
+            let _ = client
+                .respond_to_permission_request_typed(&request_id, PermissionDecision::Deny)
+                .await;
+        }
+        pending_permissions.clear();
+    }
+
+    async fn build_initialize_response(
+        &self,
+        client: &AppClient,
+        session_id: &str,
+    ) -> Result<SdkInitializeResponse, String> {
+        let status = client
+            .status_overview_typed(session_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let tools = client
+            .list_tool_names()
+            .await
+            .map_err(|error| error.to_string())?;
+        let mcp_servers = client
+            .mcp_status()
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(sdk_mcp_status)
+            .collect();
+        let permission_mode = client
+            .permission_mode_name()
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(SdkInitializeResponse {
+            protocol_version: "1.0".to_string(),
+            session_id: status.session_id,
+            provider: status.default_provider.as_str().to_string(),
+            model: status.model_name,
+            permission_mode,
+            tools,
+            mcp_servers,
+            supported_controls: SUPPORTED_CONTROL_SUBTYPES
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        })
+    }
+
+    async fn build_mcp_status_response(
+        &self,
+        client: &AppClient,
+    ) -> Result<SdkMcpStatusResponse, String> {
+        Ok(SdkMcpStatusResponse {
+            mcp_servers: client
+                .mcp_status()
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(sdk_mcp_status)
+                .collect(),
+        })
     }
 
     async fn build_session_state_response(
         &self,
         client: &AppClient,
         session_id: &str,
-    ) -> serde_json::Value {
-        match client.status_overview(session_id).await {
-            Ok(overview) => {
-                // Extract fields from the protocol Value response.
-                serde_json::to_value(SessionStateResponse {
-                    session_id: overview["session_id"].as_str().unwrap_or("").to_string(),
-                    cwd: overview["cwd"].as_str().unwrap_or("").to_string(),
-                    model_display_name: overview["model_display_name"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    model_name: overview["model_name"].as_str().unwrap_or("").to_string(),
-                    model_capabilities: overview["model_capabilities"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    effort_level: overview["effort_level"].as_str().map(|s| match s {
-                        "low" => "low",
-                        "medium" => "medium",
-                        _ => "high",
-                    }),
-                    default_provider: overview["default_provider"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    fallback_provider: overview["fallback_provider"].as_str().map(String::from),
-                    sandbox_mode: overview["sandbox_mode"].as_str().unwrap_or("").to_string(),
-                    persisted_session_count: overview["persisted_session_count"]
-                        .as_u64()
-                        .unwrap_or(0) as usize,
-                    background_job_count: overview["background_job_count"].as_u64().unwrap_or(0)
-                        as usize,
-                    available_tool_count: overview["available_tool_count"].as_u64().unwrap_or(0)
-                        as usize,
-                    configured_mcp_server_count: overview["configured_mcp_server_count"]
-                        .as_u64()
-                        .unwrap_or(0) as usize,
-                })
-                .expect("SessionStateResponse serialization is infallible")
-            }
-            Err(e) => serde_json::to_value(ErrorResponse {
-                error: e.to_string(),
-            })
-            .expect("ErrorResponse serialization is infallible"),
-        }
+    ) -> Result<SdkSessionStateResponse, String> {
+        let overview = client
+            .status_overview_typed(session_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(SdkSessionStateResponse {
+            session_id: overview.session_id,
+            cwd: overview.cwd.to_string_lossy().into_owned(),
+            model_display_name: overview.model_display_name,
+            model_name: overview.model_name,
+            model_capabilities: overview.model_capabilities,
+            effort_level: overview
+                .effort_level
+                .map(|effort| effort.as_str().to_string()),
+            max_thinking_tokens: overview.max_thinking_tokens,
+            default_provider: overview.default_provider.as_str().to_string(),
+            fallback_provider: overview
+                .fallback_provider
+                .map(|provider| provider.as_str().to_string()),
+            sandbox_mode: overview.sandbox_mode,
+            persisted_session_count: overview.persisted_session_count,
+            background_job_count: overview.background_job_count,
+            available_tool_count: overview.available_tool_count,
+            configured_mcp_server_count: overview.configured_mcp_server_count,
+        })
     }
 
     async fn build_context_usage_response(
         &self,
         client: &AppClient,
         session_id: &str,
-    ) -> serde_json::Value {
-        match client.context_overview(session_id).await {
-            Ok(overview) => {
-                // The protocol response wraps usage under "context".
-                let ctx = &overview["context"];
-                let usage = if ctx.is_null() { &overview } else { ctx };
-                let cats = &usage["categories"];
-                serde_json::to_value(ContextUsageResponse {
-                    model: usage["model"].as_str().unwrap_or("").to_string(),
-                    estimated_tokens: usage["estimated_tokens"].as_u64().unwrap_or(0) as u32,
-                    categories: ContextCategoriesResponse {
-                        system_prompt: cats["system_prompt"].as_u64().unwrap_or(0) as u32,
-                        system_tools: cats["system_tools"].as_u64().unwrap_or(0) as u32,
-                        mcp_tools: cats["mcp_tools"].as_u64().unwrap_or(0) as u32,
-                        memory: cats["memory"].as_u64().unwrap_or(0) as u32,
-                        skills: cats["skills"].as_u64().unwrap_or(0) as u32,
-                        conversation: cats["conversation"].as_u64().unwrap_or(0) as u32,
-                        attachments: cats["attachments"].as_u64().unwrap_or(0) as u32,
-                        uncategorized: cats["uncategorized"].as_u64().unwrap_or(0) as u32,
-                    },
-                    context_window: usage["context_window"].as_u64().unwrap_or(0) as u32,
-                    effective_context_window: usage["effective_context_window"]
-                        .as_u64()
-                        .unwrap_or(0) as u32,
-                    free_space_tokens: usage["free_space_tokens"].as_u64().unwrap_or(0) as u32,
-                    percent_left: usage["percent_left"].as_u64().unwrap_or(0) as u32,
-                    is_above_auto_compact_threshold: usage["is_above_auto_compact_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_above_warning_threshold: usage["is_above_warning_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_above_error_threshold: usage["is_above_error_threshold"]
-                        .as_bool()
-                        .unwrap_or(false),
-                    is_at_blocking_limit: usage["is_at_blocking_limit"].as_bool().unwrap_or(false),
-                })
-                .expect("ContextUsageResponse serialization is infallible")
-            }
-            Err(e) => serde_json::to_value(ErrorResponse {
-                error: e.to_string(),
-            })
-            .expect("ErrorResponse serialization is infallible"),
-        }
+    ) -> Result<SdkContextUsageResponse, String> {
+        let overview = client
+            .context_overview_typed(session_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let max_thinking_tokens = overview.max_thinking_tokens;
+        let usage = overview.usage;
+        let categories = usage.categories;
+        Ok(SdkContextUsageResponse {
+            model: usage.model,
+            max_thinking_tokens,
+            estimated_tokens: usage.estimated_tokens,
+            categories: SdkContextCategoriesResponse {
+                system_prompt: categories.system_prompt,
+                system_tools: categories.system_tools,
+                mcp_tools: categories.mcp_tools,
+                memory: categories.memory,
+                skills: categories.skills,
+                conversation: categories.conversation,
+                attachments: categories.attachments,
+                uncategorized: categories.uncategorized,
+            },
+            context_window: usage.context_window,
+            effective_context_window: usage.effective_context_window,
+            free_space_tokens: usage.free_space_tokens,
+            percent_left: usage.percent_left,
+            is_above_auto_compact_threshold: usage.is_above_auto_compact_threshold,
+            is_above_warning_threshold: usage.is_above_warning_threshold,
+            is_above_error_threshold: usage.is_above_error_threshold,
+            is_at_blocking_limit: usage.is_at_blocking_limit,
+        })
+    }
+
+    fn emit_typed_control_success<T: Serialize>(&self, request_id: &str, data: &T) -> Result<()> {
+        let response = orbcode_protocol::ControlResponseEnvelope::success_with(request_id, data)?;
+        self.writer.write(&serde_json::to_value(response)?)
     }
 
     fn apply_permission_mode(&mut self, mode: PermissionMode) {
+        self.permission_mode = mode;
         self.allow_tools = matches!(
             mode,
             PermissionMode::AcceptEdits
@@ -1429,7 +1746,11 @@ impl HeadlessRun {
     }
 
     fn emit_control_response(&self, response: serde_json::Value) -> Result<()> {
-        write_json_line(&response)
+        self.writer.write(&response)
+    }
+
+    fn write_json(&self, value: &serde_json::Value) -> Result<()> {
+        self.writer.write(value)
     }
 
     fn report_parse_error(&self, request_id: Option<String>, message: String) -> Result<()> {
@@ -1490,18 +1811,27 @@ impl HeadlessRun {
     }
 }
 
-fn max_thinking_tokens_unsupported(request_id: &str) -> serde_json::Value {
-    control_response_error(
-        request_id,
-        "unsupported control request subtype `set_max_thinking_tokens`: no runtime thinking-token override is currently wired",
-    )
+fn sdk_mcp_status(server: orbcode_app_server_client::McpServerOverview) -> SdkMcpServerStatus {
+    let status = match server.status.as_str() {
+        "ready" => "connected",
+        "unauthorized" => "needs-auth",
+        "starting" | "restarting" => "pending",
+        "disabled" | "stopped" => "disabled",
+        "failed" => "failed",
+        other => other,
+    };
+    SdkMcpServerStatus {
+        name: server.id,
+        status: status.to_string(),
+        error: server.error,
+    }
 }
 
 pub(crate) fn write_json_line(value: &serde_json::Value) -> Result<()> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer(&mut stdout, value)?;
     stdout.write_all(b"\n")?;
-    stdout.flush().ok();
+    stdout.flush()?;
     Ok(())
 }
 
@@ -1526,21 +1856,16 @@ fn accumulate_usage(total: &mut TokenUsage, delta: &TokenUsage) {
 }
 
 pub(crate) async fn build_cost_fields(client: &AppClient, session_id: &str) -> CostFields {
-    match client.cost_overview(session_id).await {
-        Ok(overview) => {
-            let total_cost_usd = overview["cost"]["total_cost_usd"].as_f64().unwrap_or(0.0);
-            let has_unknown = overview["cost"]["has_unknown_model_cost"]
-                .as_bool()
-                .unwrap_or(true);
-            let is_api_priced = overview["cost"]["billing_basis"]
-                .as_str()
-                .is_none_or(|basis| basis == "api");
-            CostFields {
-                total_cost_usd,
-                pricing_known: !has_unknown && is_api_priced,
-                model_costs: None,
-            }
-        }
+    match client.cost_overview_typed(session_id).await {
+        Ok(overview) => CostFields {
+            total_cost_usd: overview.cost.total_cost_usd,
+            pricing_known: !overview.cost.has_unknown_model_cost
+                && matches!(
+                    overview.cost.billing_basis,
+                    orbcode_app_server_client::BillingBasis::Api
+                ),
+            model_costs: None,
+        },
         Err(_) => CostFields::default(),
     }
 }
@@ -1549,32 +1874,22 @@ pub(crate) async fn build_init_metadata(
     client: &AppClient,
     bootstrap: &orbcode_app_server::BootstrapState,
 ) -> InitMetadata {
-    let tool_names: Vec<String> = client
-        .list_tools()
+    let tool_names = client.list_tool_names().await.unwrap_or_default();
+    let mcp_servers = client
+        .mcp_status()
         .await
-        .ok()
-        .and_then(|v| v.as_array().cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|t| t["name"].as_str().map(String::from))
-        .collect();
-    let mcp_servers: Vec<McpServerInfo> = client
-        .list_mcp_servers()
-        .await
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .map(|s| McpServerInfo {
-            name: s["id"].as_str().unwrap_or("").to_string(),
-            status: s["status"].as_str().unwrap_or("").to_string(),
+        .map(|server| McpServerInfo {
+            name: server.id,
+            status: server.status,
         })
         .collect();
-    let permission_mode_value = client.permission_mode().await.ok();
-    let permission_mode_str = permission_mode_value
-        .as_ref()
-        .and_then(|v| v["mode"].as_str())
-        .unwrap_or("default");
+    let permission_mode_name = client
+        .permission_mode_name()
+        .await
+        .unwrap_or_else(|_| "default".to_string());
+    let permission_mode_str = permission_mode_name.as_str();
     let permission_mode = match permission_mode_str {
         "acceptEdits" => PermissionMode::AcceptEdits,
         "bypassPermissions" => PermissionMode::BypassPermissions,

@@ -1,6 +1,6 @@
 use orbcode_app_server_protocol::{
-    McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
-    McpToolSlashSuggestion,
+    McpResourceSlashSuggestion, McpServerOverview, McpServerSlashSuggestion,
+    McpSlashSuggestionCatalog, McpToolSlashSuggestion,
 };
 use orbcode_core::{CoreError, mcp_permission_target};
 use orbcode_tools::mcp_provider_tool_name;
@@ -95,6 +95,39 @@ impl AppServer {
 
     pub async fn list_mcp_servers(&self) -> Vec<orbcode_mcp::McpServerConfig> {
         self.mcp.list_servers().await
+    }
+
+    /// Return a status-only MCP projection that cannot carry mutation secrets.
+    pub async fn mcp_status(&self) -> Vec<McpServerOverview> {
+        self.mcp
+            .list_servers()
+            .await
+            .into_iter()
+            .map(|server| {
+                let error = match server.status {
+                    orbcode_mcp::McpServerStatus::Failed => Some("connection failed".to_string()),
+                    orbcode_mcp::McpServerStatus::Unauthorized => {
+                        Some("authentication required".to_string())
+                    }
+                    _ => None,
+                };
+                let auth_mode = match server.auth {
+                    orbcode_mcp::McpAuth::None => "none",
+                    orbcode_mcp::McpAuth::BearerEnv { .. } => "bearer_env",
+                    orbcode_mcp::McpAuth::Header { .. } => "header",
+                };
+                McpServerOverview {
+                    id: server.id,
+                    transport: server.transport.as_str().to_string(),
+                    enabled: server.enabled,
+                    status: server.status.as_str().to_string(),
+                    trust: server.trust.as_str().to_string(),
+                    summary: server.summary,
+                    auth_mode: auth_mode.to_string(),
+                    error,
+                }
+            })
+            .collect()
     }
 
     pub async fn diagnose_mcp_server(

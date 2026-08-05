@@ -31,11 +31,33 @@ impl AppServer {
     pub(super) async fn handle_settings_set_model(&self, params: Option<Value>) -> ResponseResult {
         #[derive(Deserialize)]
         struct Params {
+            #[serde(default)]
+            session_id: Option<String>,
             model: Option<String>,
         }
         let p: Params = try_parse!(params);
-        match self.set_model_override(p.model).await {
-            Ok(display_name) => success(serde_json::json!({ "display_name": display_name })),
+        match p.session_id {
+            Some(session_id) => match self.set_session_model_override(&session_id, p.model).await {
+                Ok(result) => success(result),
+                Err(e) => core_error(e),
+            },
+            None => match self.set_model_override(p.model).await {
+                Ok(display_name) => success(serde_json::json!({ "display_name": display_name })),
+                Err(e) => core_error(e),
+            },
+        }
+    }
+
+    pub(super) async fn handle_settings_set_thinking_budget(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: orbcode_app_server_protocol::SetThinkingBudgetParams = try_parse!(params);
+        match self
+            .set_max_thinking_tokens(&p.session_id, p.max_thinking_tokens)
+            .await
+        {
+            Ok(result) => success(result),
             Err(e) => core_error(e),
         }
     }

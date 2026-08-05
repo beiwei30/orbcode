@@ -49,6 +49,7 @@ impl AppServer {
             model_capabilities: capability_names(&model_resolution),
             small_fast_model_display_name: small_fast_resolution.display_name,
             effort_level: self.sessions.runtime_effort_override(),
+            max_thinking_tokens: self.sessions.max_thinking_tokens(),
             default_provider: config.default_provider,
             fallback_provider: config.fallback_provider,
             max_retries: config.max_retries,

@@ -82,6 +82,9 @@ impl AppServer {
             method::SETTINGS_MODEL_NAME => self.handle_settings_model_name(params),
             method::SETTINGS_MODEL_OPTIONS => self.handle_settings_model_options(params),
             method::SETTINGS_SET_MODEL => self.handle_settings_set_model(params).await,
+            method::SETTINGS_SET_THINKING_BUDGET => {
+                self.handle_settings_set_thinking_budget(params).await
+            }
             method::SETTINGS_PROVIDERS => self.handle_settings_providers(params),
             method::SETTINGS_THEME => self.handle_settings_theme(params),
             method::SETTINGS_SET_THEME => self.handle_settings_set_theme(params).await,
@@ -121,6 +124,7 @@ impl AppServer {
             method::USAGE_STATS => self.handle_usage_stats(params).await,
             // MCP
             method::MCP_LIST_SERVERS => self.handle_mcp_list_servers(params).await,
+            method::MCP_STATUS => self.handle_mcp_status(params).await,
             method::MCP_SERVER_TRUST => self.handle_mcp_server_trust(params).await,
             method::MCP_SET_TRUST => self.handle_mcp_set_trust(params).await,
             method::MCP_LIST_TOOLS => self.handle_mcp_list_tools(params).await,
@@ -147,6 +151,7 @@ impl AppServer {
             method::TOOLS_AGENTS_WITH_WARNINGS => {
                 self.handle_tools_agents_with_warnings(params).await
             }
+            method::TOOLS_SEED_READ_STATE => self.handle_tools_seed_read_state(params).await,
             // Background
             method::BACKGROUND_CREATE => self.handle_background_create(params).await,
             method::BACKGROUND_LIST => self.handle_background_list(params).await,
@@ -155,6 +160,7 @@ impl AppServer {
             method::BACKGROUND_LOG => self.handle_background_log(params).await,
             method::BACKGROUND_EVENTS => self.handle_background_events(params).await,
             method::BACKGROUND_LIST_SUMMARY => self.handle_background_list_summary(params).await,
+            method::BACKGROUND_CANCEL_ASYNC => self.handle_background_cancel_async(params).await,
             // Workflows
             method::WORKFLOW_LIST => self.handle_workflow_list(params).await,
             method::WORKFLOW_START => self.handle_workflow_start(params).await,
