@@ -37,8 +37,9 @@ pub use orbcode_app_server_protocol::{
     McpSlashSuggestionCatalog, McpToolSlashSuggestion, McpTransport, MemoryFileOverview,
     MemoryOverview, PermissionContext, PermissionDecision, PermissionOverview, PlanOverview,
     PolicyConflictOverview, PolicyOverview, PolicySourceOverview, ProviderRequestDebugSnapshot,
-    SandboxLocalSettings, SandboxSettingsUpdate, SkillDefinition, StatsActivityDay, StatsOverview,
-    StatusOverview, UsageOverview, WorkflowCommand, WorkflowSource, WorkspaceDiff, format_cost,
+    SandboxLocalSettings, SandboxSettingsUpdate, SessionCleanupResult, SessionControlState,
+    SkillDefinition, StatsActivityDay, StatsOverview, StatusOverview, UsageOverview,
+    WorkflowCommand, WorkflowSource, WorkspaceDiff, format_cost,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -48,10 +49,11 @@ use std::sync::Arc;
 use orbcode_app_server::{AppConfigOverrides, AppServer};
 use orbcode_app_server_protocol::{
     AskUserQuestionRequest, AskUserQuestionResponse, InitializeResult, McpTrustDecisionWire,
-    PermissionDecisionWire, PermissionResponseParams, ResponseResult, ServerNotificationEnvelope,
-    ServerRequestEnvelope, StreamEventNotification, method,
+    PermissionDecisionWire, PermissionMode, PermissionResponseParams, ResponseResult,
+    ServerNotificationEnvelope, ServerRequestEnvelope, SetSessionEffortParams,
+    SetSessionModelParams, SetSessionPermissionModeParams, StreamEventNotification, method,
 };
-use orbcode_protocol::SessionSummary;
+use orbcode_protocol::{EffortLevel, SessionSummary};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 #[cfg(feature = "in-process")]
@@ -403,6 +405,73 @@ impl AppClient {
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn session_control_state(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_CONTROL_STATE,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
+    pub async fn set_session_permission_mode(
+        &self,
+        session_id: &str,
+        mode: PermissionMode,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_PERMISSION_MODE,
+            Some(serde_json::to_value(SetSessionPermissionModeParams {
+                session_id: session_id.to_string(),
+                mode,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_MODEL,
+            Some(serde_json::to_value(SetSessionModelParams {
+                session_id: session_id.to_string(),
+                model,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn set_session_effort(
+        &self,
+        session_id: &str,
+        effort: Option<EffortLevel>,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_EFFORT,
+            Some(serde_json::to_value(SetSessionEffortParams {
+                session_id: session_id.to_string(),
+                effort,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn cleanup_session(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionCleanupResult, ClientError> {
+        self.request_typed(
+            method::SESSION_CLEANUP,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
     }
 
     /// Clear a session and start fresh.

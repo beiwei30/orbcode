@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
         Command::Mcp { command } => commands::run_mcp(app_server, &client, command).await?,
         Command::Doctor { command } => commands::run_doctor(&client, command).await?,
         Command::Advanced => commands::print_advanced_capabilities(&client).await?,
-        Command::Acp => acp_sdk::run_acp_adapter(app_server).await?,
+        Command::Acp => acp_sdk::run_acp_adapter(Arc::clone(&client)).await?,
         Command::BgWorker {
             job_id,
             session_id,

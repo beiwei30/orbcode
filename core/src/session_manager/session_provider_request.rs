@@ -47,10 +47,9 @@ impl SessionManager {
         expose_tools: bool,
         expose_network_tools: bool,
     ) -> ProviderRequest {
-        let permissions = self.permission_context();
-        let resolution = self
-            .config
-            .provider_model_resolution(self.config.default_provider);
+        let config = self.effective_config_for_session(session_id);
+        let permissions = self.permission_context_for_session(session_id);
+        let resolution = config.provider_model_resolution(config.default_provider);
         let tools = self
             .tools
             .provider_definitions_with_mcp_for_session(
@@ -91,11 +90,12 @@ impl SessionManager {
             api_key: None,
             auth_token: None,
             disable_thinking: false,
-            effort: self.runtime_effort_override(),
+            effort: self
+                .session_effort_level(session_id)
+                .unwrap_or_else(|_| self.runtime_effort_override()),
             options: ProviderRequestOptions::default(),
         };
-        self.config
-            .configure_provider_request(self.config.default_provider, &mut request);
+        config.configure_provider_request(config.default_provider, &mut request);
         request
     }
 
@@ -121,7 +121,7 @@ impl SessionManager {
         provider: ProviderId,
         request: &ProviderRequest,
     ) -> u32 {
-        let config = self.effective_config();
+        let config = self.effective_config_for_session(&request.session_id);
         let count_tokens_request =
             self.count_tokens_request_for_provider(provider, request, &config);
         match self

@@ -8,6 +8,7 @@ mod capabilities;
 mod mcp_setup;
 mod replay;
 mod server_requests;
+mod session_controls;
 mod sessions;
 mod tool_updates;
 
@@ -19,10 +20,10 @@ use std::sync::Arc;
 use agent_client_protocol::schema::{
     CancelNotification, CloseSessionRequest, ContentBlock, ContentChunk, DeleteSessionRequest,
     InitializeRequest, ListSessionsRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
-    ResumeSessionRequest, SessionNotification, SessionUpdate, StopReason,
+    ResumeSessionRequest, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Error, Lines, Result, Role};
-use orbcode_app_server::AppServer;
 use orbcode_app_server_client::AppClient;
 use orbcode_app_server_protocol::{RequestId, ResponseResult, ServerRequestEnvelope, StreamEvent};
 use orbcode_protocol::format_tool_title;
@@ -31,6 +32,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use capabilities::initialize_response;
 use server_requests::{deny_pending_server_requests, server_request_pump};
+use session_controls::{handle_set_config_option, handle_set_mode};
 use sessions::{
     handle_close_session, handle_delete_session, handle_list_sessions, handle_load_session,
     handle_new_session, handle_prompt, handle_resume_session,
@@ -48,7 +50,6 @@ const ACP_ASK_OPTION_PREFIX: &str = "ask_user_option_";
 
 struct AcpSdkState {
     client: Arc<AppClient>,
-    app_server: AppServer,
     launch_cwd: PathBuf,
     sessions: Mutex<HashMap<String, AcpSessionState>>,
     pending_server_requests: Mutex<HashMap<String, Vec<PendingServerRequest>>>,
@@ -110,7 +111,6 @@ impl<Counterpart: Role> ConnectTo<Counterpart> for EofAwareStdio {
 impl AcpSdkState {
     fn new(
         client: Arc<AppClient>,
-        app_server: AppServer,
         server_request_rx: Option<mpsc::Receiver<ServerRequestEnvelope>>,
     ) -> Self {
         let launch_cwd = std::env::current_dir().map_or_else(
@@ -119,7 +119,6 @@ impl AcpSdkState {
         );
         Self {
             client,
-            app_server,
             launch_cwd,
             sessions: Mutex::new(HashMap::new()),
             pending_server_requests: Mutex::new(HashMap::new()),
@@ -128,18 +127,9 @@ impl AcpSdkState {
     }
 }
 
-pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()> {
-    let client = Arc::new(
-        AppClient::new(app_server.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
-    );
+pub(crate) async fn run_acp_adapter(client: Arc<AppClient>) -> anyhow::Result<()> {
     let server_request_rx = client.take_server_request_receiver().await;
-    let state = Arc::new(AcpSdkState::new(
-        Arc::clone(&client),
-        app_server,
-        server_request_rx,
-    ));
+    let state = Arc::new(AcpSdkState::new(Arc::clone(&client), server_request_rx));
     let (stdio, stdin_eof_rx) = EofAwareStdio::new();
 
     let result = Agent
@@ -148,6 +138,24 @@ pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()>
         .on_receive_request(
             async move |initialize: InitializeRequest, responder, _connection| {
                 responder.respond(initialize_response(initialize))
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: SetSessionModeRequest, responder, _connection| {
+                    handle_set_mode(Arc::clone(&state), request, responder).await
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: SetSessionConfigOptionRequest, responder, _connection| {
+                    handle_set_config_option(Arc::clone(&state), request, responder).await
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -252,10 +260,9 @@ async fn cleanup_all_sessions(state: &AcpSdkState) {
             tracing::warn!(%session_id, %err, "ACP stdio cleanup cancel failed");
         }
         deny_pending_server_requests(state, &session_id).await;
-        state
-            .app_server
-            .remove_session_mcp_servers(&session_id)
-            .await;
+        if let Err(err) = state.client.cleanup_session(&session_id).await {
+            tracing::warn!(%session_id, %err, "ACP stdio cleanup failed");
+        }
     }
 }
 

@@ -20,6 +20,11 @@ pub const SESSION_ACP_LOAD_PREFLIGHT: &str = "session/acp_load_preflight";
 pub const SESSION_ACP_LOAD_SETUP: &str = "session/acp_load_setup";
 pub const SESSION_ACP_RESUME_SETUP: &str = "session/acp_resume_setup";
 pub const SESSION_ACP_DELETE: &str = "session/acp_delete";
+pub const SESSION_CONTROL_STATE: &str = "session/control_state";
+pub const SESSION_SET_PERMISSION_MODE: &str = "session/set_permission_mode";
+pub const SESSION_SET_MODEL: &str = "session/set_model";
+pub const SESSION_SET_EFFORT: &str = "session/set_effort";
+pub const SESSION_CLEANUP: &str = "session/cleanup";
 
 // ---------------------------------------------------------------------------
 // Turn

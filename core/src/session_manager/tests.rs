@@ -20,6 +20,7 @@ mod overview_history;
 mod permissions;
 mod provider_streaming_retry;
 mod queued_inject_tool_refresh;
+mod session_controls;
 mod session_storage;
 mod support;
 mod tool_results_progress;

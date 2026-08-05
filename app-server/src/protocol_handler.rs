@@ -56,6 +56,13 @@ impl AppServer {
             method::SESSION_ACP_LOAD_SETUP => self.handle_session_acp_load_setup(params).await,
             method::SESSION_ACP_RESUME_SETUP => self.handle_session_acp_resume_setup(params).await,
             method::SESSION_ACP_DELETE => self.handle_session_acp_delete(params).await,
+            method::SESSION_CONTROL_STATE => self.handle_session_control_state(params),
+            method::SESSION_SET_PERMISSION_MODE => {
+                self.handle_session_set_permission_mode(params).await
+            }
+            method::SESSION_SET_MODEL => self.handle_session_set_model(params).await,
+            method::SESSION_SET_EFFORT => self.handle_session_set_effort(params).await,
+            method::SESSION_CLEANUP => self.handle_session_cleanup(params).await,
             // Turn
             method::TURN_SUBMIT => self.handle_turn_submit(params).await,
             method::TURN_STEER => self.handle_turn_steer(params).await,

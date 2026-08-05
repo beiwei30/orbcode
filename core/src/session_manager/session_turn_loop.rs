@@ -94,7 +94,7 @@ impl SessionManager {
         cancel_flag: Arc<AtomicBool>,
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) {
-        let permissions = self.permission_context();
+        let permissions = self.permission_context_for_session(session_id);
         let additional_directories = self.additional_directories();
 
         // Build an initial context snapshot for session hints so the session
@@ -310,7 +310,7 @@ impl SessionManager {
                     prompt,
                     context.clone(),
                     &turn_state.synthetic_messages,
-                    true,
+                    self.session_exposes_tools(session_id),
                     true,
                 )
                 .await

@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use orbcode_config::{
-    AppConfig, EditorModeSetting, ModelOption, PermissionRuleSettingKind,
-    PermissionRuleSettingsUpdate, RuntimeModelOverride, ThemeSetting, add_permission_rule_setting,
-    remove_permission_rule_setting, update_editor_mode_setting, update_model_setting,
-    update_theme_setting,
+    AppConfig, EditorModeSetting, ModelCapability, ModelOption, PermissionMode,
+    PermissionRuleSettingKind, PermissionRuleSettingsUpdate, RuntimeModelOverride, ThemeSetting,
+    add_permission_rule_setting, remove_permission_rule_setting, update_editor_mode_setting,
+    update_model_setting, update_theme_setting,
 };
 use orbcode_model_provider::{ProviderDescriptor, supported_providers};
 use orbcode_protocol::EffortLevel;
 
-use super::SessionManager;
+use super::{SessionControlOverrides, SessionManager};
 use crate::{
     CoreError,
     permissions::{PermissionContext, normalize_permission_rule_for_edit},
@@ -22,6 +22,231 @@ impl SessionManager {
 
     pub fn effective_config(&self) -> AppConfig {
         self.runtime_state.effective_config(&self.config)
+    }
+
+    /// Resolve the immutable configuration view used by a particular session's
+    /// next turn. Session controls never modify process-global settings.
+    pub fn effective_config_for_session(&self, session_id: &str) -> AppConfig {
+        let mut config = self.effective_config();
+        let Some(controls) = self.session_controls_read().get(session_id).cloned() else {
+            return config;
+        };
+        config.apply_runtime_model_override(controls.model.as_deref());
+        config.permission_mode = Some(controls.permission_mode);
+        if let Some(allow_tools) = controls.permission_mode.default_allow_tools() {
+            config.allow_tools = allow_tools;
+        }
+        if let Some(allow_network) = controls.permission_mode.default_allow_network() {
+            config.allow_network = allow_network;
+        }
+        config
+    }
+
+    pub fn register_session_controls(&self, session: &orbcode_protocol::SessionRecord) {
+        let config = self.effective_config();
+        let configured_permission_mode = config.permission_mode.unwrap_or(PermissionMode::Default);
+        let permission_mode = match configured_permission_mode {
+            PermissionMode::Default
+            | PermissionMode::AcceptEdits
+            | PermissionMode::Plan
+            | PermissionMode::DontAsk => configured_permission_mode,
+            PermissionMode::BypassPermissions | PermissionMode::Auto => PermissionMode::Default,
+        };
+        let model = config.provider_model_setting();
+        let effort = session
+            .session_effort
+            .or_else(|| self.runtime_effort_override());
+        self.session_controls_write()
+            .entry(session.session_id.clone())
+            .or_insert(SessionControlOverrides {
+                permission_mode,
+                model,
+                effort,
+            });
+    }
+
+    pub fn remove_session_controls(&self, session_id: &str) {
+        self.session_controls_write().remove(session_id);
+    }
+
+    pub fn session_permission_mode(&self, session_id: &str) -> Result<PermissionMode, CoreError> {
+        self.session_controls_read()
+            .get(session_id)
+            .map(|controls| controls.permission_mode)
+            .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))
+    }
+
+    pub fn session_effort_level(&self, session_id: &str) -> Result<Option<EffortLevel>, CoreError> {
+        self.session_controls_read()
+            .get(session_id)
+            .map(|controls| controls.effort)
+            .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))
+    }
+
+    pub fn session_model_options(&self, session_id: &str) -> Result<Vec<ModelOption>, CoreError> {
+        let controls = self
+            .session_controls_read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))?;
+        let mut config = self.effective_config();
+        config.apply_runtime_model_override(controls.model.as_deref());
+        Ok(config.model_options_for_setting(controls.model.as_deref()))
+    }
+
+    pub fn session_effort_options(&self, session_id: &str) -> Result<Vec<EffortLevel>, CoreError> {
+        let config = self.effective_config_for_session(session_id);
+        let capabilities = config
+            .provider_model_resolution(config.default_provider)
+            .capabilities;
+        if !capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                ModelCapability::Effort
+                    | ModelCapability::MaxEffort
+                    | ModelCapability::XHighEffort
+                    | ModelCapability::Thinking
+                    | ModelCapability::AdaptiveThinking
+            )
+        }) {
+            return Ok(Vec::new());
+        }
+        let mut options = vec![EffortLevel::Low, EffortLevel::Medium, EffortLevel::High];
+        if capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                ModelCapability::MaxEffort
+                    | ModelCapability::XHighEffort
+                    | ModelCapability::Thinking
+                    | ModelCapability::AdaptiveThinking
+            )
+        }) {
+            options.push(EffortLevel::Max);
+        }
+        Ok(options)
+    }
+
+    pub async fn set_session_permission_mode(
+        &self,
+        session_id: &str,
+        mode: PermissionMode,
+    ) -> Result<(), CoreError> {
+        if !matches!(
+            mode,
+            PermissionMode::Default
+                | PermissionMode::AcceptEdits
+                | PermissionMode::Plan
+                | PermissionMode::DontAsk
+        ) {
+            return Err(CoreError::Config(format!(
+                "permission mode {} is not available for session controls",
+                mode.as_str()
+            )));
+        }
+        self.ensure_session_controls_mutable(session_id).await?;
+        self.session_controls_write()
+            .get_mut(session_id)
+            .expect("session controls validated before mutation")
+            .permission_mode = mode;
+        Ok(())
+    }
+
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<(), CoreError> {
+        self.ensure_session_controls_mutable(session_id).await?;
+        let model = model.and_then(|model| {
+            let trimmed = model.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+        if !self
+            .session_model_options(session_id)?
+            .iter()
+            .any(|option| option.value == model)
+        {
+            return Err(CoreError::Config(format!(
+                "model option {} is not available for session {session_id}",
+                model.as_deref().unwrap_or("default")
+            )));
+        }
+        self.session_controls_write()
+            .get_mut(session_id)
+            .expect("session controls validated before mutation")
+            .model = model;
+
+        let available_effort = self.session_effort_options(session_id)?;
+        let mut controls = self.session_controls_write();
+        let controls = controls
+            .get_mut(session_id)
+            .expect("session controls validated before mutation");
+        if controls
+            .effort
+            .is_some_and(|effort| !available_effort.contains(&effort))
+        {
+            controls.effort = None;
+        }
+        Ok(())
+    }
+
+    pub async fn set_session_effort(
+        &self,
+        session_id: &str,
+        effort: Option<EffortLevel>,
+    ) -> Result<(), CoreError> {
+        self.ensure_session_controls_mutable(session_id).await?;
+        let available = self.session_effort_options(session_id)?;
+        if effort.is_some_and(|effort| !available.contains(&effort)) {
+            return Err(CoreError::Config(format!(
+                "effort option {} is not available for session {session_id}",
+                effort.expect("checked Some").as_str()
+            )));
+        }
+        self.session_controls_write()
+            .get_mut(session_id)
+            .expect("session controls validated before mutation")
+            .effort = effort;
+        Ok(())
+    }
+
+    pub fn session_exposes_tools(&self, session_id: &str) -> bool {
+        !matches!(
+            self.session_controls_read()
+                .get(session_id)
+                .map(|controls| controls.permission_mode),
+            Some(PermissionMode::Plan)
+        )
+    }
+
+    async fn ensure_session_controls_mutable(&self, session_id: &str) -> Result<(), CoreError> {
+        if !self.session_controls_read().contains_key(session_id) {
+            return Err(CoreError::SessionNotFound(session_id.to_string()));
+        }
+        if self.active_turns.has_active_session(session_id).await {
+            return Err(CoreError::ActiveTurn(session_id.to_string()));
+        }
+        Ok(())
+    }
+
+    fn session_controls_read(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, std::collections::HashMap<String, SessionControlOverrides>>
+    {
+        match self.session_controls.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn session_controls_write(
+        &self,
+    ) -> std::sync::RwLockWriteGuard<'_, std::collections::HashMap<String, SessionControlOverrides>>
+    {
+        match self.session_controls.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     pub fn runtime_model_override(&self) -> RuntimeModelOverride {
@@ -132,6 +357,20 @@ impl SessionManager {
     pub fn permission_context(&self) -> PermissionContext {
         self.permission_runtime
             .permission_context(&self.effective_config(), self.additional_directories())
+    }
+
+    pub fn permission_context_for_session(&self, session_id: &str) -> PermissionContext {
+        let config = self.effective_config_for_session(session_id);
+        let mut permissions = self
+            .permission_runtime
+            .permission_context(&config, self.additional_directories());
+        if self.session_controls_read().contains_key(session_id) {
+            // A session-scoped mode must not inherit another client's
+            // process-global allow-all switch.
+            permissions.allow_tools = config.allow_tools;
+            permissions.allow_network = config.allow_network;
+        }
+        permissions
     }
 
     pub async fn add_configured_permission_rule(

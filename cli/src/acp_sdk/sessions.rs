@@ -15,6 +15,7 @@ use orbcode_protocol::{SessionRecord, SessionStatus, SessionSummary};
 use super::mcp_setup::acp_mcp_servers_to_configs;
 use super::replay::replay_updates_for_session;
 use super::server_requests::deny_pending_server_requests;
+use super::session_controls::{acp_config_options, acp_mode_state, control_state};
 use super::tool_updates::send_session_update;
 use super::{
     AcpSdkState, AcpSessionState, finish_prompt_generation, internal_error, invalid_params,
@@ -134,12 +135,20 @@ pub(super) async fn handle_new_session(
         .map_err(|e| internal_error(format!("session bootstrap failed: {e}")))?;
 
     let session_id = bootstrap.session.session_id;
+    let controls = match control_state(&state, &session_id).await {
+        Ok(controls) => controls,
+        Err(error) => return responder.respond_with_error(error),
+    };
     state
         .sessions
         .lock()
         .await
         .insert(session_id.clone(), AcpSessionState::default());
-    responder.respond(NewSessionResponse::new(SessionId::new(session_id)))
+    responder.respond(
+        NewSessionResponse::new(SessionId::new(session_id))
+            .modes(acp_mode_state(&controls))
+            .config_options(acp_config_options(&controls)),
+    )
 }
 
 pub(super) async fn handle_load_session(
@@ -232,11 +241,20 @@ pub(super) async fn handle_load_session(
         .entry(session_id.clone())
         .or_default();
 
+    let controls = match control_state(&state, &session_id).await {
+        Ok(controls) => controls,
+        Err(error) => return responder.respond_with_error(error),
+    };
+
     for update in updates {
         send_session_update(&connection, &session_id, update)?;
     }
 
-    responder.respond(LoadSessionResponse::default())
+    responder.respond(
+        LoadSessionResponse::new()
+            .modes(acp_mode_state(&controls))
+            .config_options(acp_config_options(&controls)),
+    )
 }
 
 pub(super) async fn handle_resume_session(
@@ -320,7 +338,16 @@ pub(super) async fn handle_resume_session(
         .entry(session_id.clone())
         .or_default();
 
-    responder.respond(ResumeSessionResponse::new())
+    let controls = match control_state(&state, &session_id).await {
+        Ok(controls) => controls,
+        Err(error) => return responder.respond_with_error(error),
+    };
+
+    responder.respond(
+        ResumeSessionResponse::new()
+            .modes(acp_mode_state(&controls))
+            .config_options(acp_config_options(&controls)),
+    )
 }
 
 pub(super) async fn handle_delete_session(
@@ -355,10 +382,9 @@ pub(super) async fn handle_delete_session(
 
     state.sessions.lock().await.remove(&session_id);
     deny_pending_server_requests(&state, &session_id).await;
-    state
-        .app_server
-        .remove_session_mcp_servers(&session_id)
-        .await;
+    if let Err(err) = state.client.cleanup_session(&session_id).await {
+        tracing::warn!(%session_id, %err, "ACP session/delete cleanup failed");
+    }
 
     responder.respond(DeleteSessionResponse::new())
 }
@@ -458,6 +484,15 @@ pub(super) async fn handle_prompt(
     connection: ConnectionTo<Client>,
 ) -> Result<()> {
     let session_id = request.session_id.to_string();
+    let prompt = match normalize_prompt_blocks(&request.prompt) {
+        Ok(prompt) if !prompt.trim().is_empty() => prompt,
+        Ok(_) => {
+            return responder.respond_with_error(invalid_params(
+                "session/prompt requires at least one supported content block",
+            ));
+        }
+        Err(error) => return responder.respond_with_error(error),
+    };
     let prompt_generation = {
         let mut sessions = state.sessions.lock().await;
         let Some(session) = sessions.get_mut(&session_id) else {
@@ -475,14 +510,6 @@ pub(super) async fn handle_prompt(
         session.active_prompt_generation = Some(generation);
         generation
     };
-
-    let prompt = prompt_blocks_to_text(&request.prompt);
-    if prompt.trim().is_empty() {
-        finish_prompt_generation(&state, &session_id, prompt_generation).await;
-        return responder.respond_with_error(invalid_params(
-            "session/prompt requires at least one supported content block",
-        ));
-    }
 
     start_server_request_pump(&state, connection.clone()).await;
 
@@ -549,42 +576,108 @@ pub(super) async fn handle_close_session(
         tracing::warn!(%session_id, %err, "ACP session/close cancel failed");
     }
     deny_pending_server_requests(&state, &session_id).await;
-    state
-        .app_server
-        .remove_session_mcp_servers(&session_id)
-        .await;
+    if let Err(err) = state.client.cleanup_session(&session_id).await {
+        tracing::warn!(%session_id, %err, "ACP session/close cleanup failed");
+    }
 
     responder.respond(CloseSessionResponse::new())
 }
 
-pub(super) fn prompt_blocks_to_text(blocks: &[ContentBlock]) -> String {
-    let mut parts = Vec::new();
+const MAX_EMBEDDED_TEXT_BYTES: usize = 1024 * 1024;
+
+/// Validate ACP input before a turn is submitted and project supported context
+/// into a deterministic, source-attributed text form. Resource links are never
+/// fetched; their metadata is context only.
+pub(super) fn normalize_prompt_blocks(
+    blocks: &[ContentBlock],
+) -> std::result::Result<String, agent_client_protocol::Error> {
+    let mut prompt = String::new();
+    let mut embedded_text_bytes = 0usize;
     for block in blocks {
         match block {
-            ContentBlock::Text(text) => parts.push(text.text.clone()),
+            // ACP text blocks may be streaming chunks. Concatenating them
+            // without invented separators preserves their exact byte order.
+            ContentBlock::Text(text) => prompt.push_str(&text.text),
             ContentBlock::ResourceLink(link) => {
-                parts.push(format!("Resource: {} ({})", link.name, link.uri));
+                append_context_projection(
+                    &mut prompt,
+                    "ACP resource link; metadata only, not fetched",
+                    serde_json::json!({
+                        "type": "resource_link",
+                        "name": link.name,
+                        "uri": link.uri,
+                        "description": link.description,
+                        "media_type": link.mime_type,
+                        "title": link.title,
+                        "size": link.size,
+                    }),
+                );
             }
             ContentBlock::Resource(resource) => match &resource.resource {
                 EmbeddedResourceResource::TextResourceContents(text) => {
-                    parts.push(format!("Resource {}:\n{}", text.uri, text.text));
+                    embedded_text_bytes = embedded_text_bytes.saturating_add(text.text.len());
+                    if embedded_text_bytes > MAX_EMBEDDED_TEXT_BYTES {
+                        return Err(invalid_params(format!(
+                            "embedded text resources exceed the {} byte session/prompt limit",
+                            MAX_EMBEDDED_TEXT_BYTES
+                        )));
+                    }
+                    append_context_projection(
+                        &mut prompt,
+                        "ACP embedded text resource",
+                        serde_json::json!({
+                            "type": "embedded_text_resource",
+                            "uri": text.uri,
+                            "media_type": text.mime_type,
+                            "text": text.text,
+                        }),
+                    );
                 }
                 EmbeddedResourceResource::BlobResourceContents(blob) => {
-                    parts.push(format!("Binary resource: {}", blob.uri));
+                    return Err(invalid_params(format!(
+                        "binary ACP resource input is unsupported (uri: {}, media type: {}); provide text instead",
+                        blob.uri,
+                        blob.mime_type.as_deref().unwrap_or("unknown")
+                    )));
                 }
-                _ => parts.push("Unsupported embedded resource".to_string()),
+                _ => {
+                    return Err(invalid_params(
+                        "unknown embedded ACP resource input is unsupported; provide text instead",
+                    ));
+                }
             },
             ContentBlock::Image(image) => {
                 let label = image.uri.as_deref().unwrap_or("<inline image>");
-                parts.push(format!("Unsupported image content: {label}"));
+                return Err(invalid_params(format!(
+                    "ACP image input is unsupported ({label}, media type: {}); provide text instead",
+                    image.mime_type
+                )));
             }
             ContentBlock::Audio(audio) => {
-                parts.push(format!("Unsupported audio content: {}", audio.mime_type));
+                return Err(invalid_params(format!(
+                    "ACP audio input is unsupported (media type: {}); provide text instead",
+                    audio.mime_type
+                )));
             }
-            _ => parts.push("Unsupported ACP content block".to_string()),
+            _ => {
+                return Err(invalid_params(
+                    "unknown ACP content block is unsupported; provide text instead",
+                ));
+            }
         }
     }
-    parts.join("\n\n")
+    Ok(prompt)
+}
+
+fn append_context_projection(prompt: &mut String, label: &str, value: serde_json::Value) {
+    if !prompt.is_empty() && !prompt.ends_with('\n') {
+        prompt.push_str("\n\n");
+    }
+    prompt.push('[');
+    prompt.push_str(label);
+    prompt.push_str("]\n");
+    prompt.push_str(&value.to_string());
+    prompt.push_str("\n[/ACP context]\n\n");
 }
 
 #[cfg(test)]
@@ -635,17 +728,60 @@ mod tests {
     }
 
     #[test]
-    fn prompt_blocks_to_text_supports_text_and_resource_link() {
-        let text = prompt_blocks_to_text(&[
+    fn normalize_prompt_blocks_preserves_text_and_resource_link_metadata() {
+        let link = agent_client_protocol::schema::ResourceLink::new("README", "file:///README.md")
+            .description("Project guide")
+            .mime_type("text/markdown");
+        let text = normalize_prompt_blocks(&[
             ContentBlock::from("hello"),
-            ContentBlock::ResourceLink(agent_client_protocol::schema::ResourceLink::new(
-                "README",
-                "file:///README.md",
-            )),
-        ]);
+            ContentBlock::ResourceLink(link),
+        ])
+        .expect("supported prompt");
 
-        assert!(text.contains("hello"));
-        assert!(text.contains("Resource: README"));
+        assert!(text.starts_with("hello\n\n"));
+        assert!(text.contains("\"name\":\"README\""));
         assert!(text.contains("file:///README.md"));
+        assert!(text.contains("Project guide"));
+        assert!(text.contains("text/markdown"));
+    }
+
+    #[test]
+    fn normalize_prompt_blocks_preserves_adjacent_text_bytes_exactly() {
+        let text =
+            normalize_prompt_blocks(&[ContentBlock::from("hel"), ContentBlock::from("lo\nworld")])
+                .expect("text prompt");
+        assert_eq!(text, "hello\nworld");
+    }
+
+    #[test]
+    fn normalize_prompt_blocks_rejects_binary_without_placeholder_text() {
+        let error = normalize_prompt_blocks(&[ContentBlock::Image(
+            agent_client_protocol::schema::ImageContent::new("base64", "image/png"),
+        )])
+        .expect_err("image must be rejected");
+        let data = error.data.expect("actionable error data").to_string();
+        assert!(data.contains("image input is unsupported"));
+        assert!(!data.contains("Unsupported image content"));
+    }
+
+    #[test]
+    fn normalize_prompt_blocks_bounds_embedded_text() {
+        let resource = agent_client_protocol::schema::EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(
+                agent_client_protocol::schema::TextResourceContents::new(
+                    "x".repeat(MAX_EMBEDDED_TEXT_BYTES + 1),
+                    "file:///large.txt",
+                ),
+            ),
+        );
+        let error = normalize_prompt_blocks(&[ContentBlock::Resource(resource)])
+            .expect_err("oversized text must be rejected");
+        assert!(
+            error
+                .data
+                .expect("size error data")
+                .to_string()
+                .contains("exceed")
+        );
     }
 }

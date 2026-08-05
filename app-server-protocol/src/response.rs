@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use orbcode_config::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, ThemeSetting,
+    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionMode, ThemeSetting,
     TokenWarningOptions,
 };
 use orbcode_core::{ContextDiagnosticsReport, ContextUsageOverview, PermissionContext};
@@ -45,6 +45,32 @@ pub struct AcpLoadReplayPreflight {
 pub struct AcpDeleteSessionParams {
     pub session_id: String,
     pub cwd: PathBuf,
+}
+
+/// Canonical session-scoped controls consumed by headless clients and edge
+/// adapters. Values are resolved by app-server; adapters only project them into
+/// their protocol-specific shapes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionControlState {
+    pub session_id: String,
+    pub permission_mode: PermissionMode,
+    pub model_options: Vec<SessionModelOption>,
+    pub effort_level: Option<EffortLevel>,
+    pub effort_options: Vec<EffortLevel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionModelOption {
+    /// `None` denotes the provider's configured default.
+    pub value: Option<String>,
+    pub label: String,
+    pub description: String,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionCleanupResult {
+    pub removed_mcp_server_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

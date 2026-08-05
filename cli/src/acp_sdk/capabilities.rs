@@ -1,7 +1,8 @@
 use agent_client_protocol::schema::{
     AgentCapabilities, Implementation, InitializeRequest, InitializeResponse, McpCapabilities,
-    SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionCloseCapabilities,
-    SessionDeleteCapabilities, SessionListCapabilities, SessionResumeCapabilities,
+    PromptCapabilities, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
+    SessionCloseCapabilities, SessionDeleteCapabilities, SessionListCapabilities,
+    SessionResumeCapabilities,
 };
 
 pub(super) fn initialize_response(initialize: InitializeRequest) -> InitializeResponse {
@@ -10,6 +11,7 @@ pub(super) fn initialize_response(initialize: InitializeRequest) -> InitializeRe
             AgentCapabilities::new()
                 .load_session(true)
                 .mcp_capabilities(McpCapabilities::new().http(true))
+                .prompt_capabilities(PromptCapabilities::new().embedded_context(true))
                 .session_capabilities(
                     SessionCapabilities::new()
                         .additional_directories(SessionAdditionalDirectoriesCapabilities::new())
@@ -83,7 +85,7 @@ mod tests {
         );
         assert!(!capabilities.prompt_capabilities.image);
         assert!(!capabilities.prompt_capabilities.audio);
-        assert!(!capabilities.prompt_capabilities.embedded_context);
+        assert!(capabilities.prompt_capabilities.embedded_context);
     }
 
     #[test]

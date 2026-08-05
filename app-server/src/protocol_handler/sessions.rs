@@ -1,4 +1,7 @@
-use orbcode_app_server_protocol::{AcpDeleteSessionParams, BootstrapParams, ResponseResult};
+use orbcode_app_server_protocol::{
+    AcpDeleteSessionParams, BootstrapParams, ResponseResult, SessionIdParams,
+    SetSessionEffortParams, SetSessionModelParams, SetSessionPermissionModeParams,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -196,5 +199,48 @@ impl AppServer {
             Ok(()) => super::success_empty(),
             Err(e) => core_error(e),
         }
+    }
+
+    pub(super) fn handle_session_control_state(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        match self.session_control_state(&p.session_id) {
+            Ok(state) => success(state),
+            Err(e) => core_error(e),
+        }
+    }
+
+    pub(super) async fn handle_session_set_permission_mode(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: SetSessionPermissionModeParams = try_parse!(params);
+        match self
+            .set_session_permission_mode(&p.session_id, p.mode)
+            .await
+        {
+            Ok(state) => success(state),
+            Err(e) => core_error(e),
+        }
+    }
+
+    pub(super) async fn handle_session_set_model(&self, params: Option<Value>) -> ResponseResult {
+        let p: SetSessionModelParams = try_parse!(params);
+        match self.set_session_model(&p.session_id, p.model).await {
+            Ok(state) => success(state),
+            Err(e) => core_error(e),
+        }
+    }
+
+    pub(super) async fn handle_session_set_effort(&self, params: Option<Value>) -> ResponseResult {
+        let p: SetSessionEffortParams = try_parse!(params);
+        match self.set_session_effort(&p.session_id, p.effort).await {
+            Ok(state) => success(state),
+            Err(e) => core_error(e),
+        }
+    }
+
+    pub(super) async fn handle_session_cleanup(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        success(self.cleanup_session(&p.session_id).await)
     }
 }
