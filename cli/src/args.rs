@@ -2,9 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use orbcode_app_server::{
-    AppConfigOverrides, AuthMethod, McpTransport, PermissionMode, ProviderId, parse_tool_rule_list,
-};
+use orbcode_app_server::{AppConfigOverrides, PermissionMode, ProviderId, parse_tool_rule_list};
+use orbcode_app_server_client::{AuthMethod, McpTransport};
 use orbcode_protocol::SandboxMode;
 
 use crate::build_info;

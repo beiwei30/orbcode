@@ -42,7 +42,7 @@ pub fn transcript_research_fixture_state() -> TuiState {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "glob-1".to_string(),
-                        content: "Cargo.toml".to_string(),
+                        content: "Cargo.toml".to_string().into(),
                         is_error: false,
                         metadata: Some(
                             "{\"status\":\"completed\",\"summary\":\"Searched for workspace manifests.\"}"
@@ -51,7 +51,7 @@ pub fn transcript_research_fixture_state() -> TuiState {
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "list-1".to_string(),
-                        content: "total 60".to_string(),
+                        content: "total 60".to_string().into(),
                         is_error: false,
                         metadata: Some(
                             "{\"status\":\"completed\",\"summary\":\"Listed workspace files.\"}"
@@ -82,7 +82,7 @@ pub fn transcript_research_fixture_state() -> TuiState {
                     content: "/Users/user/github/sample-workspace-main/crates/render-fixtures\n\
 total 60\n\
 drwxr-xr-x 16 user staff 512 Apr 22 14:40 ."
-                        .to_string(),
+                        .to_string().into(),
                     is_error: false,
                     metadata: Some(
                         "{\"status\":\"completed\",\"summary\":\"Listed workspace files.\"}"
@@ -120,7 +120,7 @@ pub fn transcript_workflow_cards_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "task-update".to_string(),
-                    content: String::new(),
+                    content: String::new().into(),
                     is_error: false,
                     metadata: Some("{\"status\":\"completed\",\"summary\":\"Updated task `transcript-rendering`.\",\"changedPaths\":[\"/tmp/tasks/transcript-rendering.json\"]}".to_string()),
                 }],
@@ -138,7 +138,7 @@ pub fn transcript_workflow_cards_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "skill-1".to_string(),
-                    content: String::new(),
+                    content: String::new().into(),
                     is_error: false,
                     metadata: Some(
                         "{\"status\":\"completed\",\"summary\":\"Loaded skill `rust-review`.\"}"
@@ -158,7 +158,7 @@ pub fn transcript_workflow_cards_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "lsp-1".to_string(),
-                    content: String::new(),
+                    content: String::new().into(),
                     is_error: false,
                     metadata: Some(
                         "{\"status\":\"completed\",\"summary\":\"Found 1 definition for `main`.\"}"
@@ -178,7 +178,7 @@ pub fn transcript_workflow_cards_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "mcp-1".to_string(),
-                    content: String::new(),
+                    content: String::new().into(),
                     is_error: false,
                     metadata: Some(
                         "{\"status\":\"completed\",\"summary\":\"Invoked MCP tool `inspect` on `docs`.\"}"
@@ -242,13 +242,13 @@ pub fn transcript_typescript_terminal_excerpt_fixture_state() -> TuiState {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "glob-1".to_string(),
-                        content: "crates/render-fixtures/Cargo.toml".to_string(),
+                        content: "crates/render-fixtures/Cargo.toml".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "list-1".to_string(),
-                        content: "total 4".to_string(),
+                        content: "total 4".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -266,7 +266,7 @@ pub fn transcript_typescript_terminal_excerpt_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-pwd".to_string(),
-                    content: format!("{sample_root}/crates/render-fixtures"),
+                    content: format!("{sample_root}/crates/render-fixtures").into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -337,67 +337,67 @@ pub fn transcript_typescript_terminal_excerpt_fixture_state() -> TuiState {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "search-1".to_string(),
-                        content: "src".to_string(),
+                        content: "src".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "search-2".to_string(),
-                        content: "src/index.tsx:1:import { renderApp } from \"./app\"".to_string(),
+                        content: "src/index.tsx:1:import { renderApp } from \"./app\"".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-1".to_string(),
-                        content: "120 lines".to_string(),
+                        content: "120 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-2".to_string(),
-                        content: "90 lines".to_string(),
+                        content: "90 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-3".to_string(),
-                        content: "80 lines".to_string(),
+                        content: "80 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-4".to_string(),
-                        content: "140 lines".to_string(),
+                        content: "140 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-5".to_string(),
-                        content: "75 lines".to_string(),
+                        content: "75 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-6".to_string(),
-                        content: "30 lines".to_string(),
+                        content: "30 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-7".to_string(),
-                        content: "55 lines".to_string(),
+                        content: "55 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "read-8".to_string(),
-                        content: "65 lines".to_string(),
+                        content: "65 lines".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "list-2".to_string(),
-                        content: "src/components".to_string(),
+                        content: "src/components".to_string().into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -417,7 +417,7 @@ pub fn transcript_typescript_terminal_excerpt_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-wc".to_string(),
-                    content: format!("2799\n{cwd_reset}"),
+                    content: format!("2799\n{cwd_reset}").into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -436,7 +436,7 @@ pub fn transcript_typescript_terminal_excerpt_fixture_state() -> TuiState {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-head".to_string(),
-                    content: format!("{head_lines}\n{cwd_reset}"),
+                    content: format!("{head_lines}\n{cwd_reset}").into(),
                     is_error: false,
                     metadata: None,
                 }],

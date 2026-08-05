@@ -133,15 +133,12 @@ async fn tui_interrupt_smoke_allows_immediate_followup_without_stale_events() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let session_id = state.session_id.clone();
     let mut turn_events = Some(
         app_server
-            .submit_turn_typed(&session_id, r#"#tool:bash {"command":"sleep 10"}"#)
+            .submit_turn_stream(&session_id, r#"#tool:bash {"command":"sleep 10"}"#)
             .await
             .expect("submit long bash turn"),
     );
@@ -179,7 +176,7 @@ async fn tui_interrupt_smoke_allows_immediate_followup_without_stale_events() {
 
     turn_events = Some(
         app_server
-            .submit_turn_typed(&session_id, "new turn after tui interrupt")
+            .submit_turn_stream(&session_id, "new turn after tui interrupt")
             .await
             .expect("submit followup turn"),
     );
@@ -217,7 +214,7 @@ async fn tui_interrupt_smoke_allows_immediate_followup_without_stale_events() {
     assert!(state.live_tool_cells.is_empty());
 
     let resumed = app_server
-        .bootstrap_typed(Some(&session_id))
+        .bootstrap(Some(&session_id))
         .await
         .expect("reload session");
     let resumed_messages = resumed
@@ -280,15 +277,12 @@ async fn tui_provider_interrupt_smoke_allows_immediate_followup() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let session_id = state.session_id.clone();
     let mut turn_events = Some(
         app_server
-            .submit_turn_typed(&session_id, "provider wait before interrupt")
+            .submit_turn_stream(&session_id, "provider wait before interrupt")
             .await
             .expect("submit provider wait turn"),
     );
@@ -331,7 +325,7 @@ async fn tui_provider_interrupt_smoke_allows_immediate_followup() {
 
     turn_events = Some(
         app_server
-            .submit_turn_typed(&session_id, "new turn after provider interrupt")
+            .submit_turn_stream(&session_id, "new turn after provider interrupt")
             .await
             .expect("submit provider followup turn"),
     );
@@ -378,7 +372,7 @@ async fn tui_provider_interrupt_smoke_allows_immediate_followup() {
     server.shutdown_and_join();
 
     let resumed = app_server
-        .bootstrap_typed(Some(&session_id))
+        .bootstrap(Some(&session_id))
         .await
         .expect("reload session");
     assert!(
@@ -438,10 +432,7 @@ async fn tui_large_bash_handoff_provider_snapshot_stays_bounded() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let session_id = state.session_id.clone();
     let prompt = format!(
@@ -451,7 +442,7 @@ async fn tui_large_bash_handoff_provider_snapshot_stays_bounded() {
         })
     );
     let mut turn_events = app_server
-        .submit_turn_typed(&session_id, &prompt)
+        .submit_turn_stream(&session_id, &prompt)
         .await
         .expect("submit large bash turn");
 
@@ -902,7 +893,7 @@ fn turn_finished_status_includes_agent_tool_result_tokens() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "agent-tool".to_string(),
-                content: "agent result".to_string(),
+                content: "agent result".to_string().into(),
                 is_error: false,
                 metadata: Some(serde_json::json!({"totalTokens": 900}).to_string()),
             }],

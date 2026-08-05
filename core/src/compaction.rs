@@ -2,8 +2,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use orbcode_config::{AppConfig, auto_compact_threshold, effective_context_window_size};
+pub use orbcode_protocol::CompactSessionResult;
 use orbcode_protocol::{
-    MessageRole, ProviderId, SessionRecord, TokenUsage, TranscriptBlock, TranscriptMessage,
+    MessageRole, ProviderId, SessionRecord, TranscriptBlock, TranscriptMessage,
     rough_token_count_estimation_for_messages, visible_content_from_blocks,
 };
 
@@ -48,16 +49,6 @@ pub(crate) const MICROCOMPACT_MIN_RESULT_CHARS: usize = 200;
 
 /// Head-preview length retained when truncating an oversized message in place.
 const SNIP_PREVIEW_CHARS: usize = 200;
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct CompactSessionResult {
-    pub session: SessionRecord,
-    pub original_message_count: usize,
-    pub compacted_message_count: usize,
-    pub provider_generated: bool,
-    pub fallback_reason: Option<String>,
-    pub usage: Option<TokenUsage>,
-}
 
 pub(crate) struct CompactProviderStreamSink {
     accumulator: ProviderStreamAccumulator,
@@ -586,7 +577,7 @@ pub(crate) fn microcompact_tool_results(
             {
                 continue;
             }
-            *content = MICROCOMPACT_TOOL_RESULT_PLACEHOLDER.to_string();
+            content.replace_text(MICROCOMPACT_TOOL_RESULT_PLACEHOLDER);
             *metadata = None;
             cleared += 1;
             changed = true;
@@ -635,6 +626,7 @@ pub(crate) fn lightweight_compaction_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbcode_protocol::TokenUsage;
 
     #[test]
     fn modeled_compaction_summary_skips_empty_previews() {
@@ -773,7 +765,7 @@ mod tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: tool_use_id.to_string(),
-                content: content.to_string(),
+                content: content.into(),
                 is_error: false,
                 metadata: Some("{\"status\":\"completed\"}".to_string()),
             }],
@@ -869,6 +861,50 @@ mod tests {
             messages[2].blocks.as_slice(),
             [TranscriptBlock::ToolResult { content, .. }] if content == &big
         ));
+    }
+
+    #[test]
+    fn microcompact_invalidates_loaded_structured_tool_result_payload() {
+        let original = serde_json::json!([
+            {"type": "text", "text": "x".repeat(1_000)},
+            {"type": "image", "source": {"data": "AA=="}}
+        ]);
+        let mut messages = vec![
+            TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-loaded".to_string(),
+                    content: orbcode_protocol::ToolResultContent::from_loaded(
+                        orbcode_protocol::TranscriptJsonField::Value(original),
+                    ),
+                    is_error: false,
+                    metadata: Some("{\"status\":\"completed\"}".to_string()),
+                }],
+            ),
+            TranscriptMessage::new(MessageRole::User, "current prompt"),
+        ];
+
+        assert_eq!(
+            microcompact_tool_results(&mut messages, 1, MICROCOMPACT_MIN_RESULT_CHARS),
+            1
+        );
+        let [
+            TranscriptBlock::ToolResult {
+                content, metadata, ..
+            },
+        ] = messages[0].blocks.as_slice()
+        else {
+            panic!("expected one tool result");
+        };
+        assert_eq!(content, MICROCOMPACT_TOOL_RESULT_PLACEHOLDER);
+        assert!(content.loaded_field().is_none());
+        assert_eq!(
+            content.transcript_field(),
+            orbcode_protocol::TranscriptJsonField::Value(serde_json::Value::String(
+                MICROCOMPACT_TOOL_RESULT_PLACEHOLDER.to_string()
+            ))
+        );
+        assert!(metadata.is_none());
     }
 
     #[test]

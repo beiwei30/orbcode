@@ -409,7 +409,7 @@ mod tests {
                     MessageRole::User,
                     vec![TranscriptBlock::ToolResult {
                         tool_use_id: format!("tool-use-{}", index - 1),
-                        content,
+                        content: content.into(),
                         is_error: false,
                         metadata: None,
                     }],
@@ -570,7 +570,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{index}"),
-                    content: format!("result for tool {index}"),
+                    content: format!("result for tool {index}").into(),
                     is_error: false,
                     metadata: None,
                 }],

@@ -260,7 +260,7 @@ async fn cleanup_all_sessions(state: &AcpSdkState) {
             tracing::warn!(%session_id, %err, "ACP stdio cleanup cancel failed");
         }
         deny_pending_server_requests(state, &session_id).await;
-        if let Err(err) = state.client.cleanup_session(&session_id).await {
+        if let Err(err) = state.client.acp_close_session(&session_id).await {
             tracing::warn!(%session_id, %err, "ACP stdio cleanup failed");
         }
     }

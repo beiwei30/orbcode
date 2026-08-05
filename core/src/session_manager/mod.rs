@@ -33,8 +33,8 @@ use orbcode_protocol::PermissionResolutionKind;
 #[cfg(test)]
 use orbcode_protocol::TurnCancellationKind;
 use orbcode_protocol::{
-    MessageRole, ProviderId, SessionRecord, SessionSummary, StreamEvent, TranscriptBlock,
-    TranscriptMessage, TurnContext, visible_content_from_blocks,
+    MessageRole, ProviderId, SessionRecord, SessionSummary, StreamEvent, ToolResultContent,
+    TranscriptBlock, TranscriptMessage, TurnContext, visible_content_from_blocks,
 };
 #[cfg(test)]
 use orbcode_session_store::PERSISTED_OUTPUT_TAG;
@@ -214,21 +214,14 @@ fn blocks_from_json_content(content: &Value) -> Vec<TranscriptBlock> {
                     input,
                 })
             }
-            RawContentBlock::ToolResult(tool_result) => {
-                let content = match tool_result.content {
-                    Some(Value::String(text)) => text,
-                    Some(value) => serde_json::to_string(&value).unwrap_or_default(),
-                    None => String::new(),
-                };
-                Some(TranscriptBlock::ToolResult {
-                    tool_use_id: tool_result
-                        .tool_use_id
-                        .unwrap_or_else(|| "tool-result".to_string()),
-                    content,
-                    is_error: tool_result.is_error.unwrap_or(false),
-                    metadata: None,
-                })
-            }
+            RawContentBlock::ToolResult(tool_result) => Some(TranscriptBlock::ToolResult {
+                tool_use_id: tool_result
+                    .tool_use_id
+                    .unwrap_or_else(|| "tool-result".to_string()),
+                content: ToolResultContent::from_loaded(tool_result.content),
+                is_error: tool_result.is_error.unwrap_or(false),
+                metadata: None,
+            }),
             RawContentBlock::Other(value) => value
                 .get("content")
                 .and_then(Value::as_str)

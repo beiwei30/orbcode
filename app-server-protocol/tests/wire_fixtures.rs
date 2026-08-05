@@ -656,6 +656,11 @@ fn method_constants_are_stable() {
         "session/acp_load_setup",
         "session/acp_resume_setup",
         "session/acp_delete",
+        "session/acp_close",
+        "session/control_state",
+        "session/set_permission_mode",
+        "session/set_model",
+        "session/set_effort",
         // Background
         "background/create",
         "background/list",
@@ -702,6 +707,13 @@ fn method_strings_pinned() {
     assert_eq!(method::SESSION_FORK, "session/fork");
     assert_eq!(method::SESSION_CLEAR, "session/clear");
     assert_eq!(method::SESSION_REWIND, "session/rewind");
+    assert_eq!(method::SESSION_CONTROL_STATE, "session/control_state");
+    assert_eq!(
+        method::SESSION_SET_PERMISSION_MODE,
+        "session/set_permission_mode"
+    );
+    assert_eq!(method::SESSION_SET_MODEL, "session/set_model");
+    assert_eq!(method::SESSION_SET_EFFORT, "session/set_effort");
     assert_eq!(method::TURN_SUBMIT, "turn/submit");
     assert_eq!(method::TURN_STEER, "turn/steer");
     assert_eq!(method::TURN_CANCEL, "turn/cancel");

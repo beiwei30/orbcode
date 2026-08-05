@@ -29,7 +29,7 @@ use crate::tui_runtime::terminal_session::{
 };
 
 pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) -> Result<String> {
-    let bootstrap = client.bootstrap_typed(requested_session.as_deref()).await?;
+    let bootstrap = client.bootstrap(requested_session.as_deref()).await?;
     let mut dynamic_specs = crate::dynamic_slash_commands::load_dynamic_slash_commands(
         &bootstrap.home_dir,
         &bootstrap.cwd,
@@ -60,24 +60,18 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
     if std::env::var_os("ORBCODE_TUI_FINAL_ANSWER_FIXTURE").is_some() {
         install_final_answer_fixture(&mut state);
     }
-    if let Ok(val) = client.permission_mode().await
-        && let Some(mode) = val["mode"].as_str().and_then(PermissionMode::parse)
+    if let Ok(result) = client.permission_mode().await
+        && let Some(mode) = PermissionMode::parse(&result.mode)
     {
         state.status.permission_mode = mode;
     }
     if let Ok(allow) = client.allow_all().await {
         state.status.allow_all = allow;
     }
-    if let Ok(val) = client.status_overview(&state.session_id).await {
-        if let Some(mode) = val["sandbox_mode"].as_str() {
-            state.status.sandbox_mode = mode.to_string();
-        }
-        if let Some(count) = val["background_job_count"].as_u64() {
-            state.status.bg_job_count = count as usize;
-        }
-        state.status.effort = serde_json::from_value(val["effort_level"].clone())
-            .ok()
-            .flatten();
+    if let Ok(overview) = client.status_overview(&state.session_id).await {
+        state.status.sandbox_mode = overview.sandbox_mode;
+        state.status.bg_job_count = overview.background_job_count;
+        state.status.effort = overview.effort_level;
     }
     state.status.git_branch = detect_git_branch(&state.cwd);
     let mut render_metrics = RenderMetricsRecorder::from_env()?;

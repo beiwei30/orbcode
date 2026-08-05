@@ -1118,6 +1118,143 @@ async fn agent_loop_cancellation_synthesizes_remaining_tool_results_in_order() {
 }
 
 #[tokio::test]
+async fn streamed_tool_cancellation_emits_one_terminal_event_per_tool_use_id() {
+    use crate::tool_flow::{
+        BufferedToolResult, BufferedToolUseCompletion, StreamedToolUseExecution, ToolUseOutcome,
+    };
+
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    manager
+        .append_message(
+            &session_id,
+            TranscriptMessage::new(MessageRole::User, "cancel streamed tools"),
+        )
+        .await
+        .expect("seed transcript");
+
+    let cancelled_handle = tokio::spawn(async {
+        Ok(BufferedToolUseCompletion {
+            outcome: ToolUseOutcome::Cancelled,
+            result: BufferedToolResult {
+                tool_use_id: "tool-cancelled".to_string(),
+                tool_name: "bash".to_string(),
+                content: INTERRUPTED_TOOL_RESULT.to_string(),
+                is_error: true,
+                metadata: None,
+                completion_kind: ToolUseCompletionKind::Interrupted,
+            },
+        })
+    });
+    let pending_handle = tokio::spawn(async {
+        tokio::time::sleep(StdDuration::from_secs(30)).await;
+        Ok(BufferedToolUseCompletion {
+            outcome: ToolUseOutcome::Continue,
+            result: BufferedToolResult {
+                tool_use_id: "tool-pending".to_string(),
+                tool_name: "bash".to_string(),
+                content: "unreached".to_string(),
+                is_error: false,
+                metadata: None,
+                completion_kind: ToolUseCompletionKind::Success,
+            },
+        })
+    });
+    let streamed = vec![
+        StreamedToolUseExecution::new(
+            "tool-cancelled".to_string(),
+            "bash".to_string(),
+            cancelled_handle,
+        ),
+        StreamedToolUseExecution::new(
+            "tool-pending".to_string(),
+            "bash".to_string(),
+            pending_handle,
+        ),
+    ];
+    let response = ProviderResponse {
+        provider: ProviderId::Anthropic,
+        fallback_from: None,
+        content: String::new(),
+        blocks: vec![
+            TranscriptBlock::ToolUse {
+                id: "tool-cancelled".to_string(),
+                name: "bash".to_string(),
+                input: r#"{"command":"printf cancelled"}"#.to_string(),
+            },
+            TranscriptBlock::ToolUse {
+                id: "tool-pending".to_string(),
+                name: "bash".to_string(),
+                input: r#"{"command":"printf pending"}"#.to_string(),
+            },
+        ],
+        stop_reason: Some("tool_use".to_string()),
+        usage: TokenUsage::default(),
+        deltas: Vec::new(),
+    };
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = manager
+        .finish_provider_response_with_streamed_tools(
+            &session_id,
+            Uuid::new_v4(),
+            "cancel streamed tools",
+            ToolRoundResponse::from_response_and_streamed_tool_uses(
+                response,
+                vec![
+                    ToolRoundToolUse::new(
+                        "tool-cancelled",
+                        "bash",
+                        r#"{"command":"printf cancelled"}"#,
+                    ),
+                    ToolRoundToolUse::new(
+                        "tool-pending",
+                        "bash",
+                        r#"{"command":"printf pending"}"#,
+                    ),
+                ],
+            ),
+            String::new(),
+            0,
+            false,
+            &tx,
+            Arc::new(AtomicBool::new(false)),
+            streamed,
+        )
+        .await
+        .expect("finish cancelled streamed round");
+    assert_eq!(outcome, TurnLoopOutcome::Cancelled);
+
+    let mut completed = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let StreamEvent::ToolUseCompleted {
+            tool_use_id, kind, ..
+        } = event
+        {
+            completed.push((tool_use_id, kind));
+        }
+    }
+    assert_eq!(
+        completed,
+        vec![
+            (
+                "tool-cancelled".to_string(),
+                ToolUseCompletionKind::Interrupted
+            ),
+            (
+                "tool-pending".to_string(),
+                ToolUseCompletionKind::Interrupted
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn agent_loop_streamed_tool_error_interrupts_pending_streamed_executions() {
     use crate::tool_flow::{
         BufferedToolResult, BufferedToolUseCompletion, StreamedToolUseExecution, ToolUseOutcome,
@@ -1772,7 +1909,7 @@ async fn aggregate_tool_result_budget_replaces_largest_group_members() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: format!("tool-{index}"),
-                content: "x".repeat(45_000),
+                content: "x".repeat(45_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1831,7 +1968,7 @@ async fn aggregate_tool_result_budget_skips_read_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-tool".to_string(),
-                content: "r".repeat(190_000),
+                content: "r".repeat(190_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1840,7 +1977,7 @@ async fn aggregate_tool_result_budget_skips_read_results() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-tool".to_string(),
-                content: "b".repeat(20_000),
+                content: "b".repeat(20_000).into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1912,7 +2049,7 @@ async fn provider_request_for_session_repairs_and_summarizes_tool_round_contract
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-2".to_string(),
-                    content: "src/lib.rs".to_string(),
+                    content: "src/lib.rs".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -2060,13 +2197,13 @@ async fn agent_loop_provider_request_strips_fallback_orphan_tool_results() {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-fallback-old".to_string(),
-                        content: "discarded fallback attempt".to_string(),
+                        content: "discarded fallback attempt".into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-current".to_string(),
-                        content: "current result".to_string(),
+                        content: "current result".into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -2265,7 +2402,7 @@ async fn persists_progress_messages_as_separate_transcript_entries() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "Done reading files.".to_string(),
+                    content: "Done reading files.".into(),
                     is_error: false,
                     metadata: Some(
                         json!({

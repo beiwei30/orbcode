@@ -65,11 +65,7 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let output_style_val = app_server.output_style_setting().await?;
-        let output_style = output_style_val["style"]
-            .as_str()
-            .unwrap_or("default")
-            .to_string();
+        let output_style = app_server.output_style_setting().await?.style;
         self.overlay = Some(OverlayState::ConfigPicker(
             ConfigPickerState::new_async(command, app_server, self.editor_mode, output_style)
                 .await?,
@@ -99,11 +95,7 @@ impl TuiState {
                 self.open_output_style_picker(&command, app_server).await?;
             }
             ConfigAction::CycleEffort => {
-                let effort_val = app_server.effort_level().await?;
-                let current_effort: Option<EffortLevel> =
-                    serde_json::from_value(effort_val["effort"].clone())
-                        .ok()
-                        .flatten();
+                let current_effort = app_server.effort_level().await?.effort;
                 let next = next_effort_choice(current_effort).as_effort();
                 let message =
                     set_effort_override_message(app_server, &self.session_id, next).await?;
@@ -140,16 +132,10 @@ impl ConfigPickerState {
         editor_mode: EditorMode,
         output_style: String,
     ) -> Result<Self> {
-        let model_val = app_server.model_name().await?;
-        let model_name = model_val["model_name"].as_str().unwrap_or("").to_string();
-        let theme_val = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(theme_val["theme"].as_str().unwrap_or("auto"))
-            .unwrap_or(ThemeSetting::Auto);
-        let effort_val = app_server.effort_level().await?;
-        let current_effort: Option<EffortLevel> =
-            serde_json::from_value(effort_val["effort"].clone())
-                .ok()
-                .flatten();
+        let model_name = app_server.model_name().await?.model_name;
+        let theme_result = app_server.theme_setting().await?;
+        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
+        let current_effort = app_server.effort_level().await?.effort;
         let options = config_options(
             model_name,
             theme,
@@ -176,16 +162,10 @@ impl ConfigPickerState {
         app_server: &AppClient,
         editor_mode: EditorMode,
     ) -> Result<()> {
-        let model_val = app_server.model_name().await?;
-        let model_name = model_val["model_name"].as_str().unwrap_or("").to_string();
-        let theme_val = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(theme_val["theme"].as_str().unwrap_or("auto"))
-            .unwrap_or(ThemeSetting::Auto);
-        let effort_val = app_server.effort_level().await?;
-        let current_effort: Option<EffortLevel> =
-            serde_json::from_value(effort_val["effort"].clone())
-                .ok()
-                .flatten();
+        let model_name = app_server.model_name().await?.model_name;
+        let theme_result = app_server.theme_setting().await?;
+        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
+        let current_effort = app_server.effort_level().await?.effort;
         self.all_options = config_options(
             model_name,
             theme,

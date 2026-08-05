@@ -27,7 +27,7 @@
     "session_mcp_servers": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/McpServerConfig"
+        "$ref": "#/$defs/McpServerInput"
       },
       "default": []
     },
@@ -38,7 +38,8 @@
     }
   },
   "$defs": {
-    "McpServerConfig": {
+    "McpServerInput": {
+      "description": "Secret-bearing input accepted by MCP upsert and session bootstrap methods.",
       "type": "object",
       "properties": {
         "id": {
@@ -129,6 +130,7 @@
       ]
     },
     "McpTransport": {
+      "description": "Transport selected for an MCP server.\n\nThis is a wire DTO. Runtime transport behavior remains owned by\n`orbcode-mcp` and is converted at the app-server boundary.",
       "type": "string",
       "enum": [
         "stdio",
@@ -151,6 +153,7 @@
       ]
     },
     "McpAuth": {
+      "description": "Authentication input accepted by MCP mutation methods.\n\nHeader values are intentionally possible here because this is a write\ncontract. Read methods use [`McpAuthOverview`] instead.",
       "oneOf": [
         {
           "type": "object",

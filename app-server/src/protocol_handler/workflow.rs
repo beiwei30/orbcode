@@ -1,6 +1,7 @@
-use orbcode_app_server_protocol::ResponseResult;
-use serde::Deserialize;
-use serde_json::json;
+use orbcode_app_server_protocol::{
+    ResponseResult, WorkflowListResult, WorkflowResumeParams, WorkflowStartDynamicParams,
+    WorkflowStartParams, WorkflowTaskResult,
+};
 
 use super::{core_error, success, try_parse};
 use crate::AppServer;
@@ -11,7 +12,7 @@ impl AppServer {
         _params: Option<serde_json::Value>,
     ) -> ResponseResult {
         match self.list_workflows().await {
-            Ok(workflows) => success(workflows),
+            Ok(workflows) => success(WorkflowListResult(workflows)),
             Err(error) => core_error(error),
         }
     }
@@ -20,19 +21,12 @@ impl AppServer {
         &self,
         params: Option<serde_json::Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            name: String,
-            #[serde(default)]
-            arguments: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: WorkflowStartParams = try_parse!(params);
         match self
             .start_workflow(&p.session_id, &p.name, &p.arguments)
             .await
         {
-            Ok(task_id) => success(json!({ "task_id": task_id })),
+            Ok(task_id) => success(WorkflowTaskResult { task_id }),
             Err(error) => core_error(error),
         }
     }
@@ -41,20 +35,12 @@ impl AppServer {
         &self,
         params: Option<serde_json::Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            name: String,
-            spec: serde_json::Value,
-            #[serde(default)]
-            arguments: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: WorkflowStartDynamicParams = try_parse!(params);
         match self
             .start_dynamic_workflow(&p.session_id, &p.name, p.spec, &p.arguments)
             .await
         {
-            Ok(task_id) => success(json!({ "task_id": task_id })),
+            Ok(task_id) => success(WorkflowTaskResult { task_id }),
             Err(error) => core_error(error),
         }
     }
@@ -63,13 +49,9 @@ impl AppServer {
         &self,
         params: Option<serde_json::Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            run_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: WorkflowResumeParams = try_parse!(params);
         match self.resume_workflow(&p.run_id).await {
-            Ok(task_id) => success(json!({ "task_id": task_id })),
+            Ok(task_id) => success(WorkflowTaskResult { task_id }),
             Err(error) => core_error(error),
         }
     }

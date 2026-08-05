@@ -525,7 +525,7 @@ fn take_history_lines_flushes_tool_output_with_long_finished_answer() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-search".to_string(),
-                    content: "20340 total".to_string(),
+                    content: "20340 total".to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -1489,7 +1489,7 @@ fn transcript_cells_from_messages_preserve_tool_cells_as_structured_state() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "file list".to_string(),
+                    content: "file list".to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -1532,13 +1532,13 @@ fn transcript_cells_split_multi_tool_assistant_messages_into_tool_rows() {
             vec![
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "/Users/user/github/sample-repo".to_string(),
+                    content: "/Users/user/github/sample-repo".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"summary\":\"Executed `pwd`.\"}".to_string()),
                 },
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-2".to_string(),
-                    content: "total 60\n-rw-r--r-- Cargo.toml".to_string(),
+                    content: "total 60\n-rw-r--r-- Cargo.toml".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"summary\":\"Executed `ls -la`.\"}".to_string()),
                 },

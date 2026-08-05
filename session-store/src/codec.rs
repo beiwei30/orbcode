@@ -72,6 +72,7 @@ pub fn tool_result_message(
     is_error: bool,
     metadata: Option<String>,
 ) -> TranscriptMessage {
+    let content = content.into();
     TranscriptMessage::from_blocks(
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
@@ -231,7 +232,7 @@ mod tests {
             message.blocks,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "result content".to_string(),
+                content: "result content".into(),
                 is_error: false,
                 metadata: Some(r#"{"status":"completed"}"#.to_string()),
             }]

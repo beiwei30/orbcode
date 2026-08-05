@@ -4,11 +4,10 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use orbcode_app_server_client::{
     AppClient, MemoryFileOverview, MemoryOverview, PermissionDecision, PermissionOverview,
-    WorkspaceDiff,
+    SandboxLocalSettings, SandboxSettingsUpdate, ThemeSetting, WorkspaceDiff,
 };
 use orbcode_config::{
-    ModelOption, OutputStyleOption, PermissionRuleSettingKind, SandboxLocalSettings,
-    SandboxSettingsUpdate, ThemeSetting, normalize_permission_rule_for_edit,
+    ModelOption, OutputStyleOption, PermissionRuleSettingKind, normalize_permission_rule_for_edit,
 };
 use orbcode_protocol::{EffortLevel, PermissionRequest, SessionSummary};
 use ratatui::{

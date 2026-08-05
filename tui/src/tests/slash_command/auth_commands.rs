@@ -21,10 +21,7 @@ async fn login_slash_command_shows_auth_status() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -64,10 +61,7 @@ async fn login_slash_command_stores_env_var_auth_metadata() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -126,10 +120,7 @@ async fn login_slash_command_rejects_direct_tokens() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -169,10 +160,7 @@ async fn submitted_slash_command_is_immediately_browsable_from_history() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.input = "/help".to_string();
     state.input_cursor = state.input.len();
@@ -214,10 +202,7 @@ async fn rejected_token_login_slash_command_is_not_added_to_history() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.input = "/login anthropic --token sk-ant-secret".to_string();
     state.input_cursor = state.input.len();
@@ -263,16 +248,13 @@ async fn logout_slash_command_removes_persisted_auth_metadata() {
         .unwrap()
         .auth_login(
             ProviderId::OpenAi,
-            AuthMethod::ApiKey,
+            orbcode_config::AuthMethod::ApiKey,
             None,
             Some("OPENAI_API_KEY".to_string()),
         )
         .await
         .expect("seed auth");
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -326,10 +308,7 @@ async fn logout_slash_command_removes_anthropic_oauth_credentials() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -380,10 +359,7 @@ async fn release_notes_slash_command_reads_cached_changelog() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.ui_version = "2.1.0".to_string();
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
@@ -423,10 +399,7 @@ async fn release_notes_slash_command_falls_back_to_changelog_link() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 

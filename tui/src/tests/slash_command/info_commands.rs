@@ -25,10 +25,7 @@ async fn instructions_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -185,10 +182,7 @@ async fn memory_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -298,10 +292,7 @@ async fn status_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -348,10 +339,7 @@ async fn context_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -421,10 +409,7 @@ async fn context_slash_command_full_flag_shows_diagnostics() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -479,10 +464,7 @@ async fn usage_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -535,10 +517,7 @@ async fn stats_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -591,10 +570,7 @@ async fn tools_slash_command_uses_local_output_registry() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 

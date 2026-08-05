@@ -255,7 +255,7 @@ fn model_picker_lines_at_narrow_40_col() {
 #[test]
 fn permission_picker_lines_at_narrow_40_col() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: false,
             provider_allow_network: false,

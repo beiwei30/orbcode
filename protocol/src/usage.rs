@@ -351,7 +351,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "abcdefghijklmnop".to_string(),
+                    content: "abcdefghijklmnop".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -383,7 +383,7 @@ mod tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "abcdefghijklmnop".to_string(),
+                content: "abcdefghijklmnop".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -402,7 +402,7 @@ mod tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-2".to_string(),
-                content: "qrstuvwxyzabcdef".to_string(),
+                content: "qrstuvwxyzabcdef".into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -433,7 +433,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "abcdefghijklmnop".to_string(),
+                    content: "abcdefghijklmnop".into(),
                     is_error: false,
                     metadata: Some("x".repeat(100_000)),
                 }],
@@ -456,7 +456,9 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "a".repeat(ROUGH_PROVIDER_TOOL_RESULT_MAX_CHARS + 50_000),
+                    content: "a"
+                        .repeat(ROUGH_PROVIDER_TOOL_RESULT_MAX_CHARS + 50_000)
+                        .into(),
                     is_error: false,
                     metadata: None,
                 }],

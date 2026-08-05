@@ -268,7 +268,7 @@ pub(crate) fn collect_tool_results_by_id(messages: &[TranscriptMessage]) -> Tool
                 results
                     .entry(tool_use_id.clone())
                     .or_insert_with(|| ToolResultRecord {
-                        content: content.clone(),
+                        content: content.to_string(),
                         is_error: *is_error,
                         metadata: metadata.clone(),
                     });

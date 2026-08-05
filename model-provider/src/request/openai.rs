@@ -118,10 +118,11 @@ fn openai_user_message(message: &TranscriptMessage) -> Vec<Value> {
                     content,
                     ..
                 } => {
+                    let provider_content = content.provider_string();
                     tool_messages.push(json!({
                         "role": "tool",
                         "tool_call_id": tool_use_id,
-                        "content": truncate_tool_result_for_provider(content),
+                        "content": truncate_tool_result_for_provider(&provider_content),
                     }));
                 }
                 _ => {}
@@ -230,5 +231,55 @@ pub(super) fn sanitize_openai_json_schema(schema: Value) -> Value {
                 .collect::<Vec<_>>(),
         ),
         value => value,
+    }
+}
+
+#[cfg(test)]
+mod tool_result_content_tests {
+    use orbcode_protocol::{ToolResultContent, TranscriptJsonField};
+
+    use super::*;
+
+    #[test]
+    fn structured_tool_result_is_complete_compact_json_string() {
+        let original = json!([
+            {"type": "text", "text": "first"},
+            {"type": "image", "source": {"data": "AA=="}},
+            {"payload": {"answer": 42}}
+        ]);
+        let message = TranscriptMessage::from_blocks(
+            MessageRole::User,
+            vec![TranscriptBlock::ToolResult {
+                tool_use_id: "call-1".to_string(),
+                content: ToolResultContent::from_loaded(TranscriptJsonField::Value(
+                    original.clone(),
+                )),
+                is_error: false,
+                metadata: None,
+            }],
+        );
+
+        let mapped = openai_message(&message);
+        let encoded = mapped[0]["content"].as_str().expect("tool content string");
+        assert_eq!(
+            serde_json::from_str::<Value>(encoded).expect("complete JSON"),
+            original
+        );
+    }
+
+    #[test]
+    fn absent_and_null_tool_results_map_to_empty_strings() {
+        for field in [TranscriptJsonField::Absent, TranscriptJsonField::Null] {
+            let message = TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "call-1".to_string(),
+                    content: ToolResultContent::from_loaded(field),
+                    is_error: false,
+                    metadata: None,
+                }],
+            );
+            assert_eq!(openai_message(&message)[0]["content"], "");
+        }
     }
 }

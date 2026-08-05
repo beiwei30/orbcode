@@ -62,13 +62,13 @@ async fn compact_boundary_preserves_tool_results_in_multi_tool_round() {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-a".to_string(),
-                        content: "result-a-marker".to_string(),
+                        content: "result-a-marker".into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-b".to_string(),
-                        content: "result-b-marker".to_string(),
+                        content: "result-b-marker".into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -208,13 +208,13 @@ async fn compact_preserves_tool_use_tool_result_pairing() {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "paired-1".to_string(),
-                        content: "dir listing".to_string(),
+                        content: "dir listing".into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "paired-2".to_string(),
-                        content: "file contents".to_string(),
+                        content: "file contents".into(),
                         is_error: false,
                         metadata: None,
                     },
@@ -878,7 +878,7 @@ async fn microcompact_preserves_tool_result_pairing_after_compact() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "post-compact-tool".to_string(),
-                    content: big_result,
+                    content: big_result.into(),
                     is_error: false,
                     metadata: None,
                 }],

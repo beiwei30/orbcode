@@ -1017,7 +1017,7 @@ fn completed_tool_followed_by_next_cell_no_large_gap() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -1196,7 +1196,7 @@ fn completed_tool_then_next_active_has_no_chrome_interleave() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -1475,7 +1475,7 @@ fn tool_streaming_then_completed_card_has_no_chrome_interleave() {
     let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
     result_msg.blocks.push(TranscriptBlock::ToolResult {
         tool_use_id: "tool-1".to_string(),
-        content: "hello".to_string(),
+        content: "hello".to_string().into(),
         is_error: false,
         metadata: None,
     });
@@ -1818,6 +1818,74 @@ fn vt100_terminal_wrap_policy_counts_soft_wrapped_rows() {
         screen.iter().any(|line| line.contains(&"x".repeat(18))),
         "second soft-wrapped physical row should be visible\n{screen:#?}"
     );
+}
+
+#[test]
+fn vt100_soft_wrap_history_insert_preserves_following_committed_row() {
+    let backend = VT100Backend::new(12, 8);
+    let mut terminal = Terminal::with_options(backend).expect("create terminal");
+    terminal.set_viewport_area(Rect::new(0, 4, 12, 4));
+    let mut state = normal_state("typed input", 11);
+    terminal
+        .draw(|frame| state.draw(frame))
+        .expect("draw initial viewport");
+
+    let history_lines = vec![
+        StyledLine::from("x".repeat(13)),
+        StyledLine::from("COMMITTED"),
+    ];
+    insert_history_lines_with_wrap_policy(
+        &mut terminal,
+        &history_lines,
+        12,
+        HistoryLineWrapPolicy::Terminal,
+        false,
+    )
+    .expect("terminal-wrap insert");
+
+    let screen = terminal.backend_mut().screen_lines();
+    assert!(
+        screen.iter().any(|line| line.contains("COMMITTED")),
+        "soft-wrap cleanup must not erase the following committed row\n{screen:#?}"
+    );
+}
+
+#[test]
+fn vt100_terminal_wrap_handles_exact_wide_combining_and_styled_boundaries() {
+    let cases = vec![
+        (StyledLine::from("x".repeat(12)), 1_u16, "exact width"),
+        (StyledLine::from("x".repeat(13)), 2_u16, "width plus one"),
+        (StyledLine::from("x".repeat(31)), 3_u16, "multiple wraps"),
+        (StyledLine::from("界".repeat(7)), 2_u16, "wide glyphs"),
+        (
+            StyledLine::from("e\u{301}".repeat(12)),
+            1_u16,
+            "combining marks",
+        ),
+        (
+            StyledLine::from(vec![
+                Span::styled("styled-", Style::default().fg(Color::Red)),
+                Span::styled("boundary", Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            2_u16,
+            "ANSI style transition",
+        ),
+    ];
+
+    for (line, expected_rows, label) in cases {
+        let backend = VT100Backend::new(12, 8);
+        let mut terminal = Terminal::with_options(backend).expect("create terminal");
+        terminal.set_viewport_area(Rect::new(0, 4, 12, 4));
+        insert_history_lines_with_wrap_policy(
+            &mut terminal,
+            &[line],
+            12,
+            HistoryLineWrapPolicy::Terminal,
+            false,
+        )
+        .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(terminal.visible_history_rows(), expected_rows, "{label}");
+    }
 }
 
 #[test]
@@ -3074,7 +3142,8 @@ fn multi_tool_streaming_scrollback_never_contains_viewport_chrome() {
         let mut result_msg = TranscriptMessage::new(MessageRole::User, String::new());
         result_msg.blocks.push(TranscriptBlock::ToolResult {
             tool_use_id: format!("tool-{round}"),
-            content: format!("output line 1 from round {round}\noutput line 2\noutput line 3"),
+            content: format!("output line 1 from round {round}\noutput line 2\noutput line 3")
+                .into(),
             is_error: false,
             metadata: None,
         });

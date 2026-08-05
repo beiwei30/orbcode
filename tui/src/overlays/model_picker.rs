@@ -138,22 +138,17 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let options_val = app_server.model_options().await?;
-        let options: Vec<ModelOption> = options_val
-            .as_array()
-            .unwrap_or(&Vec::new())
+        let options_result = app_server.model_options().await?;
+        let options: Vec<ModelOption> = options_result
             .iter()
             .map(|o| ModelOption {
-                value: o["value"].as_str().map(String::from),
-                label: o["label"].as_str().unwrap_or("").to_string(),
-                description: o["description"].as_str().unwrap_or("").to_string(),
-                current: o["current"].as_bool().unwrap_or(false),
+                value: o.value.clone(),
+                label: o.label.clone(),
+                description: o.description.clone(),
+                current: o.current,
             })
             .collect();
-        let effort_val = app_server.effort_level().await?;
-        let effort: Option<EffortLevel> = serde_json::from_value(effort_val["effort"].clone())
-            .ok()
-            .flatten();
+        let effort = app_server.effort_level().await?.effort;
         self.overlay = Some(OverlayState::ModelPicker(ModelPickerState::new(
             command, options, effort,
         )));
@@ -170,7 +165,7 @@ impl TuiState {
     ) -> Result<()> {
         let selected_default = model.is_none();
         let result = app_server.set_model_override(model).await?;
-        let display_name = result["display_name"].as_str().unwrap_or("").to_string();
+        let display_name = result.display_name;
         let effort_message = match effort {
             Some(effort) => {
                 Some(set_effort_override_message(app_server, &self.session_id, effort).await?)
@@ -181,8 +176,7 @@ impl TuiState {
         self.overlay = None;
         self.refresh_status_effort(app_server).await;
 
-        let model_val = app_server.model_name().await?;
-        let mut model_name = model_val["model_name"].as_str().unwrap_or("").to_string();
+        let mut model_name = app_server.model_name().await?.model_name;
         if selected_default {
             model_name.push_str(" (default)");
         }

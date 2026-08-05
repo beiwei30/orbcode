@@ -12,7 +12,7 @@ pub(crate) async fn set_effort_override_message(
     match effort {
         Some(effort) => {
             app_server
-                .set_effort_override(session_id, Some(effort.as_str()))
+                .set_effort_override(session_id, Some(effort))
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok(format!(
@@ -41,11 +41,11 @@ pub(crate) async fn run_effort_slash_command(
 ) -> Result<String> {
     let arg = args.trim().to_ascii_lowercase();
     if arg.is_empty() || arg == "current" || arg == "status" {
-        let value = app_server
+        let result = app_server
             .effort_level()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let level = value["effort"].as_str().and_then(EffortLevel::parse);
+        let level = result.effort;
         return Ok(match level {
             Some(level) => format!("Current effort level: {level} ({})", level.description()),
             None => "Effort level: auto (currently high)".to_string(),

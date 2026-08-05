@@ -1,8 +1,7 @@
 use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, BootstrapState, ContextOverview,
-    SessionCleanupResult, SessionControlState, SessionModelOption,
+    PermissionMode, SessionControlState, SessionModelOption,
 };
-use orbcode_config::PermissionMode;
 use orbcode_core::{
     CompactDecision, CompactSessionResult, CoreError, CostOverview, PermissionDecision,
     ProviderRequestDebugSnapshot, StatsOverview, UsageOverview,
@@ -13,6 +12,7 @@ use orbcode_protocol::{
 use tokio::sync::mpsc;
 
 use super::AppServer;
+use crate::protocol_conversion::{permission_mode_from_wire, permission_mode_to_wire};
 
 impl AppServer {
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
@@ -125,6 +125,7 @@ impl AppServer {
         self.sessions
             .delete_acp_visible_session(&params.session_id, params.cwd)
             .await?;
+        self.sessions.remove_session_controls(&params.session_id);
         self.mcp.remove_session_servers(&params.session_id).await;
         Ok(())
     }
@@ -135,7 +136,9 @@ impl AppServer {
     ) -> Result<SessionControlState, CoreError> {
         Ok(SessionControlState {
             session_id: session_id.to_string(),
-            permission_mode: self.sessions.session_permission_mode(session_id)?,
+            permission_mode: permission_mode_to_wire(
+                self.sessions.session_permission_mode(session_id)?,
+            ),
             model_options: self
                 .sessions
                 .session_model_options(session_id)?
@@ -159,7 +162,7 @@ impl AppServer {
     ) -> Result<SessionControlState, CoreError> {
         self.ensure_setting_mutable("permissions")?;
         self.sessions
-            .set_session_permission_mode(session_id, mode)
+            .set_session_permission_mode(session_id, permission_mode_from_wire(mode))
             .await?;
         self.session_control_state(session_id)
     }
@@ -184,11 +187,9 @@ impl AppServer {
         self.session_control_state(session_id)
     }
 
-    pub async fn cleanup_session(&self, session_id: &str) -> SessionCleanupResult {
+    pub async fn cleanup_session(&self, session_id: &str) {
         self.sessions.remove_session_controls(session_id);
-        SessionCleanupResult {
-            removed_mcp_server_ids: self.mcp.remove_session_servers(session_id).await,
-        }
+        self.remove_session_mcp_servers(session_id).await;
     }
 
     pub async fn clear_session(

@@ -112,7 +112,6 @@ async fn main() -> Result<()> {
             pick_requested_session(&client, session_id_override, resume_value, continue_latest)
                 .await?;
         headless::run_print_mode(
-            app_server,
             &client,
             session,
             positional_prompt,
@@ -147,7 +146,7 @@ async fn main() -> Result<()> {
             note,
             prompt,
             tui,
-        } => commands::run_fork(app_server, &client, session_id, title, note, prompt, tui).await?,
+        } => commands::run_fork(&client, session_id, title, note, prompt, tui).await?,
         Command::Prompt {
             prompt,
             mut session,
@@ -185,8 +184,7 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             } else {
-                let session_id =
-                    headless::run_headless_prompt(app_server, &client, session, prompt).await?;
+                let session_id = headless::run_headless_prompt(&client, session, prompt).await?;
                 print_resume_hint(&session_id);
             }
         }

@@ -409,7 +409,7 @@ fn inserted_terminal_history_snapshot_cannot_follow_later_ctrl_o_state() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "completed output".to_string(),
+                    content: "completed output".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],

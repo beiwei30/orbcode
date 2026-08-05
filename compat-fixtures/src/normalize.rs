@@ -730,6 +730,7 @@ mod tests {
             "local_command_output.jsonl",
             "compact_boundary_multiturn.jsonl",
             "system_subtypes_and_context.jsonl",
+            "byte_fidelity_schema.jsonl",
         ] {
             let raw = transcript_fixture(name);
             let once = normalize_jsonl(&raw);

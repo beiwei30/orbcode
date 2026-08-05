@@ -1,0 +1,72 @@
+{
+  "no_data": null,
+  "session": {
+    "session_id": "session-fixture",
+    "new_title": "Renamed fixture"
+  },
+  "turn": {
+    "subscription_id": "subscription-fixture"
+  },
+  "permission": {
+    "path": "/tmp/settings.json",
+    "rule": "Bash(cargo test:*)",
+    "changed": true
+  },
+  "settings": {
+    "enabled": true,
+    "auto_allow_bash_if_sandboxed": false,
+    "allow_unsandboxed_commands": true
+  },
+  "mcp_prompt": {
+    "server_id": "fixture-server",
+    "name": "summarize",
+    "arguments": {
+      "tone": "brief"
+    }
+  },
+  "mcp_tool": {
+    "server_id": "fixture-server",
+    "tool_name": "lookup",
+    "output": "fixture output",
+    "is_error": false
+  },
+  "tools": {
+    "name": "fixture-tool",
+    "summary": "Fixture tool completed",
+    "output": "fixture output",
+    "metadata": {
+      "extension_key": "extension value"
+    },
+    "changed_paths": [
+      "/tmp/changed.txt"
+    ]
+  },
+  "auth": {
+    "provider": "openai",
+    "method": "api_key",
+    "token": "fixture-token-not-a-secret",
+    "env_var": null
+  },
+  "diagnostics": {
+    "dry_run": true,
+    "stale_running_cutoff_ms": 1700000000000
+  },
+  "background": {
+    "job_id": "job-fixture",
+    "session_id": "session-fixture",
+    "status": "Queued",
+    "log_path": "/tmp/job-fixture.log"
+  },
+  "workflow": {
+    "session_id": "session-fixture",
+    "name": "fixture-workflow",
+    "spec": {
+      "steps": [
+        {
+          "agent": "general-purpose"
+        }
+      ]
+    },
+    "arguments": "focus on protocol DTOs"
+  }
+}

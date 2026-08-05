@@ -20,10 +20,7 @@ async fn plan_slash_command_enters_and_displays_plan_mode() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -108,10 +105,7 @@ async fn add_dir_slash_command_adds_session_working_directory() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
     let command = format!("/add-dir {}", extra.display());
@@ -167,10 +161,7 @@ async fn diff_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -211,6 +202,52 @@ async fn diff_slash_command_runs_asynchronously() {
 }
 
 #[tokio::test]
+async fn ctrl_c_in_diff_overlay_uses_global_active_turn_interrupt_path() {
+    let home_dir = test_temp_path("diff-ctrl-c-home");
+    let cwd = test_temp_path("diff-ctrl-c-workspace");
+    tokio::fs::create_dir_all(&home_dir)
+        .await
+        .expect("create home");
+    tokio::fs::create_dir_all(&cwd).await.expect("create cwd");
+    let app_server = AppServer::new(
+        cwd.clone(),
+        orbcode_app_server::AppConfigOverrides {
+            home_dir: Some(home_dir),
+            ..orbcode_app_server::AppConfigOverrides::default()
+        },
+    )
+    .await
+    .expect("create app server");
+    let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap");
+    let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
+    state.overlay = Some(OverlayState::Diff(DiffOverlayState::new(WorkspaceDiff {
+        cwd,
+        status: String::new(),
+        staged_diff: String::new(),
+        unstaged_diff: String::new(),
+        untracked_files: Vec::new(),
+    })));
+    let (_turn_tx, turn_rx) = mpsc::unbounded_channel();
+    let mut turn_events = Some(turn_rx);
+    let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
+
+    state
+        .handle_key(
+            &app_server,
+            crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut turn_events,
+            &local_command_tx,
+        )
+        .await
+        .expect("ctrl-c");
+
+    assert!(turn_events.is_none());
+    assert!(state.overlay.is_none());
+    assert_eq!(state.status_line, "Turn interrupted.");
+}
+
+#[tokio::test]
 async fn doctor_slash_command_runs_asynchronously() {
     let home_dir = test_temp_path("doctor-home");
     let cwd = test_temp_path("doctor-workspace");
@@ -229,10 +266,7 @@ async fn doctor_slash_command_runs_asynchronously() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
@@ -280,10 +314,7 @@ async fn clear_slash_command_starts_fresh_session_and_preserves_allow_all() {
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
     app_server.app_server().unwrap().set_allow_all(true);
 
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let previous_session_id = state.session_id.clone();
     state.push_local_system_message("old visible context".to_string());
@@ -327,10 +358,7 @@ async fn allow_all_slash_command_uses_registry_and_canonicalized_alias() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -368,10 +396,7 @@ async fn effort_slash_command_updates_runtime_effort() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -423,10 +448,7 @@ async fn keybindings_slash_command_creates_typescript_compatible_template() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -486,10 +508,7 @@ async fn keybindings_slash_command_opens_editor_without_subcommand() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -537,10 +556,7 @@ async fn keybindings_slash_command_does_not_overwrite_existing_file() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 

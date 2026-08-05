@@ -56,13 +56,13 @@ impl AppServer {
             method::SESSION_ACP_LOAD_SETUP => self.handle_session_acp_load_setup(params).await,
             method::SESSION_ACP_RESUME_SETUP => self.handle_session_acp_resume_setup(params).await,
             method::SESSION_ACP_DELETE => self.handle_session_acp_delete(params).await,
+            method::SESSION_ACP_CLOSE => self.handle_session_acp_close(params).await,
             method::SESSION_CONTROL_STATE => self.handle_session_control_state(params),
             method::SESSION_SET_PERMISSION_MODE => {
                 self.handle_session_set_permission_mode(params).await
             }
             method::SESSION_SET_MODEL => self.handle_session_set_model(params).await,
             method::SESSION_SET_EFFORT => self.handle_session_set_effort(params).await,
-            method::SESSION_CLEANUP => self.handle_session_cleanup(params).await,
             // Turn
             method::TURN_SUBMIT => self.handle_turn_submit(params).await,
             method::TURN_STEER => self.handle_turn_steer(params).await,
@@ -248,6 +248,7 @@ pub(crate) fn core_error(err: CoreError) -> ResponseResult {
         CoreError::ActiveTurn(_) => (ErrorCode::ActiveTurn, err.to_string()),
         CoreError::NoActiveTurn(_) => (ErrorCode::NoActiveTurn, err.to_string()),
         CoreError::PermissionDenied(_) => (ErrorCode::PermissionDenied, err.to_string()),
+        CoreError::Cancelled => (ErrorCode::InternalError, err.to_string()),
         CoreError::ProviderFailed(_) | CoreError::RetryExhausted(_) => {
             (ErrorCode::ProviderFailed, err.to_string())
         }
@@ -264,7 +265,7 @@ pub(crate) fn core_error(err: CoreError) -> ResponseResult {
 }
 
 /// Wrap a serialisable value in a successful response.
-fn success<T: serde::Serialize>(value: T) -> ResponseResult {
+pub(crate) fn success<T: serde::Serialize>(value: T) -> ResponseResult {
     ResponseResult::Success {
         data: Some(serde_json::to_value(value).unwrap_or(serde_json::Value::Null)),
     }
@@ -451,6 +452,7 @@ mod tests {
                 CoreError::NoActiveTurn("s1".into()),
                 ErrorCode::NoActiveTurn,
             ),
+            (CoreError::Cancelled, ErrorCode::InternalError),
             (
                 CoreError::PermissionDenied("denied".into()),
                 ErrorCode::PermissionDenied,

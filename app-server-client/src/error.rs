@@ -1,4 +1,5 @@
 use orbcode_app_server_protocol::ProtocolError;
+#[cfg(feature = "in-process")]
 use orbcode_core::CoreError;
 
 /// Errors originating from the client layer.
@@ -10,6 +11,7 @@ use orbcode_core::CoreError;
 pub enum ClientError {
     /// An error forwarded from the app-server / core layer.
     #[error(transparent)]
+    #[cfg(feature = "in-process")]
     Core(#[from] CoreError),
 
     /// A protocol-level error returned by the server inside a response

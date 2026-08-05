@@ -3,6 +3,7 @@ use ratatui::{
     prelude::Style,
     text::{Line, Span},
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::render::text_utils::{StyledLine, display_width, display_width_str};
 
@@ -13,6 +14,110 @@ pub(crate) fn wrap_styled_lines(lines: &[StyledLine], width: usize) -> Vec<Style
         wrapped.extend(wrap_styled_line(line, width));
     }
     wrapped
+}
+
+/// A width-specific projection from logical styled lines to terminal visual
+/// rows. Consumers use the source map for selection anchoring and use the
+/// projected rows directly, so bounds and rendering cannot apply different
+/// wrapping passes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ViewportProjection {
+    pub(crate) visual_rows: Vec<StyledLine>,
+    pub(crate) source_line_by_visual_row: Vec<usize>,
+}
+
+pub(crate) fn ensure_source_range_visible(
+    source_line_by_visual_row: &[usize],
+    visual_row_count: usize,
+    requested_scroll: usize,
+    viewport_height: usize,
+    source_start: usize,
+    source_end: usize,
+) -> usize {
+    if viewport_height == 0 {
+        return 0;
+    }
+    let first = source_line_by_visual_row
+        .iter()
+        .position(|source| *source == source_start);
+    let last = source_line_by_visual_row
+        .iter()
+        .rposition(|source| *source == source_end)
+        .map(|row| row.saturating_add(1));
+    let max_scroll = visual_row_count.saturating_sub(viewport_height);
+    let (Some(first), Some(last)) = (first, last) else {
+        return requested_scroll.min(max_scroll);
+    };
+    let mut scroll = requested_scroll.min(max_scroll);
+    if first < scroll {
+        scroll = first;
+    } else if last > scroll.saturating_add(viewport_height) {
+        scroll = last.saturating_sub(viewport_height);
+    }
+    scroll.min(max_scroll)
+}
+
+pub(crate) fn project_styled_lines(lines: &[StyledLine], width: usize) -> ViewportProjection {
+    let mut projection = ViewportProjection::default();
+    for (source_line, line) in lines.iter().enumerate() {
+        let wrapped = wrap_styled_line(line, width);
+        projection
+            .source_line_by_visual_row
+            .extend(std::iter::repeat_n(source_line, wrapped.len()));
+        projection.visual_rows.extend(wrapped);
+    }
+    projection
+}
+
+/// Code-oriented wrapping that preserves whitespace, expands tabs at four-cell
+/// stops, and keeps zero-width combining marks attached to the current row.
+pub(crate) fn wrap_styled_line_preserving_whitespace(
+    line: &StyledLine,
+    width: usize,
+) -> Vec<StyledLine> {
+    const TAB_STOP: usize = 4;
+
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    let mut current_spans = Vec::new();
+    let mut current_width = 0usize;
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            let ch_width = if ch == '\t' {
+                TAB_STOP - (current_width % TAB_STOP)
+            } else {
+                UnicodeWidthChar::width(ch).unwrap_or(0)
+            };
+            if current_width > 0 && current_width.saturating_add(ch_width) > width {
+                push_preserved_visual_row(&mut wrapped, &mut current_spans, &mut current_width);
+            }
+            if ch == '\t' {
+                for _ in 0..ch_width {
+                    push_styled_char(&mut current_spans, ' ', span.style);
+                }
+            } else {
+                push_styled_char(&mut current_spans, ch, span.style);
+            }
+            current_width = current_width.saturating_add(ch_width);
+        }
+    }
+    if current_spans.is_empty() {
+        if wrapped.is_empty() {
+            wrapped.push(Line::default());
+        }
+    } else {
+        push_preserved_visual_row(&mut wrapped, &mut current_spans, &mut current_width);
+    }
+    wrapped
+}
+
+fn push_preserved_visual_row(
+    wrapped: &mut Vec<StyledLine>,
+    current_spans: &mut Vec<Span<'static>>,
+    current_width: &mut usize,
+) {
+    wrapped.push(Line::from(std::mem::take(current_spans)));
+    *current_width = 0;
 }
 
 pub(crate) const TRANSCRIPT_RIGHT_PADDING: usize = 2;

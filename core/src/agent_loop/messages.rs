@@ -53,7 +53,7 @@ pub(crate) fn repair_missing_tool_results(
                 .into_iter()
                 .map(|tool_use_id| TranscriptBlock::ToolResult {
                     tool_use_id,
-                    content: MISSING_TOOL_RESULT.to_string(),
+                    content: MISSING_TOOL_RESULT.into(),
                     is_error: true,
                     metadata: None,
                 })
@@ -372,7 +372,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-2".to_string(),
-                    content: "ok".to_string(),
+                    content: "ok".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -427,13 +427,13 @@ mod tests {
                 vec![
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-1".to_string(),
-                        content: "listed files".to_string(),
+                        content: "listed files".into(),
                         is_error: false,
                         metadata: None,
                     },
                     TranscriptBlock::ToolResult {
                         tool_use_id: "tool-2".to_string(),
-                        content: "glob failed".to_string(),
+                        content: "glob failed".into(),
                         is_error: true,
                         metadata: None,
                     },
@@ -471,7 +471,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content: "ok".to_string(),
+                    content: "ok".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -503,7 +503,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "tool-1".to_string(),
-                    content,
+                    content: content.into(),
                     is_error: false,
                     metadata: None,
                 }],

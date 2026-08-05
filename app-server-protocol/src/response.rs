@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use orbcode_config::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionMode, ThemeSetting,
-    TokenWarningOptions,
-};
-use orbcode_core::{ContextDiagnosticsReport, ContextUsageOverview, PermissionContext};
 use orbcode_protocol::{
-    EffortLevel, MemorySourceStatus, ProviderId, SessionRecord, StreamEvent, TurnContext,
+    ContextDiagnosticsReport, ContextUsageOverview, EffortLevel, MemorySourceStatus, ProviderId,
+    SessionRecord, StreamEvent, TurnContext,
+};
+
+use crate::{
+    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionContext,
+    PermissionMode, StatusAuthOverview, ThemeSetting, TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -50,27 +51,28 @@ pub struct AcpDeleteSessionParams {
 /// Canonical session-scoped controls consumed by headless clients and edge
 /// adapters. Values are resolved by app-server; adapters only project them into
 /// their protocol-specific shapes.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct SessionControlState {
     pub session_id: String,
     pub permission_mode: PermissionMode,
     pub model_options: Vec<SessionModelOption>,
+    #[schemars(with = "Option<String>")]
     pub effort_level: Option<EffortLevel>,
+    #[schemars(with = "Vec<String>")]
     pub effort_options: Vec<EffortLevel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct SessionModelOption {
     /// `None` denotes the provider's configured default.
     pub value: Option<String>,
     pub label: String,
     pub description: String,
     pub current: bool,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct SessionCleanupResult {
-    pub removed_mcp_server_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -151,7 +153,7 @@ pub struct StatusOverview {
     pub sandbox_mode: String,
     pub sandbox_allow_network: bool,
     pub permissions: PermissionOverview,
-    pub auth: orbcode_config::AuthOverview,
+    pub auth: StatusAuthOverview,
     pub persisted_session_count: usize,
     pub background_job_count: usize,
     pub available_tool_count: usize,

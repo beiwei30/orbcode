@@ -101,11 +101,14 @@ fn responses_user_items(message: &TranscriptMessage) -> Vec<Value> {
                     tool_use_id,
                     content,
                     ..
-                } => items.push(json!({
-                    "type": "function_call_output",
-                    "call_id": tool_use_id,
-                    "output": truncate_tool_result_for_provider(content),
-                })),
+                } => {
+                    let provider_content = content.provider_string();
+                    items.push(json!({
+                        "type": "function_call_output",
+                        "call_id": tool_use_id,
+                        "output": truncate_tool_result_for_provider(&provider_content),
+                    }));
+                }
                 _ => {}
             }
         }
@@ -186,7 +189,9 @@ fn responses_tool(tool: &ProviderToolDefinition) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use orbcode_protocol::{EffortLevel, ProviderToolDefinition, TurnContext};
+    use orbcode_protocol::{
+        EffortLevel, ProviderToolDefinition, ToolResultContent, TranscriptJsonField, TurnContext,
+    };
 
     use super::*;
     use crate::{OpenAiWireMode, ProviderRequestOptions};
@@ -237,7 +242,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "call-1".to_string(),
-                    content: "contents".to_string(),
+                    content: "contents".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -277,7 +282,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "call-1".to_string(),
-                    content: "contents".to_string(),
+                    content: "contents".into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -297,5 +302,51 @@ mod tests {
                 .iter()
                 .any(|item| item["type"] == "function_call_output")
         );
+    }
+
+    #[test]
+    fn structured_tool_output_is_complete_compact_json_string() {
+        let original = json!([
+            {"type": "text", "text": "first"},
+            {"type": "image", "source": {"data": "AA=="}},
+            {"payload": {"answer": 42}}
+        ]);
+        let message = TranscriptMessage::from_blocks(
+            MessageRole::User,
+            vec![TranscriptBlock::ToolResult {
+                tool_use_id: "call-structured".to_string(),
+                content: ToolResultContent::from_loaded(TranscriptJsonField::Value(
+                    original.clone(),
+                )),
+                is_error: false,
+                metadata: None,
+            }],
+        );
+
+        let item = responses_user_items(&message)
+            .into_iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("function output");
+        let encoded = item["output"].as_str().expect("output string");
+        assert_eq!(
+            serde_json::from_str::<Value>(encoded).expect("complete JSON"),
+            original
+        );
+    }
+
+    #[test]
+    fn absent_and_null_tool_outputs_map_to_empty_strings() {
+        for field in [TranscriptJsonField::Absent, TranscriptJsonField::Null] {
+            let message = TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "call-1".to_string(),
+                    content: ToolResultContent::from_loaded(field),
+                    is_error: false,
+                    metadata: None,
+                }],
+            );
+            assert_eq!(responses_user_items(&message)[0]["output"], "");
+        }
     }
 }
