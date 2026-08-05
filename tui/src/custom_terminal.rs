@@ -1135,6 +1135,18 @@ mod tests {
     }
 
     #[test]
+    fn initial_frame_cursor_tracks_trailing_cell_of_wide_glyph() {
+        let area = Rect::new(0, 0, 10, 1);
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new("A可").render(area, &mut buffer);
+
+        let mut output = Vec::new();
+        let last = draw_initial_frame(&mut output, &buffer).expect("initial frame should render");
+
+        assert_eq!(last, Some(Position { x: 2, y: 0 }));
+    }
+
+    #[test]
     fn counting_writer_measures_initial_frame_output_bytes() {
         let area = Rect::new(0, 0, 12, 2);
         let mut buffer = Buffer::empty(area);

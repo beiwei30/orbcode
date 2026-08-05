@@ -20,6 +20,7 @@ pub const SESSION_ACP_LOAD_PREFLIGHT: &str = "session/acp_load_preflight";
 pub const SESSION_ACP_LOAD_SETUP: &str = "session/acp_load_setup";
 pub const SESSION_ACP_RESUME_SETUP: &str = "session/acp_resume_setup";
 pub const SESSION_ACP_DELETE: &str = "session/acp_delete";
+pub const SESSION_ACP_CLOSE: &str = "session/acp_close";
 
 // ---------------------------------------------------------------------------
 // Turn
@@ -301,6 +302,7 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         SESSION_ACP_LOAD_SETUP,
         SESSION_ACP_RESUME_SETUP,
         SESSION_ACP_DELETE,
+        SESSION_ACP_CLOSE,
         // Background
         BACKGROUND_CREATE,
         BACKGROUND_LIST,
@@ -365,6 +367,7 @@ mod tests {
         assert!(methods.contains(&SESSION_ACP_LOAD_SETUP));
         assert!(methods.contains(&SESSION_ACP_RESUME_SETUP));
         assert!(methods.contains(&SESSION_ACP_DELETE));
+        assert!(methods.contains(&SESSION_ACP_CLOSE));
         assert!(methods.contains(&TURN_SUBMIT));
         assert!(methods.contains(&PERMISSION_RESPOND));
         assert!(methods.contains(&SETTINGS_MODEL_NAME));
@@ -410,7 +413,9 @@ mod tests {
 
     #[test]
     fn method_count_matches_expected() {
-        assert_eq!(all_methods().len(), 114);
+        // Main's 111 methods plus SDK thinking-budget, MCP-status,
+        // read-state, and cancellation methods.
+        assert_eq!(all_methods().len(), 115);
     }
 
     #[test]
@@ -519,7 +524,7 @@ mod tests {
     fn client_request_methods_count() {
         // Stable and experimental client methods are counted independently
         // below; this assertion locks their union.
-        assert_eq!(client_request_methods().len(), 110);
+        assert_eq!(client_request_methods().len(), 111);
     }
 
     #[test]
@@ -532,6 +537,6 @@ mod tests {
     #[test]
     fn experimental_client_request_methods_count() {
         // Includes explicit async-task cancellation.
-        assert_eq!(experimental_client_request_methods().len(), 17);
+        assert_eq!(experimental_client_request_methods().len(), 18);
     }
 }

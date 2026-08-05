@@ -68,11 +68,10 @@ pub(crate) struct CollapsedActivityGroup {
 #[allow(dead_code)]
 impl CollapsedActivityGroup {
     pub(crate) fn read_count(&self) -> usize {
-        if self.read_paths.is_empty() {
-            self.read_operation_count
-        } else {
-            self.read_paths.len()
-        }
+        // New groups count tool-use operations so duplicate paths and failures
+        // share one identity domain. Keep the path count as a compatibility
+        // fallback for older/materialized groups that predate that counter.
+        self.read_operation_count.max(self.read_paths.len())
     }
 
     pub(crate) fn failed_read_count(&self) -> usize {
@@ -132,11 +131,10 @@ pub(crate) fn build_collapsed_activity_group_with_results(
                 match tool_use.kind {
                     CollapsibleActivityKind::Search => group.search_count += 1,
                     CollapsibleActivityKind::Read => {
+                        group.read_operation_count += 1;
                         group.read_tool_use_ids.insert(tool_use.id.clone());
                         if let Some(path) = tool_use.hint {
                             push_unique_line(&mut group.read_paths, path);
-                        } else {
-                            group.read_operation_count += 1;
                         }
                     }
                     CollapsibleActivityKind::List => group.list_count += 1,

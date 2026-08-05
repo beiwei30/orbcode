@@ -1,5 +1,5 @@
 use orbcode_app_server_protocol::{
-    McpResourceSlashSuggestion, McpServerOverview, McpServerSlashSuggestion,
+    McpResourceSlashSuggestion, McpServerSlashSuggestion, McpServerStatusOverview,
     McpSlashSuggestionCatalog, McpToolSlashSuggestion,
 };
 use orbcode_core::{CoreError, mcp_permission_target};
@@ -98,7 +98,7 @@ impl AppServer {
     }
 
     /// Return a status-only MCP projection that cannot carry mutation secrets.
-    pub async fn mcp_status(&self) -> Vec<McpServerOverview> {
+    pub async fn mcp_status(&self) -> Vec<McpServerStatusOverview> {
         self.mcp
             .list_servers()
             .await
@@ -116,7 +116,7 @@ impl AppServer {
                     orbcode_mcp::McpAuth::BearerEnv { .. } => "bearer_env",
                     orbcode_mcp::McpAuth::Header { .. } => "header",
                 };
-                McpServerOverview {
+                McpServerStatusOverview {
                     id: server.id,
                     transport: server.transport.as_str().to_string(),
                     enabled: server.enabled,

@@ -4,6 +4,7 @@ use std::sync::{
 };
 use std::time::Duration as StdDuration;
 
+pub use orbcode_protocol::ProviderRequestDebugSnapshot;
 use orbcode_protocol::{
     EffortLevel, ProviderId, ProviderToolDefinition, TokenUsage, TranscriptBlock,
     TranscriptMessage, TurnContext,
@@ -90,19 +91,6 @@ pub struct ProviderRequestOptions {
     pub openai_wire_mode: OpenAiWireMode,
     /// ChatGPT workspace/account header used only with the Responses mode.
     pub openai_account_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ProviderRequestDebugSnapshot {
-    pub provider: ProviderId,
-    pub source: String,
-    pub session_id: String,
-    pub model: String,
-    pub base_url: String,
-    pub captured_at: String,
-    pub recent_activity_json: String,
-    pub previous_turn_json: String,
-    pub body_json: String,
 }
 
 #[derive(Clone, Debug)]

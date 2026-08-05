@@ -99,6 +99,8 @@ pub enum CoreError {
     },
     #[error("{0}")]
     PermissionDenied(String),
+    #[error("request cancelled")]
+    Cancelled,
     #[error("{0}")]
     ProviderFailed(ProviderFailure),
     #[error("{0}")]

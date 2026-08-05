@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "McpServerOverview",
+  "description": "Redacted MCP configuration/status returned by read-only protocol methods.\n\nCollection shapes and field names intentionally match protocol 1.0. Values\nthat may contain credentials are replaced at the app-server boundary.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "transport": {
+      "$ref": "#/$defs/McpTransport"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "status": {
+      "$ref": "#/$defs/McpServerStatus"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "auth": {
+      "$ref": "#/$defs/McpAuthOverview"
+    },
+    "trust": {
+      "$ref": "#/$defs/McpServerTrust"
+    },
+    "transport_type_hint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpServerSource"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "transport",
+    "endpoint",
+    "args",
+    "env",
+    "headers",
+    "enabled",
+    "status",
+    "summary",
+    "auth",
+    "trust"
+  ],
+  "$defs": {
+    "McpTransport": {
+      "description": "Transport selected for an MCP server.\n\nThis is a wire DTO. Runtime transport behavior remains owned by\n`orbcode-mcp` and is converted at the app-server boundary.",
+      "type": "string",
+      "enum": [
+        "stdio",
+        "http",
+        "https",
+        "streamable_http",
+        "web_socket"
+      ]
+    },
+    "McpServerStatus": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "starting",
+        "ready",
+        "failed",
+        "unauthorized",
+        "restarting",
+        "stopped"
+      ]
+    },
+    "McpAuthOverview": {
+      "description": "Safe authentication summary returned by read-only MCP methods.\n\nThe `value` field is retained for protocol-1.0 shape compatibility but the\napp-server always fills it with a redaction marker.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "none"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "env_var": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bearer_env"
+            }
+          },
+          "required": [
+            "kind",
+            "env_var"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "header"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "value"
+          ]
+        }
+      ]
+    },
+    "McpServerTrust": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "trusted",
+        "denied"
+      ]
+    },
+    "McpServerSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plugin"
+            }
+          },
+          "$ref": "#/$defs/McpPluginSource",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "McpPluginSource": {
+      "type": "object",
+      "properties": {
+        "plugin_id": {
+          "type": "string"
+        },
+        "plugin_name": {
+          "type": "string"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "plugin_name",
+        "server_name",
+        "source"
+      ]
+    }
+  }
+}

@@ -11,6 +11,8 @@
 //! - `success` (default): a minimal successful text stream.
 //! - `retryable`: a retryable `ServerError` on every attempt.
 //! - `fatal`: a fatal error on every attempt.
+//! - `interrupted`: an interrupted stream on every attempt.
+//! - `interrupt_after_text`: emits a partial text block, then interrupts.
 //! - `ratelimit`: a retryable `RateLimit` error carrying a `429` plus
 //!   `Retry-After` / unified rate-limit metadata.
 //! - `auth`: a fatal `Auth` error (`401`) with a credentials suggestion.
@@ -114,6 +116,12 @@ pub(crate) async fn stream_mock(
     match scenario.scenario.as_str() {
         "retryable" => Err(retryable_error(provider)),
         "fatal" => Err(fatal_error(provider)),
+        "interrupted" => Err(ProviderError::interrupted(format!(
+            "simulated interruption for {provider}"
+        ))),
+        "interrupt_after_text" => {
+            stream_interrupt_after_text(provider, request, sink, cancellation).await
+        }
         "ratelimit" => Err(rate_limit_error(provider)),
         "auth" => Err(auth_error(provider)),
         "account_suspended" => Err(account_suspended_error(provider)),
@@ -224,6 +232,45 @@ async fn stream_success(
 ) -> Result<ProviderCompletion, ProviderError> {
     let content = format!("mock provider response for {provider}");
     stream_text(provider, request, sink, cancellation, content).await
+}
+
+async fn stream_interrupt_after_text(
+    provider: ProviderId,
+    request: &ProviderRequest,
+    sink: &mut dyn ProviderStreamSink,
+    cancellation: ProviderCancellationToken,
+) -> Result<ProviderCompletion, ProviderError> {
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::interrupted("mock stream interrupted"));
+    }
+    let partial = "partial text before provider interruption";
+    let usage = TokenUsage::from_text(&request.prompt, partial);
+    sink.emit(ProviderStreamEvent::MessageStart {
+        provider,
+        fallback_from: None,
+        usage: TokenUsage::default(),
+    })
+    .await?;
+    sink.emit(ProviderStreamEvent::ContentBlockStart {
+        index: 0,
+        block: ProviderContentBlockStart::Text {
+            text: String::new(),
+        },
+    })
+    .await?;
+    sink.emit(ProviderStreamEvent::ContentBlockDelta {
+        index: 0,
+        delta: ProviderContentBlockDelta::Text(partial.to_string()),
+    })
+    .await?;
+    sink.emit(ProviderStreamEvent::MessageDelta {
+        stop_reason: None,
+        usage,
+    })
+    .await?;
+    Err(ProviderError::interrupted(
+        "simulated interruption after text",
+    ))
 }
 
 async fn stream_text(

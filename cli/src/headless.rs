@@ -2,17 +2,15 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 
 use anyhow::Result;
-use orbcode_app_server::{
-    AppServer, PermissionDecision, PermissionMode, StreamErrorCategory, StreamEvent, TokenUsage,
-    ToolUseCompletionKind,
-};
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server::AppServer;
+use orbcode_app_server_client::{AppClient, PermissionDecision, PermissionDecisionWire};
+use orbcode_config::PermissionMode;
 use orbcode_protocol::{
     AsyncCancellationOutcome, ControlRequest, ControlRequestEnvelope, SUPPORTED_CONTROL_SUBTYPES,
     SdkAsyncCancellationResponse, SdkContextCategoriesResponse, SdkContextUsageResponse,
     SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse, SdkModelChangeResponse,
     SdkSeedReadStateResponse, SdkSessionStateResponse, SdkThinkingBudgetResponse,
-    ToolPermissionResult,
+    StreamErrorCategory, StreamEvent, TokenUsage, ToolPermissionResult, ToolUseCompletionKind,
 };
 use serde::Serialize;
 
@@ -95,7 +93,6 @@ impl OrderedJsonWriter {
 }
 
 pub(crate) async fn run_headless_prompt(
-    _app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     prompt: String,
@@ -115,7 +112,7 @@ pub(crate) async fn run_headless_prompt(
     );
 
     let mut stream = client
-        .submit_turn_typed(&bootstrap.session.session_id, &prompt)
+        .submit_turn_stream(&bootstrap.session.session_id, prompt)
         .await?;
 
     loop {
@@ -133,12 +130,12 @@ pub(crate) async fn run_headless_prompt(
                         let approved =
                             headless_permission_decision(&request, bootstrap.permissions.allow_tools, bootstrap.permissions.allow_network);
                         let _ = client
-                            .respond_to_permission_request_decision(
+                            .respond_to_permission_request(
                                 &request.request_id,
                                 if approved {
-                                    PermissionDecision::Approve
+                                    PermissionDecisionWire::Approve
                                 } else {
-                                    PermissionDecision::Deny
+                                    PermissionDecisionWire::Deny
                                 },
                             )
                             .await;
@@ -293,7 +290,6 @@ pub(crate) async fn run_headless_prompt(
 }
 
 pub(crate) async fn run_print_mode(
-    _app_server: AppServer,
     client: &AppClient,
     session: Option<String>,
     positional_prompt: Option<String>,
@@ -306,8 +302,9 @@ pub(crate) async fn run_print_mode(
     let model_name = client
         .status_overview_typed(&session_id)
         .await
-        .map(|overview| overview.model_name)
-        .unwrap_or_else(|_| "unknown".to_string());
+        .ok()
+        .map(|result| result.model_name)
+        .unwrap_or_else(|| "unknown".to_string());
     let mut run = HeadlessRun::new(
         output_format,
         verbose,
@@ -391,7 +388,7 @@ pub(crate) async fn run_background_worker(
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut received_signal: Option<i32> = None;
 
-    let permissions = client.permission_overview_typed().await?.permissions;
+    let permissions = client.permission_overview().await?.permissions;
     let _ = app_server
         .mark_background_running(&job_id, Some(std::process::id()))
         .await;
@@ -405,8 +402,9 @@ pub(crate) async fn run_background_worker(
     let model_name = client
         .status_overview_typed(&session_id)
         .await
-        .map(|overview| overview.model_name)
-        .unwrap_or_else(|_| "unknown".to_string());
+        .ok()
+        .map(|result| result.model_name)
+        .unwrap_or_else(|| "unknown".to_string());
     let mut emitter = StreamJsonEmitter::new(session_id.clone(), model_name.clone());
     let started = std::time::Instant::now();
     {
@@ -449,7 +447,7 @@ pub(crate) async fn run_background_worker(
             .await;
     }
 
-    let mut stream = match client.submit_turn_typed(&session_id, &prompt).await {
+    let mut stream = match client.submit_turn_stream(&session_id, prompt.clone()).await {
         Ok(stream) => stream,
         Err(error) => {
             let message = error.to_string();
@@ -521,12 +519,12 @@ pub(crate) async fn run_background_worker(
                     permissions.allow_network,
                 );
                 let _ = client
-                    .respond_to_permission_request_decision(
+                    .respond_to_permission_request(
                         &request.request_id,
                         if approved {
-                            PermissionDecision::Approve
+                            PermissionDecisionWire::Approve
                         } else {
-                            PermissionDecision::Deny
+                            PermissionDecisionWire::Deny
                         },
                     )
                     .await;
@@ -1046,7 +1044,7 @@ impl HeadlessRun {
         prompt: String,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = client.submit_turn_typed(session_id, &prompt).await?;
+        let mut stream = client.submit_turn_stream(session_id, prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
 
@@ -1061,12 +1059,12 @@ impl HeadlessRun {
                         self.allow_network,
                     );
                     let _ = client
-                        .respond_to_permission_request_decision(
+                        .respond_to_permission_request(
                             &request.request_id,
                             if approved {
-                                PermissionDecision::Approve
+                                PermissionDecisionWire::Approve
                             } else {
-                                PermissionDecision::Deny
+                                PermissionDecisionWire::Deny
                             },
                         )
                         .await;
@@ -1391,7 +1389,7 @@ impl HeadlessRun {
                     return Ok(ControlAction::None);
                 }
                 if client
-                    .respond_to_permission_request_typed(&request_id, decision)
+                    .respond_to_pending_permission_request(&request_id, decision)
                     .await
                 {
                     pending_permissions.remove(&request_id);
@@ -1442,7 +1440,7 @@ impl HeadlessRun {
         server_requests_open: &mut bool,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = client.submit_turn_typed(session_id, &prompt).await?;
+        let mut stream = client.submit_turn_stream(session_id, prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
         let mut prefer_control = true;
@@ -1546,13 +1544,19 @@ impl HeadlessRun {
             };
         if request.session_id != session_id {
             let _ = client
-                .respond_to_permission_request_typed(&request.request_id, PermissionDecision::Deny)
+                .respond_to_pending_permission_request(
+                    &request.request_id,
+                    PermissionDecision::Deny,
+                )
                 .await;
             return Ok(());
         }
         if !stdin_open {
             let _ = client
-                .respond_to_permission_request_typed(&request.request_id, PermissionDecision::Deny)
+                .respond_to_pending_permission_request(
+                    &request.request_id,
+                    PermissionDecision::Deny,
+                )
                 .await;
             return Ok(());
         }
@@ -1574,7 +1578,7 @@ impl HeadlessRun {
         if let Err(error) = self.writer.write(&serde_json::to_value(frame)?) {
             pending_permissions.remove(&permission_request_id);
             let _ = client
-                .respond_to_permission_request_typed(
+                .respond_to_pending_permission_request(
                     &permission_request_id,
                     PermissionDecision::Deny,
                 )
@@ -1597,7 +1601,7 @@ impl HeadlessRun {
         }
         for request_id in ids {
             let _ = client
-                .respond_to_permission_request_typed(&request_id, PermissionDecision::Deny)
+                .respond_to_pending_permission_request(&request_id, PermissionDecision::Deny)
                 .await;
         }
         pending_permissions.clear();
@@ -1811,7 +1815,9 @@ impl HeadlessRun {
     }
 }
 
-fn sdk_mcp_status(server: orbcode_app_server_client::McpServerOverview) -> SdkMcpServerStatus {
+fn sdk_mcp_status(
+    server: orbcode_app_server_client::McpServerStatusOverview,
+) -> SdkMcpServerStatus {
     let status = match server.status.as_str() {
         "ready" => "connected",
         "unauthorized" => "needs-auth",
@@ -1856,23 +1862,27 @@ fn accumulate_usage(total: &mut TokenUsage, delta: &TokenUsage) {
 }
 
 pub(crate) async fn build_cost_fields(client: &AppClient, session_id: &str) -> CostFields {
-    match client.cost_overview_typed(session_id).await {
-        Ok(overview) => CostFields {
-            total_cost_usd: overview.cost.total_cost_usd,
-            pricing_known: !overview.cost.has_unknown_model_cost
-                && matches!(
-                    overview.cost.billing_basis,
-                    orbcode_app_server_client::BillingBasis::Api
-                ),
-            model_costs: None,
-        },
+    match client.cost_overview(session_id).await {
+        Ok(overview) => {
+            let total_cost_usd = overview.cost.total_cost_usd;
+            let has_unknown = overview.cost.has_unknown_model_cost;
+            let is_api_priced = matches!(
+                overview.cost.billing_basis,
+                orbcode_app_server_client::BillingBasis::Api
+            );
+            CostFields {
+                total_cost_usd,
+                pricing_known: !has_unknown && is_api_priced,
+                model_costs: None,
+            }
+        }
         Err(_) => CostFields::default(),
     }
 }
 
 pub(crate) async fn build_init_metadata(
     client: &AppClient,
-    bootstrap: &orbcode_app_server::BootstrapState,
+    bootstrap: &orbcode_app_server_client::BootstrapState,
 ) -> InitMetadata {
     let tool_names = client.list_tool_names().await.unwrap_or_default();
     let mcp_servers = client

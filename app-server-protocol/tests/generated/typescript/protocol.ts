@@ -84,9 +84,52 @@ export type BootstrapParams = {
   session_id?: string | null;
   cwd?: string | null;
   additional_directories?: string[];
-  session_mcp_servers?: McpServerConfig[];
+  session_mcp_servers?: McpServerInput[];
   read_only?: boolean;
 };
+
+/** Secret-bearing input accepted by MCP upsert and session bootstrap methods. */
+export type McpServerInput = {
+  id: string;
+  transport: McpTransport;
+  endpoint: string;
+  args?: string[];
+  env?: Record<string, unknown>;
+  cwd?: string | null;
+  headers?: Record<string, unknown>;
+  enabled: boolean;
+  status?: McpServerStatus;
+  error?: string | null;
+  summary: string;
+  auth: McpAuth;
+  trust?: McpServerTrust;
+  transport_type_hint?: string | null;
+  source?: McpServerSource | null;
+};
+
+/** Redacted MCP configuration/status returned by read-only protocol methods.
+
+Collection shapes and field names intentionally match protocol 1.0. Values
+that may contain credentials are replaced at the app-server boundary. */
+export type McpServerOverview = {
+  id: string;
+  transport: McpTransport;
+  endpoint: string;
+  args: string[];
+  env: Record<string, unknown>;
+  cwd?: string | null;
+  headers: Record<string, unknown>;
+  enabled: boolean;
+  status: McpServerStatus;
+  error?: string | null;
+  summary: string;
+  auth: McpAuthOverview;
+  trust: McpServerTrust;
+  transport_type_hint?: string | null;
+  source?: McpServerSource | null;
+};
+
+export type McpListServersResult = McpServerOverview[];
 
 /** Structured error returned inside [`ResponseResult::Error`](crate::ResponseResult). */
 export interface ProtocolError {
@@ -153,12 +196,671 @@ export type AskUserQuestionResponse = {
   answer?: string | null;
 };
 
+export interface EmptyParams Record<string, unknown>
+
+/** Successful method result whose response envelope intentionally has no data payload.
+
+Transports normalize an omitted `data` field to JSON `null`, which is the
+serde representation of this unit struct. */
+export type NoData = null;
+
+export interface SessionIdParams {
+  session_id: string;
+}
+
+export interface SessionRenameParams {
+  session_id: string;
+  new_title: string;
+}
+
+export type SessionForkParams = {
+  session_id: string;
+  title?: string | null;
+  note?: string | null;
+};
+
+export interface SessionRewindParams {
+  session_id: string;
+  keep_messages: number;
+}
+
+export interface SessionRecordMessageParams {
+  session_id: string;
+  message: string;
+}
+
+export interface SessionFindByTitleParams {
+  title: string;
+}
+
+export type SessionFindByTitleResult = {
+  session_id?: string | null;
+};
+
+export interface TurnSubmitParams {
+  session_id: string;
+  prompt: string;
+}
+
+export interface TurnSubmitResult {
+  subscription_id: string;
+}
+
+export interface TurnCancelResult {
+  cancelled: boolean;
+}
+
+export interface TurnInterruptResult {
+  interrupted: boolean;
+}
+
+export interface SentResult {
+  sent: boolean;
+}
+
+export interface PermissionModeResult {
+  mode: string;
+}
+
+export interface PermissionSetModeParams {
+  mode: string;
+}
+
+export interface PermissionRuleParams {
+  kind: string;
+  rule: string;
+}
+
+export interface SessionPermissionRuleParams {
+  session_id: string;
+  kind: string;
+  rule: string;
+}
+
+export interface PermissionRuleUpdateResult {
+  path: string;
+  rule: string;
+  changed: boolean;
+}
+
+export interface AddDirectoryParams {
+  session_id: string;
+  directory: string;
+}
+
+export interface ValidateDirectoryParams {
+  path: string;
+}
+
+export interface ModelNameResult {
+  model_name: string;
+}
+
+export type ModelOptionsResult = ModelOptionOverview[];
+
+export type SetModelParams = {
+  session_id?: string | null;
+  model?: string | null;
+};
+
+export interface SetModelResult {
+  display_name: string;
+}
+
+/** Set or clear the per-session thinking-token override. */
+export type SetThinkingBudgetParams = {
+  session_id: string;
+  max_thinking_tokens?: number | null;
+};
+
+export type ThinkingBudgetResult = {
+  session_id: string;
+  max_thinking_tokens?: number | null;
+};
+
+export type ProvidersResult = {
+  default_provider: string;
+  fallback_provider?: string | null;
+  max_retries: number;
+  resolutions: ProviderResolutionOverview[];
+};
+
+export interface ThemeParams {
+  theme: string;
+}
+
+export interface ThemeResult {
+  theme: string;
+}
+
+export type EffortParams = {
+  session_id: string;
+  effort?: string | null;
+};
+
+export type EffortResult = {
+  effort?: string | null;
+};
+
+export interface OutputStyleParams {
+  style: string;
+}
+
+export interface OutputStyleResult {
+  style: string;
+}
+
+export interface PathResult {
+  path: string;
+}
+
+export interface KeybindingsFileResult {
+  path: string;
+  created: boolean;
+}
+
+export interface KeybindingsLoadResult {
+  warnings: string[];
+}
+
+export interface EditorModeParams {
+  mode: string;
+}
+
+export interface EditorModeResult {
+  editor_mode: string;
+}
+
+export type OutputStyleOptionsResult = OutputStyleOptionOverview[];
+
+export interface ActiveOutputStyleResult {
+  name: string;
+  matched: boolean;
+}
+
+export interface SettingKeyParams {
+  key: string;
+}
+
+export interface SettingLockedResult {
+  locked: boolean;
+}
+
+export interface EnabledParams {
+  enabled: boolean;
+}
+
+export interface EnabledResult {
+  enabled: boolean;
+}
+
+export interface StringPathParams {
+  path: string;
+}
+
+export interface SandboxExcludedCommandParams {
+  command: string;
+}
+
+export interface SandboxExcludedCommandResult {
+  pattern: string;
+  path: string;
+}
+
+export interface AllowAllParams {
+  allow_all: boolean;
+}
+
+export interface AllowAllResult {
+  allow_all: boolean;
+}
+
+export type ToolsListResult = ToolOverview[];
+
+/** Seed one validated file identity into the shared stale-write guard. */
+export interface SeedReadStateParams {
+  session_id: string;
+  path: string;
+  mtime: number;
+}
+
+export interface SeedReadStateResult {
+  session_id: string;
+  path: string;
+  mtime: number;
+  seeded: boolean;
+}
+
+export interface ToolInvokeParams {
+  name: string;
+  input?: string;
+}
+
+export interface ToolInvokeResult {
+  name: string;
+  summary: string;
+  output: string;
+  metadata?: unknown;
+  changed_paths: string[];
+}
+
+export type SkillDefinitionsParams = {
+  session_id?: string | null;
+};
+
+export type SkillDefinitionsResult = SkillDefinition[];
+
+export type AgentDefinitionsResult = AgentSummary[];
+
+export interface AgentDefinitionsWithWarningsResult {
+  definitions: AgentDefinition[];
+  warnings: AgentLoadWarning[];
+}
+
+export interface TaskListParams {
+  task_list_id: string;
+}
+
+export interface TaskListResult {
+  task_list_id: string;
+  directory: string;
+  tasks: TaskOverview[];
+}
+
+export interface EnterPlanModeResult {
+  name: string;
+  summary: string;
+  output: string;
+  metadata?: unknown;
+}
+
+export type AuthLoginParams = {
+  provider: string;
+  method: AuthMethod;
+  token?: string | null;
+  env_var?: string | null;
+};
+
+export interface AuthLoginResult {
+  provider: string;
+  method: string;
+  source_summary: string;
+  persisted: boolean;
+  usable: boolean;
+  active: boolean;
+}
+
+export type AuthLogoutParams = {
+  provider?: string | null;
+};
+
+export interface AuthLogoutResult {
+  removed: number;
+}
+
+export type DiagnosticsCleanupChildSessionsParams = {
+  dry_run?: boolean;
+  stale_running_cutoff_ms?: number | null;
+};
+
+export interface ChildSessionOrphanCleanupResult {
+  dry_run: boolean;
+  scoped_cwds: string[];
+  inspected_metadata: number;
+  orphan_metadata: number;
+  eligible_metadata: number;
+  stale_running_metadata: number;
+  skipped_running_metadata: number;
+  removed_metadata: number;
+  removed_transcripts: number;
+  orphan_child_session_ids: string[];
+}
+
+export type AdvancedCapabilitiesResult = AdvancedCapabilityOverview[];
+
+export type LastProviderRequestResult = ProviderRequestDebugOverview | null;
+
+export interface PreUserInstructionsResult {
+  preview: string;
+}
+
+export interface BackgroundCreateParams {
+  session_id: string;
+  prompt: string;
+}
+
+export interface BackgroundCreateResult {
+  job_id: string;
+  session_id: string;
+  status: string;
+  log_path: string;
+}
+
+export interface BackgroundJobParams {
+  job_id: string;
+}
+
+export interface BackgroundCancelResult {
+  job_id: string;
+  status: string;
+}
+
+/** Cancel one background task owned by a session. */
+export interface CancelAsyncTaskParams {
+  session_id: string;
+  task_id: string;
+}
+
+export interface CancelAsyncTaskResult {
+  session_id: string;
+  task_id: string;
+  outcome: AsyncCancellationResultKind;
+}
+
+export interface BackgroundLogResult {
+  log: string;
+}
+
+export interface BackgroundEventsResult {
+  events: string;
+}
+
+export interface BackgroundSubscribeParams {
+  task_id: string;
+}
+
+export interface BackgroundSubscribeResult {
+  subscription_id: string;
+}
+
+export interface WorkflowStartParams {
+  session_id: string;
+  name: string;
+  arguments?: string;
+}
+
+export interface WorkflowStartDynamicParams {
+  session_id: string;
+  name: string;
+  spec: unknown;
+  arguments?: string;
+}
+
+export interface WorkflowResumeParams {
+  run_id: string;
+}
+
+export interface WorkflowTaskResult {
+  task_id: string;
+}
+
+export interface McpServerIdParams {
+  server_id: string;
+}
+
+/** Secret-free status projection for a configured MCP server.
+
+Mutation-only configuration (endpoint, arguments, environment, headers and
+auth values) is deliberately absent from this read DTO. */
+export type McpServerStatusOverview = {
+  id: string;
+  transport: string;
+  enabled: boolean;
+  status: string;
+  trust: string;
+  summary: string;
+  auth_mode: string;
+  error?: string | null;
+};
+
+export type McpStatusResult = McpServerStatusOverview[];
+
+export type McpSessionServerParams = {
+  server_id: string;
+  session_id?: string | null;
+};
+
+export interface McpServerTrustResult {
+  trust: McpServerTrust;
+}
+
+export interface McpSetTrustParams {
+  server_id: string;
+  trust: McpServerTrust;
+}
+
+export type McpListToolsResult = McpToolSpec[];
+
+export type McpListResourcesResult = McpResourceSummary[];
+
+export type McpReadResourceParams = {
+  server_id: string;
+  uri: string;
+  session_id?: string | null;
+};
+
+export type McpResourceContent = {
+  uri: string;
+  mime_type: string;
+  contents: string;
+  blob?: string | null;
+  is_binary?: boolean;
+  annotations?: McpAnnotations | null;
+};
+
+export type McpListPromptsResult = McpPrompt[];
+
+export type McpGetPromptParams = {
+  server_id: string;
+  name: string;
+  arguments?: unknown;
+  session_id?: string | null;
+};
+
+/** Result of `prompts/get`: the rendered prompt messages. */
+export interface McpPromptResult {
+  description: string;
+  messages: McpPromptMessage[];
+}
+
+export interface McpInvokeToolParams {
+  server_id: string;
+  tool_name: string;
+  input?: string;
+}
+
+export interface McpToolResult {
+  server_id: string;
+  tool_name: string;
+  output: string;
+  is_error?: boolean;
+}
+
+export type McpDiagnoseResult = McpDiagnosticCheck[];
+
+export interface McpRemoveServerResult {
+  removed: boolean;
+}
+
+export type McpCapabilitiesResult = McpCapability[];
+
+export type McpOAuthOverviewParams = {
+  server_id?: string | null;
+};
+
+/** Secret-free OAuth status returned by `mcp/oauth_overview`. */
+export interface McpOAuthOverview {
+  store_path: string;
+  entries: McpOAuthStatusEntry[];
+}
+
+export interface McpLogoutOAuthTokenResult {
+  logged_out: boolean;
+}
+
+export interface AuthOverview {
+  store_path: string;
+  entries: AuthStatusEntry[];
+}
+
+/** Data-only view of the effective permission context.
+
+Permission evaluation and structured bash/path matching remain internal to
+core and config; this DTO exposes only the values clients render. */
+export interface PermissionContext {
+  cwd: string;
+  allow_network: boolean;
+  provider_allow_network: boolean;
+  allow_tools: boolean;
+  allowed_rules: PermissionRuleOverview[];
+  denied_rules: PermissionRuleOverview[];
+  ask_rules: PermissionRuleOverview[];
+  additional_directories: string[];
+}
+
+export interface SandboxLocalSettings {
+  enabled: boolean;
+  auto_allow_bash_if_sandboxed: boolean;
+  allow_unsandboxed_commands: boolean;
+  excluded_commands: string[];
+  filesystem: SandboxFilesystemLocalSettings;
+  network: SandboxNetworkLocalSettings;
+}
+
+export type SandboxSettingsUpdate = {
+  enabled?: boolean | null;
+  auto_allow_bash_if_sandboxed?: boolean | null;
+  allow_unsandboxed_commands?: boolean | null;
+};
+
+export interface HookDiscovery {
+  hooks: DiscoveredHook[];
+  warnings: HookDiscoveryWarning[];
+}
+
+export interface AdvancedCapabilityOverview {
+  name: string;
+  summary: string;
+  status: string;
+}
+
+export type AgentDefinition = {
+  agent_type: string;
+  description: string;
+  prompt: string;
+  tools?: unknown | null;
+  disallowed_tools?: unknown | null;
+  model?: string | null;
+  permission_mode?: AgentPermissionMode | null;
+  skills: string[];
+  mcp_server_names?: unknown | null;
+  hooks: Record<string, unknown>;
+  source: AgentSource;
+  path?: string | null;
+};
+
+export type AgentHookCommand = {
+  command: string;
+  if?: string | null;
+  timeout?: number | null;
+  type: "command";
+} | {
+  type: "Unsupported";
+};
+
+export type AgentHookMatcher = {
+  matcher?: string | null;
+  hooks?: AgentHookCommand[];
+};
+
+export type AgentLoadWarning = {
+  kind: AgentWarningKind;
+  source: AgentSource;
+  path?: string | null;
+  agent_type?: string | null;
+  message: string;
+};
+
+export type AgentPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
+
+export type AgentSource = "built_in" | "user_settings" | "project_settings" | {
+  plugin: {
+    plugin_id: string;
+  };
+};
+
+export interface AgentSummary {
+  agent_type: string;
+  description: string;
+}
+
+export type AgentWarningKind = "missing_field" | "duplicate_name";
+
+export type AsyncCancellationResultKind = "signalled" | "already_terminal" | "not_found";
+
+export type AuthMethod = "api_key" | "o_auth_device" | "chatgpt";
+
+export interface AuthStatusEntry {
+  provider: string;
+  method: AuthMethod;
+  source_summary: string;
+  persisted: boolean;
+  usable: boolean;
+  active: boolean;
+}
+
 /** Identifies the connecting client. */
 export interface ClientInfo {
   name: string;
   version: string;
 }
 
+export type DiscoveredHook = {
+  event: string;
+  provenance: HookProvenance;
+  matcher?: string | null;
+  command: string;
+  trusted: boolean;
+  validation: HookValidationStatus;
+};
+
+export interface HookDiscoveryWarning {
+  provenance: HookProvenance;
+  event: string;
+  message: string;
+}
+
+export type HookLayer = "user" | "project" | "local" | "managed";
+
+export type HookProvenance = "built_in" | {
+  settings: HookLayer;
+} | {
+  skill: {
+    name: string;
+  };
+} | {
+  agent: {
+    name: string;
+  };
+} | {
+  plugin: {
+    plugin_id: string;
+  };
+};
+
+export type HookValidationStatus = "valid" | {
+  invalid: string;
+};
+
+export type McpAnnotations = {
+  audience?: string[];
+  priority?: number | null;
+};
+
+/** Authentication input accepted by MCP mutation methods.
+
+Header values are intentionally possible here because this is a write
+contract. Read methods use [`McpAuthOverview`] instead. */
 export type McpAuth = {
   kind: "none";
 } | {
@@ -170,6 +872,57 @@ export type McpAuth = {
   kind: "header";
 };
 
+/** Safe authentication summary returned by read-only MCP methods.
+
+The `value` field is retained for protocol-1.0 shape compatibility but the
+app-server always fills it with a redaction marker. */
+export type McpAuthOverview = {
+  kind: "none";
+} | {
+  env_var: string;
+  kind: "bearer_env";
+} | {
+  name: string;
+  value: string;
+  kind: "header";
+};
+
+export interface McpCapability {
+  transport: McpTransport;
+  enabled: boolean;
+  note: string;
+}
+
+/** A protocol-owned MCP content block. */
+export type McpContent = {
+  kind: string;
+  text?: string | null;
+  binary?: string | null;
+  is_binary?: boolean;
+  mime_type?: string;
+  annotations?: McpAnnotations | null;
+};
+
+export interface McpDiagnosticCheck {
+  name: string;
+  status: McpDiagnosticStatus;
+  detail: string;
+}
+
+export type McpDiagnosticStatus = "pass" | "warn" | "fail";
+
+export type McpOAuthStatusEntry = {
+  server_id: string;
+  source_summary: string;
+  usable: boolean;
+  expired: boolean;
+  has_refresh_token: boolean;
+  has_token_endpoint?: boolean;
+  expires_at?: number | null;
+  scopes?: string[];
+  updated_at?: number | null;
+};
+
 export interface McpPluginSource {
   plugin_id: string;
   plugin_name: string;
@@ -177,22 +930,30 @@ export interface McpPluginSource {
   source: string;
 }
 
-export type McpServerConfig = {
-  id: string;
-  transport: McpTransport;
-  endpoint: string;
-  args?: string[];
-  env?: Record<string, unknown>;
-  cwd?: string | null;
-  headers?: Record<string, unknown>;
-  enabled: boolean;
-  status?: McpServerStatus;
-  error?: string | null;
-  summary: string;
-  auth: McpAuth;
-  trust?: McpServerTrust;
-  transport_type_hint?: string | null;
-  source?: McpServerSource | null;
+export interface McpPrompt {
+  name: string;
+  description: string;
+  arguments?: McpPromptArgument[];
+  skill?: boolean;
+}
+
+export interface McpPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpPromptMessage {
+  role: string;
+  content: McpContent;
+}
+
+export type McpResourceSummary = {
+  uri: string;
+  name: string;
+  mime_type: string;
+  description: string;
+  annotations?: McpAnnotations | null;
 };
 
 export type McpServerSource = McpPluginSource & {
@@ -203,7 +964,72 @@ export type McpServerStatus = "disabled" | "starting" | "ready" | "failed" | "un
 
 export type McpServerTrust = "unknown" | "trusted" | "denied";
 
+export interface McpToolSpec {
+  name: string;
+  summary: string;
+}
+
+/** Transport selected for an MCP server.
+
+This is a wire DTO. Runtime transport behavior remains owned by
+`orbcode-mcp` and is converted at the app-server boundary. */
 export type McpTransport = "stdio" | "http" | "https" | "streamable_http" | "web_socket";
+
+export type ModelOptionOverview = {
+  value?: string | null;
+  label: string;
+  description: string;
+  current: boolean;
+};
+
+export interface OutputStyleOptionOverview {
+  value: string;
+  label: string;
+  description: string;
+  current: boolean;
+}
+
+export type PermissionRuleOverview = {
+  raw: string;
+  tool_name: string;
+  rule_content?: string | null;
+};
+
+export interface ProviderRequestDebugOverview {
+  provider: string;
+  source: string;
+  session_id: string;
+  model: string;
+  base_url: string;
+  captured_at: string;
+  recent_activity_json: string;
+  previous_turn_json: string;
+  body_json: string;
+}
+
+export interface ProviderResolutionOverview {
+  provider: string;
+  model: string;
+  request_model: string;
+  display_name: string;
+  capabilities: string[];
+}
+
+export interface SandboxFilesystemLocalSettings {
+  allow_write: string[];
+  deny_write: string[];
+  deny_read: string[];
+  allow_read: string[];
+}
+
+export type SandboxNetworkLocalSettings = {
+  allowed_domains: string[];
+  allow_unix_sockets: string[];
+  allow_all_unix_sockets?: boolean | null;
+  allow_local_binding?: boolean | null;
+  http_proxy_port?: number | null;
+  socks_proxy_port?: number | null;
+};
 
 /** Identifies the server. */
 export interface ServerInfo {
@@ -215,6 +1041,43 @@ export interface ServerInfo {
 export interface ServerRequestResponse {
   id: string;
   result: ResponseResult;
+}
+
+export type SkillDefinition = {
+  name: string;
+  description?: string | null;
+  when_to_use?: string | null;
+  allowed_tools: string[];
+  model?: string | null;
+  assets: string[];
+  path: string;
+  body: string;
+  source: SkillSource;
+};
+
+export type SkillSource = "User" | "Project" | "Bundled" | {
+  Plugin: {
+    plugin_id: string;
+  };
+} | {
+  Mcp: {
+    server_id: string;
+  };
+};
+
+export interface TaskOverview {
+  id: string;
+  subject: string;
+  description: string;
+  status: string;
+}
+
+export interface ToolOverview {
+  name: string;
+  summary: string;
+  requires_tools_permission: boolean;
+  requires_network_permission: boolean;
+  provider_hidden: boolean;
 }
 
 // Method constants
@@ -319,6 +1182,7 @@ export const EXPERIMENTAL_METHODS = [
   "session/acp_load_setup",
   "session/acp_resume_setup",
   "session/acp_delete",
+  "session/acp_close",
   "background/create",
   "background/list",
   "background/detail",

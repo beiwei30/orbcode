@@ -13,6 +13,7 @@ mod doctor;
 mod mcp_api;
 pub mod message_processor;
 mod permissions;
+mod protocol_conversion;
 pub mod protocol_handler;
 mod sessions;
 mod settings;

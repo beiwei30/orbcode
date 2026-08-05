@@ -9,7 +9,7 @@ use std::sync::{
 use anyhow::Result;
 use crossterm::{
     Command,
-    cursor::{MoveDown, MoveTo, MoveToColumn, RestorePosition, SavePosition, SetCursorStyle},
+    cursor::{MoveTo, SetCursorStyle},
     event::{
         DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
         poll as poll_terminal_event, read as read_terminal_event,
@@ -29,10 +29,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
-use orbcode_app_server_client::{
-    AppClient, McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
-    McpToolSlashSuggestion,
-};
+use orbcode_app_server_client::AppClient;
 use orbcode_protocol::StreamEvent;
 
 use crate::chat::stream_events::mark_redraw;
@@ -166,63 +163,9 @@ async fn refresh_mcp_slash_suggestions_if_needed(
         return;
     }
     state.mcp_slash_suggestion_refresh_key = key;
-    let catalog = match app_server.mcp_slash_suggestions().await {
-        Ok(value) => parse_mcp_slash_suggestion_catalog(&value),
-        Err(_) => McpSlashSuggestionCatalog::default(),
-    };
+    let catalog = app_server.mcp_slash_suggestions().await.unwrap_or_default();
     state.update_mcp_slash_suggestions(catalog);
     mark_redraw(needs_redraw, redraw_reasons, "mcp_slash_suggestions");
-}
-
-fn parse_mcp_slash_suggestion_catalog(value: &serde_json::Value) -> McpSlashSuggestionCatalog {
-    let servers = value["servers"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| {
-                    Some(McpServerSlashSuggestion {
-                        id: s["id"].as_str()?.to_string(),
-                        summary: s["summary"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let tools = value["tools"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(McpToolSlashSuggestion {
-                        server_id: t["server_id"].as_str()?.to_string(),
-                        name: t["name"].as_str()?.to_string(),
-                        provider_name: t["provider_name"].as_str().unwrap_or("").to_string(),
-                        description: t["description"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let resources = value["resources"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|r| {
-                    Some(McpResourceSlashSuggestion {
-                        server_id: r["server_id"].as_str()?.to_string(),
-                        uri: r["uri"].as_str()?.to_string(),
-                        name: r["name"].as_str().unwrap_or("").to_string(),
-                        description: r["description"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    McpSlashSuggestionCatalog {
-        servers,
-        tools,
-        resources,
-    }
 }
 
 pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -1088,7 +1031,6 @@ where
                 row_count,
                 cursor,
                 wrap_policy,
-                transcript_width,
             )
         };
         crate::terminal_trace::record_bytes(
@@ -1133,7 +1075,6 @@ where
             row_count,
             cursor,
             wrap_policy,
-            transcript_width,
         )?;
     }
     Write::flush(writer)?;
@@ -1180,7 +1121,6 @@ fn queue_standard_history_insert(
     row_count: u16,
     cursor: Position,
     wrap_policy: HistoryLineWrapPolicy,
-    transcript_width: usize,
 ) -> io::Result<()> {
     if wrap_policy == HistoryLineWrapPolicy::PreWrap {
         queue!(writer, DisableLineWrap)?;
@@ -1207,7 +1147,6 @@ fn queue_standard_history_insert(
         queue!(writer, MoveTo(0, cursor_top))?;
         for line in lines {
             queue!(writer, Print("\r\n"))?;
-            clear_soft_wrap_continuation_rows(writer, line, transcript_width)?;
             queue_styled_line(writer, line)?;
             queue!(
                 writer,
@@ -1320,31 +1259,6 @@ fn queue_styled_line(writer: &mut impl Write, line: &StyledLine) -> io::Result<(
         queue_style(writer, span.style)?;
         queue!(writer, Print(span.content.as_ref()))?;
     }
-    Ok(())
-}
-
-fn clear_soft_wrap_continuation_rows(
-    writer: &mut impl Write,
-    line: &StyledLine,
-    transcript_width: usize,
-) -> io::Result<()> {
-    let physical_rows = styled_line_display_width(line)
-        .max(1)
-        .div_ceil(transcript_width.max(1));
-    if physical_rows <= 1 {
-        return Ok(());
-    }
-
-    queue!(writer, SavePosition)?;
-    for _ in 1..physical_rows {
-        queue!(
-            writer,
-            MoveDown(1),
-            MoveToColumn(0),
-            Clear(ClearType::UntilNewLine)
-        )?;
-    }
-    queue!(writer, RestorePosition)?;
     Ok(())
 }
 

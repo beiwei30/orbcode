@@ -286,7 +286,7 @@ fn context_percent_matches_calculate_token_warning_state() {
     };
     state.update_status_context_percent(&usage);
 
-    let expected = orbcode_app_server::calculate_token_warning_state(
+    let expected = crate::state::calculate_token_warning_state_from_protocol(
         usage.component_total_tokens(),
         &state.model_display_name,
         &state.context_window_options,

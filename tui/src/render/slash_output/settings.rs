@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use orbcode_app_server_client::{
     AgentDefinition, AgentLoadWarning, AuthOverview, HookDiscovery, PermissionOverview,
-    PlanOverview, PolicyOverview, SkillDefinition, StatusOverview, WorkspaceDiff,
+    PlanOverview, PolicyOverview, SkillDefinition, StatusAuthOverview, StatusOverview,
+    WorkspaceDiff,
 };
 #[cfg(test)]
 use orbcode_app_server_client::{MemoryFileOverview, MemoryOverview};
@@ -75,7 +76,7 @@ pub(crate) fn render_status_overview(overview: &StatusOverview) -> String {
     lines.push(String::new());
     lines.push(render_policy_overview(&overview.policy));
     lines.push(String::new());
-    lines.push(render_auth_overview(&overview.auth));
+    lines.push(render_status_auth_overview(&overview.auth));
     lines.join("\n")
 }
 
@@ -166,23 +167,59 @@ fn render_policy_overview(overview: &PolicyOverview) -> String {
 }
 
 pub(crate) fn render_auth_overview(overview: &AuthOverview) -> String {
-    let mut lines = vec![format!("auth store: {}", overview.store_path.display())];
-    if overview.entries.is_empty() {
+    render_auth_entries(
+        &overview.store_path,
+        overview.entries.iter().map(|entry| {
+            (
+                entry.provider.to_string(),
+                entry.method.to_string(),
+                entry.source_summary.as_str(),
+                entry.persisted,
+                entry.usable,
+                entry.active,
+            )
+        }),
+    )
+}
+
+fn render_status_auth_overview(overview: &StatusAuthOverview) -> String {
+    render_auth_entries(
+        &overview.store_path,
+        overview.entries.iter().map(|entry| {
+            (
+                entry.provider.to_string(),
+                entry.method.to_string(),
+                entry.source_summary.as_str(),
+                entry.persisted,
+                entry.usable,
+                entry.active,
+            )
+        }),
+    )
+}
+
+fn render_auth_entries<'a>(
+    store_path: &std::path::Path,
+    entries: impl Iterator<Item = (String, String, &'a str, bool, bool, bool)>,
+) -> String {
+    let entries = entries.collect::<Vec<_>>();
+    let mut lines = vec![format!("auth store: {}", store_path.display())];
+    if entries.is_empty() {
         lines.push("auth: no stored credentials".to_string());
     } else {
         lines.push("auth:".to_string());
-        for entry in &overview.entries {
-            let persisted = if entry.persisted { "persisted" } else { "env" };
-            if entry.usable {
-                let active = if entry.active { " active" } else { "" };
+        for (provider, method, source_summary, is_persisted, usable, is_active) in entries {
+            let persisted = if is_persisted { "persisted" } else { "env" };
+            if usable {
+                let active = if is_active { " active" } else { "" };
                 lines.push(format!(
                     "  - {} {} {} ({persisted}){active}",
-                    entry.provider, entry.method, entry.source_summary
+                    provider, method, source_summary
                 ));
             } else {
                 lines.push(format!(
                     "  - {} {} {} ({persisted}, blocked)",
-                    entry.provider, entry.method, entry.source_summary
+                    provider, method, source_summary
                 ));
             }
         }

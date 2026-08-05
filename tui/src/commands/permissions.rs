@@ -35,12 +35,10 @@ pub(crate) async fn apply_permission_rule_update(
     kind: PermissionRuleSettingKind,
     normalized_rule: &str,
 ) -> Result<(String, String, PermissionOverview)> {
-    let overview_before: PermissionOverview = serde_json::from_value(
-        app_server
-            .permission_overview()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?,
-    )?;
+    let overview_before = app_server
+        .permission_overview()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let sources_before = permission_rule_sources(&overview_before, kind, normalized_rule);
     let kind_str = kind.as_str();
     let update_value = match action {
@@ -65,18 +63,13 @@ pub(crate) async fn apply_permission_rule_update(
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         },
     };
-    let update_path = update_value["path"]
-        .as_str()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    let update_rule = update_value["rule"].as_str().unwrap_or("").to_string();
-    let update_changed = update_value["changed"].as_bool().unwrap_or(false);
-    let overview: PermissionOverview = serde_json::from_value(
-        app_server
-            .permission_overview()
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?,
-    )?;
+    let update_path = update_value.path;
+    let update_rule = update_value.rule;
+    let update_changed = update_value.changed;
+    let overview = app_server
+        .permission_overview()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let sources_after = permission_rule_sources(&overview, kind, &update_rule);
     let display_path = slash_command_display_path(&update_path, &overview.permissions.cwd);
     let scope_prefix = match scope {

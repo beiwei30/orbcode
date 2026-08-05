@@ -133,9 +133,8 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let theme_val = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(theme_val["theme"].as_str().unwrap_or("auto"))
-            .unwrap_or(ThemeSetting::Auto);
+        let theme_result = app_server.theme_setting().await?;
+        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
         self.overlay = Some(OverlayState::ThemePicker(ThemePickerState::new(
             command, theme,
         )));
@@ -148,16 +147,14 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let options_val = app_server.output_style_options().await?;
-        let options: Vec<OutputStyleOption> = options_val
-            .as_array()
-            .unwrap_or(&Vec::new())
+        let options_result = app_server.output_style_options().await?;
+        let options: Vec<OutputStyleOption> = options_result
             .iter()
             .map(|o| OutputStyleOption {
-                value: o["value"].as_str().unwrap_or("").to_string(),
-                label: o["label"].as_str().unwrap_or("").to_string(),
-                description: o["description"].as_str().unwrap_or("").to_string(),
-                current: o["current"].as_bool().unwrap_or(false),
+                value: o.value.clone(),
+                label: o.label.clone(),
+                description: o.description.clone(),
+                current: o.current,
             })
             .collect();
         let locked = app_server.is_setting_locked("outputStyle").await?;
@@ -184,8 +181,7 @@ impl TuiState {
             return Ok(());
         };
         let result = app_server.set_theme_setting(theme.as_str()).await?;
-        let applied_theme = ThemeSetting::parse(result["theme"].as_str().unwrap_or("auto"))
-            .unwrap_or(ThemeSetting::Auto);
+        let applied_theme = ThemeSetting::parse(&result.theme).unwrap_or(ThemeSetting::Auto);
         set_active_theme(applied_theme);
         self.overlay = None;
         let summary = format!("Theme set to {}", applied_theme.as_str());

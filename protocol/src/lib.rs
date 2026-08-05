@@ -1,6 +1,8 @@
+mod app_values;
 mod background_task_view;
 mod control;
 mod cost;
+mod overview;
 mod permission;
 mod provider;
 mod session;
@@ -9,6 +11,10 @@ mod tool;
 mod tool_title;
 mod usage;
 
+pub use app_values::{
+    CompactDecision, CompactSessionResult, ProviderRequestDebugSnapshot, WorkflowCommand,
+    WorkflowSource,
+};
 pub use background_task_view::{
     BackgroundTaskProgressEvent, BackgroundTaskView, BackgroundTaskViewKind,
     BackgroundTaskViewStatus, WorkflowStepView, WorkflowStepViewStatus,
@@ -22,9 +28,14 @@ pub use control::{
     ToolPermissionResult, UNSUPPORTED_CONTROL_SUBTYPES, extract_user_message_text,
 };
 pub use cost::{
-    BudgetState, CostBreakdown, ModelPricing, PRICING_ANTHROPIC_HAIKU, PRICING_ANTHROPIC_OPUS,
-    PRICING_ANTHROPIC_SONNET, PRICING_OPENAI_COMPATIBLE, accumulate_cost, over_budget,
-    pricing_for_model,
+    BillingBasis, BudgetState, CostBreakdown, CostSummary, ModelPricing, ModelUsage,
+    PRICING_ANTHROPIC_HAIKU, PRICING_ANTHROPIC_OPUS, PRICING_ANTHROPIC_SONNET,
+    PRICING_OPENAI_COMPATIBLE, accumulate_cost, over_budget, pricing_for_model,
+};
+pub use overview::{
+    ContextCategoryBreakdown, ContextDiagnosticCategory, ContextDiagnosticSection,
+    ContextDiagnosticStatus, ContextDiagnosticsReport, ContextTokenSource, ContextUsageOverview,
+    CostOverview, StatsActivityDay, StatsOverview, UsageOverview,
 };
 pub use permission::{
     McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,

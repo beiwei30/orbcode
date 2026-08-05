@@ -103,7 +103,7 @@ async fn jobs_commands_open_overlay_during_active_turn() {
         .await
         .expect("create app server");
         let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-        let bootstrap = app_server.bootstrap_typed(None).await.expect("bootstrap");
+        let bootstrap = app_server.bootstrap(None).await.expect("bootstrap");
         let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
         app_server
             .app_server()

@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use orbcode_config::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, ThemeSetting,
-    TokenWarningOptions,
-};
-use orbcode_core::{ContextDiagnosticsReport, ContextUsageOverview, PermissionContext};
 use orbcode_protocol::{
-    EffortLevel, MemorySourceStatus, ProviderId, SessionRecord, StreamEvent, TurnContext,
+    ContextDiagnosticsReport, ContextUsageOverview, EffortLevel, MemorySourceStatus, ProviderId,
+    SessionRecord, StreamEvent, TurnContext,
+};
+
+use crate::{
+    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionContext,
+    StatusAuthOverview, ThemeSetting, TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -127,7 +128,7 @@ pub struct StatusOverview {
     pub sandbox_mode: String,
     pub sandbox_allow_network: bool,
     pub permissions: PermissionOverview,
-    pub auth: orbcode_config::AuthOverview,
+    pub auth: StatusAuthOverview,
     pub persisted_session_count: usize,
     pub background_job_count: usize,
     pub available_tool_count: usize,
@@ -140,8 +141,10 @@ pub struct StatusOverview {
 ///
 /// Mutation-only configuration (endpoint, arguments, environment, headers and
 /// auth values) is deliberately absent from this read DTO.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct McpServerOverview {
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct McpServerStatusOverview {
     pub id: String,
     pub transport: String,
     pub enabled: bool,
@@ -153,20 +156,42 @@ pub struct McpServerOverview {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct McpStatusResult(pub Vec<McpServerStatusOverview>);
+
+impl IntoIterator for McpStatusResult {
+    type Item = McpServerStatusOverview;
+    type IntoIter = std::vec::IntoIter<McpServerStatusOverview>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ModelChangeResult {
+    #[schemars(with = "String")]
     pub provider: ProviderId,
     pub model: String,
     pub display_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ThinkingBudgetResult {
     pub session_id: String,
     pub max_thinking_tokens: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct SeedReadStateResult {
     pub session_id: String,
     pub path: PathBuf,
@@ -174,7 +199,9 @@ pub struct SeedReadStateResult {
     pub seeded: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AsyncCancellationResultKind {
     Signalled,
@@ -182,7 +209,9 @@ pub enum AsyncCancellationResultKind {
     NotFound,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct CancelAsyncTaskResult {
     pub session_id: String,
     pub task_id: String,
@@ -317,7 +346,7 @@ mod control_dto_tests {
 
     #[test]
     fn mcp_status_projection_has_no_mutation_secret_fields() {
-        let value = serde_json::to_value(McpServerOverview {
+        let value = serde_json::to_value(McpServerStatusOverview {
             id: "docs".to_string(),
             transport: "http".to_string(),
             enabled: true,

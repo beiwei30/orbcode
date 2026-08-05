@@ -249,10 +249,7 @@ async fn vim_slash_command_toggles_editor_mode_and_persists_setting() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -266,7 +263,7 @@ async fn vim_slash_command_toggles_editor_mode_and_persists_setting() {
     assert_eq!(state.editor_mode, EditorMode::Insert);
     assert_eq!(
         app_server.app_server().unwrap().editor_mode_setting(),
-        EditorModeSetting::Vim
+        orbcode_config::EditorModeSetting::Vim
     );
     assert_eq!(
         state.status_line,
@@ -291,7 +288,7 @@ async fn vim_slash_command_toggles_editor_mode_and_persists_setting() {
     assert_eq!(state.editor_mode, EditorMode::Standard);
     assert_eq!(
         app_server.app_server().unwrap().editor_mode_setting(),
-        EditorModeSetting::Normal
+        orbcode_config::EditorModeSetting::Normal
     );
     assert_eq!(
         state.status_line,
@@ -318,10 +315,7 @@ async fn ctrl_o_toggles_tool_details_before_vim_normal_mode_open_line() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.editor_mode = EditorMode::Normal;
     state.input = "abc".to_string();

@@ -35,6 +35,13 @@ fn is_active_turn_immediate_slash_command(line: &str) -> bool {
     matches!(command, "jobs" | "background")
 }
 
+fn overlay_defers_ctrl_c_to_global_interrupt(overlay: &OverlayState) -> bool {
+    matches!(
+        overlay,
+        OverlayState::Diff(_) | OverlayState::SandboxPicker(_)
+    )
+}
+
 impl TuiState {
     fn clear_followup_input(&mut self) {
         self.input.clear();
@@ -127,6 +134,18 @@ impl TuiState {
 
         if self.has_input_selection() {
             self.clear_input_selection();
+        }
+
+        if key_event.code == KeyCode::Char('c')
+            && key_event.modifiers.contains(KeyModifiers::CONTROL)
+            && turn_events.is_some()
+            && self
+                .overlay
+                .as_ref()
+                .is_some_and(overlay_defers_ctrl_c_to_global_interrupt)
+        {
+            self.interrupt_active_turn(app_server, turn_events).await;
+            return Ok(true);
         }
 
         if self.overlay.is_some() {

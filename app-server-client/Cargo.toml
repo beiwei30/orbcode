@@ -11,14 +11,14 @@ publish.workspace = true
 
 [features]
 default = ["in-process"]
-in-process = ["dep:orbcode-app-server"]
+in-process = ["dep:orbcode-app-server", "dep:orbcode-core"]
 test-support = ["in-process"]
 
 [dependencies]
 async-trait.workspace = true
 orbcode-app-server = { path = "../app-server", optional = true }
 orbcode-app-server-protocol = { path = "../app-server-protocol" }
-orbcode-core = { path = "../core" }
+orbcode-core = { path = "../core", optional = true }
 orbcode-protocol = { path = "../protocol" }
 futures.workspace = true
 serde.workspace = true

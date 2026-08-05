@@ -20,10 +20,7 @@ async fn mcp_capabilities_slash_command_uses_local_output_registry() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -78,10 +75,7 @@ async fn mcp_read_slash_command_echoes_command_before_result() {
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
     seed_fake_app_server_mcp(app_server.app_server().unwrap()).await;
 
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -136,10 +130,7 @@ async fn mcp_call_slash_command_echoes_command_before_result() {
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
     seed_fake_app_server_mcp(app_server.app_server().unwrap()).await;
 
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -186,10 +177,7 @@ async fn mcp_list_and_status_slash_commands_show_trust_column() {
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
     seed_fake_app_server_mcp(app_server.app_server().unwrap()).await;
 
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -238,10 +226,7 @@ async fn mcp_add_trust_remove_slash_commands_mutate_registry() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 

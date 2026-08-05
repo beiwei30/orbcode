@@ -99,6 +99,7 @@
     "session/acp_load_setup",
     "session/acp_resume_setup",
     "session/acp_delete",
+    "session/acp_close",
     "background/create",
     "background/list",
     "background/detail",

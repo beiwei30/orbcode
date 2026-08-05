@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use anyhow::Result;
-use orbcode_app_server_client::{AppClient, PermissionOverview};
+use orbcode_app_server_client::AppClient;
 use orbcode_protocol::{MessageRole, TranscriptBlock, TranscriptMessage};
 use tokio::sync::mpsc;
 
@@ -43,25 +43,17 @@ impl TuiState {
                     )));
                     self.set_status_line("Directory picker: Enter to add, Esc to cancel.");
                 } else {
-                    let candidate_value = app_server
+                    let candidate = app_server
                         .validate_add_directory(args)
                         .await
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let candidate_path = candidate_value["path"]
-                        .as_str()
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_default();
-                    let result_value = app_server
-                        .add_directory(&self.session_id, &candidate_path.display().to_string())
+                    let result = app_server
+                        .add_directory(&self.session_id, &candidate.path.display().to_string())
                         .await
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let result_path = result_value["path"]
-                        .as_str()
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_default();
                     let message = format!(
                         "Added {} as a working directory for this session.",
-                        result_path.display()
+                        result.path.display()
                     );
                     self.push_local_slash_command_output(
                         line,
@@ -87,7 +79,7 @@ impl TuiState {
                 let previous_usage = orbcode_protocol::get_current_usage(&self.messages);
                 let allow_all = app_server.allow_all().await.unwrap_or(false);
                 let bootstrap = app_server
-                    .bootstrap_typed(None)
+                    .bootstrap(None)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
                 let _ = app_server.clear_session(&previous_session_id).await;
@@ -204,12 +196,10 @@ impl TuiState {
                 if !args.is_empty() {
                     return Err(anyhow::anyhow!("unknown slash command"));
                 }
-                let permissions: PermissionOverview = serde_json::from_value(
-                    app_server
-                        .permission_overview()
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?,
-                )?;
+                let permissions = app_server
+                    .permission_overview()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
                 let session_summary = app_server.list_sessions().await.ok().and_then(|summaries| {
                     summaries
                         .into_iter()
@@ -255,7 +245,7 @@ impl TuiState {
                 self.set_status_line(summary);
             }
             TuiLocalSlashCommand::Fork => {
-                let fork_value = app_server
+                let fork_result = app_server
                     .fork_session(
                         &self.session_id,
                         (!args.is_empty()).then(|| args.to_string()),
@@ -263,11 +253,9 @@ impl TuiState {
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let fork_session_id = fork_value["session_id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("fork_session returned no session_id"))?;
+                let fork_session_id = &fork_result.session_id;
                 let bootstrap = app_server
-                    .bootstrap_typed(Some(fork_session_id))
+                    .bootstrap(Some(fork_session_id))
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
                 *self = Self::new(self.client.clone(), bootstrap);
@@ -282,15 +270,12 @@ impl TuiState {
                 if !args.is_empty() {
                     return Err(anyhow::anyhow!("unknown slash command"));
                 }
-                let value = app_server
+                let result = app_server
                     .ensure_keybindings_file()
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let file_path = value["path"]
-                    .as_str()
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_default();
-                let file_created = value["created"].as_bool().unwrap_or(false);
+                let file_path = result.path;
+                let file_created = result.created;
                 self.external_editor_request = Some(ExternalEditorRequest {
                     command: line.to_string(),
                     path: file_path.clone(),
@@ -393,7 +378,7 @@ impl TuiState {
                         .await?;
                     return Ok(());
                 }
-                let bootstrap = match app_server.bootstrap_typed(Some(args)).await {
+                let bootstrap = match app_server.bootstrap(Some(args)).await {
                     Ok(bootstrap) => bootstrap,
                     Err(_) => {
                         let Some(session_id) = app_server
@@ -404,7 +389,7 @@ impl TuiState {
                             return Err(anyhow::anyhow!("session not found: {args}"));
                         };
                         app_server
-                            .bootstrap_typed(Some(&session_id))
+                            .bootstrap(Some(&session_id))
                             .await
                             .map_err(|e| anyhow::anyhow!("{e}"))?
                     }
@@ -439,18 +424,15 @@ impl TuiState {
                         "please provide a command pattern to exclude (e.g. /sandbox exclude \"npm run test:*\")"
                     ));
                 }
-                let excluded_value = app_server
+                let excluded = app_server
                     .add_sandbox_excluded_command(&pattern)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let excluded_pattern = excluded_value["pattern"].as_str().unwrap_or("").to_string();
-                let excluded_path = excluded_value["path"]
-                    .as_str()
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_default();
-                let display_path = slash_command_display_path(&excluded_path, &self.cwd);
-                let message =
-                    format!("Added \"{excluded_pattern}\" to excluded commands in {display_path}");
+                let display_path = slash_command_display_path(&excluded.path, &self.cwd);
+                let message = format!(
+                    "Added \"{}\" to excluded commands in {display_path}",
+                    excluded.pattern
+                );
                 self.push_local_slash_command_output(line, message.clone(), None);
                 self.set_status_line(message);
             }

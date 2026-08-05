@@ -1,5 +1,8 @@
-use orbcode_app_server_protocol::{AcpDeleteSessionParams, BootstrapParams, ResponseResult};
-use serde::Deserialize;
+use orbcode_app_server_protocol::{
+    AcpDeleteSessionParams, BootstrapParams, ResponseResult, SessionFindByTitleParams,
+    SessionFindByTitleResult, SessionForkParams, SessionForkResult, SessionIdParams,
+    SessionListResult, SessionRecordMessageParams, SessionRenameParams, SessionRewindParams,
+};
 use serde_json::Value;
 
 use super::{core_error, success, try_parse};
@@ -9,47 +12,20 @@ impl AppServer {
     pub(super) async fn handle_session_bootstrap(&self, params: Option<Value>) -> ResponseResult {
         let p: BootstrapParams = try_parse!(params);
         match self.bootstrap_with_params(p).await {
-            Ok(state) => success(serde_json::json!({
-                "session": state.session,
-                "bootstrap_event": state.bootstrap_event,
-                "prompt_history": state.prompt_history,
-                "available_tool_count": state.available_tool_count,
-                "configured_mcp_server_count": state.configured_mcp_server_count,
-                "enabled_mcp_capability_count": state.enabled_mcp_capability_count,
-                "home_dir": state.home_dir,
-                "cwd": state.cwd,
-                "model_display_name": state.model_display_name,
-                "default_provider": state.default_provider,
-                "fallback_provider": state.fallback_provider,
-                "max_retries": state.max_retries,
-                "context_window_options": state.context_window_options,
-                "max_output_token_options": state.max_output_token_options,
-                "token_warning_options": state.token_warning_options,
-                "theme": state.theme,
-                "editor_mode": state.editor_mode,
-                "permissions": state.permissions,
-                "mcp_slash_suggestions": state.mcp_slash_suggestions,
-                "statusline_command": state.statusline_command,
-                "statusline_refresh_interval_secs": state.statusline_refresh_interval_secs,
-            })),
+            Ok(state) => success(state),
             Err(e) => core_error(e),
         }
     }
 
     pub(super) async fn handle_session_list(&self, _params: Option<Value>) -> ResponseResult {
         match self.list_sessions().await {
-            Ok(sessions) => success(sessions),
+            Ok(sessions) => success(SessionListResult(sessions)),
             Err(e) => core_error(e),
         }
     }
 
     pub(super) async fn handle_session_rename(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            new_title: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionRenameParams = try_parse!(params);
         match self.rename_session(&p.session_id, &p.new_title).await {
             Ok(()) => super::success_empty(),
             Err(e) => core_error(e),
@@ -57,25 +33,15 @@ impl AppServer {
     }
 
     pub(super) async fn handle_session_fork(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            title: Option<String>,
-            note: Option<String>,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionForkParams = try_parse!(params);
         match self.fork_session(&p.session_id, p.title, p.note).await {
-            Ok(session) => success(session),
+            Ok(session) => success(SessionForkResult(session)),
             Err(e) => core_error(e),
         }
     }
 
     pub(super) async fn handle_session_clear(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         match self.clear_session(&p.session_id).await {
             Ok(state) => success(state),
             Err(e) => core_error(e),
@@ -83,12 +49,7 @@ impl AppServer {
     }
 
     pub(super) async fn handle_session_rewind(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            keep_messages: usize,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionRewindParams = try_parse!(params);
         match self.rewind_session(&p.session_id, p.keep_messages).await {
             Ok(state) => success(state),
             Err(e) => core_error(e),
@@ -99,12 +60,7 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            message: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionRecordMessageParams = try_parse!(params);
         match self.record_system_message(&p.session_id, p.message).await {
             Ok(_) => super::success_empty(),
             Err(e) => core_error(e),
@@ -112,11 +68,7 @@ impl AppServer {
     }
 
     pub(super) async fn handle_session_compact(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         match self.compact_session(&p.session_id).await {
             Ok(result) => success(result),
             Err(e) => core_error(e),
@@ -127,11 +79,7 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         match self.evaluate_manual_compact_decision(&p.session_id).await {
             Ok(decision) => success(decision),
             Err(e) => core_error(e),
@@ -142,13 +90,9 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            title: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionFindByTitleParams = try_parse!(params);
         match self.session_id_for_exact_custom_title(&p.title).await {
-            Ok(session_id) => success(serde_json::json!({ "session_id": session_id })),
+            Ok(session_id) => success(SessionFindByTitleResult { session_id }),
             Err(e) => core_error(e),
         }
     }
@@ -157,11 +101,7 @@ impl AppServer {
         &self,
         params: Option<Value>,
     ) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         match self.acp_load_replay_preflight(&p.session_id).await {
             Ok(result) => success(result),
             Err(e) => core_error(e),
@@ -196,5 +136,11 @@ impl AppServer {
             Ok(()) => super::success_empty(),
             Err(e) => core_error(e),
         }
+    }
+
+    pub(super) async fn handle_session_acp_close(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        self.remove_session_mcp_servers(&p.session_id).await;
+        super::success_empty()
     }
 }

@@ -15,11 +15,13 @@ use tokio::process::Command as TokioCommand;
 use super::AppServer;
 use super::doctor::run_doctor;
 use super::settings::{auto_memory_enabled, capability_names};
+use crate::protocol_conversion::status_auth_overview_to_wire;
 
 const UNTRACKED_DIFF_MAX_BYTES: u64 = 256 * 1024;
 
 impl AppServer {
     pub async fn status_overview(&self, session_id: &str) -> Result<StatusOverview, CoreError> {
+        let permission_context = self.permissions();
         let permission_overview = self.permission_overview().await;
         let session_count = self.sessions.list_sessions().await?.len();
         let background_job_count = self.background.list_jobs().await?.len();
@@ -35,7 +37,7 @@ impl AppServer {
             .tools
             .provider_definitions(true, true)
             .into_iter()
-            .filter(|tool| permission_overview.permissions.tool_visible(&tool.name))
+            .filter(|tool| permission_context.tool_visible(&tool.name))
             .count();
         let config = self.sessions.effective_config();
         let model_resolution = config.provider_model_resolution(config.default_provider);
@@ -56,7 +58,7 @@ impl AppServer {
             sandbox_mode: config.sandbox_mode.as_str().to_string(),
             sandbox_allow_network: config.sandbox_allow_network,
             permissions: permission_overview,
-            auth: self.auth.overview().await?,
+            auth: status_auth_overview_to_wire(self.auth.overview().await?),
             persisted_session_count: session_count,
             background_job_count,
             available_tool_count,

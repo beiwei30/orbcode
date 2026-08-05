@@ -659,6 +659,7 @@ fn method_constants_are_stable() {
         "session/acp_load_setup",
         "session/acp_resume_setup",
         "session/acp_delete",
+        "session/acp_close",
         // Background
         "background/create",
         "background/list",

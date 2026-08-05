@@ -500,7 +500,9 @@ impl SessionManager {
                 .into_tool_round_response();
             let response = &tool_round_response.response;
 
-            if cancel_flag.load(Ordering::SeqCst) {
+            if cancel_flag.load(Ordering::SeqCst)
+                || matches!(&stream_result, Err(CoreError::Cancelled))
+            {
                 self.interrupt_streamed_tool_executions(session_id, streamed_tool_executions, tx)
                     .await;
                 // Preserve the streamed blocks (thinking + tool_use), not just
