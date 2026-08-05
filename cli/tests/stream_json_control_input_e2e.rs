@@ -13,7 +13,7 @@
 //! The provider is the deterministic `stub://test` backend; `#tool:bash {...}`
 //! markers drive a tool round-trip just as in `stream_json_e2e.rs`.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
@@ -328,4 +328,137 @@ fn missing_type_with_request_id_yields_control_response_error() {
     let records = parse_lines(&stdout);
     let err = control_response(&records, "miss-1").expect("control_response for missing type");
     assert_eq!(err["response"]["subtype"], "error");
+}
+
+#[test]
+fn ask_user_duplex_rejects_invalid_then_accepts_valid_response_exactly_once() {
+    let harness = Harness::new();
+    let mut child = harness.command().spawn().expect("spawn orbcode");
+    let mut stdin = Some(child.stdin.take().expect("stdin pipe"));
+    let stdout = child.stdout.take().expect("stdout pipe");
+    let mut stderr = child.stderr.take().expect("stderr pipe");
+
+    let prompt = r#"#tool:AskUserQuestion {"questions":[{"id":"database","question":"Which database?","header":"Database","options":[{"id":"postgres","label":"PostgreSQL","description":"SQL"}],"allow_free_text":false}]}"#;
+    writeln!(stdin.as_mut().unwrap(), "{}", user_frame(prompt)).expect("write user frame");
+    stdin.as_mut().unwrap().flush().expect("flush user frame");
+
+    let mut records = Vec::new();
+    let mut request_id = None;
+    for line in BufReader::new(stdout).lines() {
+        let line = line.expect("stdout line");
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: Value = serde_json::from_str(&line).expect("stream-json output");
+        if record["type"] == "stream_event"
+            && record["event"]["type"] == "server_request"
+            && record["event"]["method"] == "ask_user/request"
+        {
+            let id = record["event"]["request_id"]
+                .as_str()
+                .expect("ask request id")
+                .to_string();
+            assert_eq!(record["event"]["params"]["questions"][0]["id"], "database");
+            request_id = Some(id.clone());
+
+            let invalid = serde_json::json!({
+                "type": "server_response",
+                "request_id": id,
+                "response": {
+                    "outcome": "answered",
+                    "answers": {
+                        "database": {"kind": "selected", "option_id": "unknown"}
+                    },
+                    "annotations": {}
+                }
+            });
+            let valid = serde_json::json!({
+                "type": "server_response",
+                "request_id": record["event"]["request_id"],
+                "response": {
+                    "outcome": "answered",
+                    "answers": {
+                        "database": {"kind": "selected", "option_id": "postgres"}
+                    },
+                    "annotations": {}
+                }
+            });
+            let pipe = stdin.as_mut().expect("stdin still open");
+            writeln!(pipe, "{invalid}").expect("write invalid response");
+            writeln!(pipe, "{valid}").expect("write valid response");
+            writeln!(pipe, "{valid}").expect("write duplicate response");
+            pipe.flush().expect("flush responses");
+            drop(stdin.take());
+        }
+        let terminal = record["type"] == "result";
+        records.push(record);
+        if terminal {
+            break;
+        }
+    }
+
+    let status = child.wait().expect("wait orbcode");
+    let mut stderr_text = String::new();
+    stderr
+        .read_to_string(&mut stderr_text)
+        .expect("read stderr");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "stderr: {stderr_text}\nrecords: {records:#?}"
+    );
+
+    let request_id = request_id.expect("server request lifecycle frame");
+    let correlated: Vec<&Value> = records
+        .iter()
+        .filter(|record| {
+            record["type"] == "control_response"
+                && record["response"]["request_id"].as_str() == Some(request_id.as_str())
+        })
+        .collect();
+    assert_eq!(
+        correlated.len(),
+        3,
+        "invalid, valid, and duplicate acknowledgements"
+    );
+    assert_eq!(correlated[0]["response"]["subtype"], "error");
+    assert!(
+        correlated[0]["response"]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown option")
+    );
+    assert_eq!(correlated[1]["response"]["subtype"], "success");
+    assert_eq!(correlated[2]["response"]["subtype"], "error");
+    assert!(records.iter().any(|record| {
+        record["type"] == "stream_event"
+            && record["event"]["type"] == "server_request_resolved"
+            && record["event"]["request_id"] == request_id
+    }));
+    assert!(
+        records.iter().any(|record| {
+            let wire = record.to_string();
+            wire.contains("User has answered your questions") && wire.contains("PostgreSQL")
+        }),
+        "validated labels and the provider-visible summary must return to the model"
+    );
+}
+
+#[test]
+fn ask_user_duplex_eof_cancels_pending_interaction_without_hanging() {
+    let harness = Harness::new();
+    let prompt = r#"#tool:AskUserQuestion {"questions":[{"id":"name","question":"What name?","header":"Name","options":[]}]}"#;
+    let (code, stdout, stderr) = harness.run_eof(&format!("{}\n", user_frame(prompt)));
+    assert_eq!(code, 5, "stderr: {stderr}\nstdout:\n{stdout}");
+    let records = parse_lines(&stdout);
+    assert!(records.iter().any(|record| {
+        record["type"] == "stream_event"
+            && record["event"]["type"] == "server_request"
+            && record["event"]["method"] == "ask_user/request"
+    }));
+    assert!(records.iter().any(|record| {
+        record["type"] == "stream_event"
+            && record["event"]["type"] == "tool_use_completed"
+            && record["event"]["kind"] == "cancelled"
+    }));
 }

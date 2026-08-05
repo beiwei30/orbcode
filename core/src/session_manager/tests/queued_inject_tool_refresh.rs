@@ -47,6 +47,153 @@ async fn e2e_ask_user_question_absent_from_provider_request() {
 }
 
 #[tokio::test]
+async fn e2e_ask_user_question_present_for_capable_turn() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+
+    let mut rx = manager
+        .submit_turn_with_interaction(
+            &session_id,
+            "hello",
+            crate::TurnInteractionContext::capable("tui-test"),
+        )
+        .await
+        .expect("submit capable turn");
+    tokio::time::timeout(StdDuration::from_secs(3), async {
+        while let Some(event) = rx.recv().await {
+            if matches!(event, StreamEvent::TurnFinished { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("turn should finish");
+
+    let snapshot = manager
+        .last_provider_request_snapshot()
+        .await
+        .expect("last request snapshot");
+    assert!(snapshot.body_json.contains("AskUserQuestion"));
+    assert!(snapshot.body_json.contains("multi_select"));
+    assert!(snapshot.body_json.contains("allow_annotation"));
+}
+
+#[tokio::test]
+async fn e2e_ask_user_question_hidden_for_partial_capability() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    let mut rx = manager
+        .submit_turn_with_interaction(
+            &session_id,
+            "hello",
+            crate::TurnInteractionContext {
+                owner_id: "acp-test".into(),
+                capabilities: crate::InteractiveQuestionCapabilities {
+                    single_select: true,
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .expect("submit partial-capability turn");
+    while let Some(event) = rx.recv().await {
+        if matches!(event, StreamEvent::TurnFinished { .. }) {
+            break;
+        }
+    }
+    let snapshot = manager
+        .last_provider_request_snapshot()
+        .await
+        .expect("last request snapshot");
+    assert!(!snapshot.body_json.contains("AskUserQuestion"));
+}
+
+#[tokio::test]
+async fn e2e_ask_user_disconnect_cancels_owned_active_turn() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    let mut rx = manager
+        .submit_turn_with_interaction(
+            &session_id,
+            r#"#tool:bash {"command":"sleep 2"}"#,
+            crate::TurnInteractionContext::capable("disconnect-owner"),
+        )
+        .await
+        .expect("submit capable turn");
+    tokio::time::sleep(StdDuration::from_millis(50)).await;
+    let cancelled = manager
+        .disconnect_interaction_owner("disconnect-owner")
+        .await;
+    assert_eq!(cancelled, vec![session_id.clone()]);
+    tokio::time::timeout(StdDuration::from_secs(3), async {
+        while let Some(event) = rx.recv().await {
+            if matches!(event, StreamEvent::TurnCancelled { .. }) {
+                return;
+            }
+        }
+        panic!("turn stream closed without cancellation");
+    })
+    .await
+    .expect("disconnect should cancel promptly");
+}
+
+#[tokio::test]
+async fn e2e_ask_user_invalid_model_input_is_tool_error_not_turn_abort() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn_with_interaction(
+            &session.session_id,
+            r#"#tool:AskUserQuestion {"questions":[]}"#,
+            crate::TurnInteractionContext::capable("tui-invalid-input"),
+        )
+        .await
+        .expect("submit capable turn");
+    let mut saw_tool_error = false;
+    let mut saw_finished = false;
+    tokio::time::timeout(StdDuration::from_secs(5), async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::ToolUseCompleted {
+                    tool_name, kind, ..
+                } if tool_name == "AskUserQuestion" => {
+                    saw_tool_error =
+                        kind == orbcode_protocol::ToolUseCompletionKind::ExecutionFailed;
+                }
+                StreamEvent::TurnFinished { .. } => {
+                    saw_finished = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("invalid tool input should not hang");
+    assert!(saw_tool_error);
+    assert!(saw_finished);
+}
+
+#[tokio::test]
 async fn e2e_plugin_tools_absent_from_provider_request() {
     let manager = test_manager_with_overrides(AppConfigOverrides {
         allow_tools: Some(true),

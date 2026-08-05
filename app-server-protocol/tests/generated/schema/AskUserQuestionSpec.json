@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskUserQuestionSpec",
+  "description": "Canonical model-visible specification for one interactive question.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "question": {
+      "type": "string"
+    },
+    "header": {
+      "type": "string"
+    },
+    "multi_select": {
+      "type": "boolean",
+      "default": false
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AskUserOption"
+      }
+    },
+    "allow_free_text": {
+      "description": "Whether the client should offer an automatic Other/free-text path.",
+      "type": "boolean",
+      "default": true
+    },
+    "allow_annotation": {
+      "description": "Whether the client should offer an annotation/note field.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "id",
+    "question",
+    "header"
+  ],
+  "$defs": {
+    "AskUserOption": {
+      "description": "One selectable answer presented for an interactive question.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "default": ""
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ]
+    }
+  }
+}

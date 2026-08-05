@@ -12,13 +12,15 @@ use tokio::time::{Duration, sleep};
 use uuid::Uuid;
 
 use crate::{
-    CoreError, agent_loop::no_tool::NoToolTurnReason, hooks::model_visible_context_message,
+    CoreError, TurnInteractionContext, agent_loop::no_tool::NoToolTurnReason,
+    hooks::model_visible_context_message,
 };
 
 #[derive(Clone)]
 pub(crate) struct ActiveTurnHandle {
     pub(crate) turn_id: Uuid,
     pub(crate) cancel_flag: Arc<AtomicBool>,
+    pub(crate) interaction: TurnInteractionContext,
 }
 
 #[derive(Clone, Default)]
@@ -36,6 +38,7 @@ impl ActiveTurnRegistry {
         session_id: &str,
         turn_id: Uuid,
         cancel_flag: Arc<AtomicBool>,
+        interaction: TurnInteractionContext,
     ) -> Result<(), CoreError> {
         let mut active_turns = self.active_turns.lock().await;
         if active_turns.contains_key(session_id) {
@@ -46,6 +49,7 @@ impl ActiveTurnRegistry {
             ActiveTurnHandle {
                 turn_id,
                 cancel_flag,
+                interaction,
             },
         );
         Ok(())
@@ -71,6 +75,18 @@ impl ActiveTurnRegistry {
         }
     }
 
+    pub(crate) async fn cancel_owner(&self, owner_id: &str) -> Vec<String> {
+        let active_turns = self.active_turns.lock().await;
+        let mut sessions = Vec::new();
+        for (session_id, active_turn) in active_turns.iter() {
+            if active_turn.interaction.owner_id == owner_id {
+                active_turn.cancel_flag.store(true, Ordering::SeqCst);
+                sessions.push(session_id.clone());
+            }
+        }
+        sessions
+    }
+
     pub(crate) async fn is_active(&self, session_id: &str, turn_id: Uuid) -> bool {
         let active_turns = self.active_turns.lock().await;
         active_turns
@@ -80,6 +96,17 @@ impl ActiveTurnRegistry {
 
     pub(crate) async fn has_active_session(&self, session_id: &str) -> bool {
         self.active_turns.lock().await.contains_key(session_id)
+    }
+
+    pub(crate) async fn interaction_context(
+        &self,
+        session_id: &str,
+    ) -> Option<(Uuid, TurnInteractionContext)> {
+        self.active_turns
+            .lock()
+            .await
+            .get(session_id)
+            .map(|active_turn| (active_turn.turn_id, active_turn.interaction.clone()))
     }
 
     pub(crate) async fn clear_if_matching(&self, session_id: &str, turn_id: Uuid) {

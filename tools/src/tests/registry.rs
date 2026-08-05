@@ -246,7 +246,7 @@ fn provider_definitions_respect_permission_visibility() {
     let restricted = registry.provider_definitions(false, false);
     assert!(
         !restricted.iter().any(|tool| tool.name == "AskUserQuestion"),
-        "AskUserQuestion is provider_hidden and must not appear in provider definitions"
+        "AskUserQuestion must stay hidden without an interactive capability context"
     );
     assert!(restricted.iter().any(|tool| tool.name == "EnterPlanMode"));
     assert!(restricted.iter().any(|tool| tool.name == "ExitPlanMode"));

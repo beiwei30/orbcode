@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+};
 
 use anyhow::Result;
 use orbcode_app_server::{
@@ -6,6 +9,10 @@ use orbcode_app_server::{
     ToolUseCompletionKind,
 };
 use orbcode_app_server_client::AppClient;
+use orbcode_protocol::{
+    AskUserCancellationReason, AskUserOption, AskUserQuestionSpec, AskUserResponseOutcome,
+    validate_ask_user_outcome,
+};
 use serde::Serialize;
 
 use crate::args::{CliInputFormat, CliOutputFormat};
@@ -145,6 +152,9 @@ pub(crate) async fn run_headless_prompt(
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::Interrupted => {
                                     "was interrupted"
+                                }
+                                orbcode_protocol::ToolUseCompletionKind::Cancelled => {
+                                    "was cancelled"
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::UnknownTool => {
                                     "was rejected as unknown"
@@ -557,6 +567,9 @@ pub(crate) async fn run_background_worker(
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::Interrupted => {
                                     "was interrupted"
+                                }
+                                orbcode_protocol::ToolUseCompletionKind::Cancelled => {
+                                    "was cancelled"
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::UnknownTool => {
                                     "was rejected as unknown"
@@ -1112,6 +1125,13 @@ impl HeadlessRun {
                 self.emit_control_response(max_thinking_tokens_unsupported(&request_id))?;
                 Ok(None)
             }
+            ControlFrame::ServerResponse { request_id, .. } => {
+                self.emit_control_response(control_response_error(
+                    &request_id,
+                    "unknown or stale server request id",
+                ))?;
+                Ok(None)
+            }
             ControlFrame::Unsupported {
                 request_id,
                 subtype,
@@ -1144,10 +1164,11 @@ impl HeadlessRun {
         stdin_open: &mut bool,
     ) -> Result<()> {
         self.total_turn_count += 1;
-        let mut stream = app_server.submit_turn(session_id, prompt).await?;
+        let mut stream = client.submit_turn_stream(session_id, prompt).await?;
         let turn_started = std::time::Instant::now();
         let mut assistant_text = String::new();
         let mut held_denials: Vec<String> = Vec::new();
+        let mut pending_asks: HashMap<String, Vec<AskUserQuestionSpec>> = HashMap::new();
 
         loop {
             if *stdin_open {
@@ -1161,7 +1182,9 @@ impl HeadlessRun {
                                         &mut assistant_text,
                                         turn_started,
                                         app_server,
+                                        client,
                                         &mut held_denials,
+                                        &mut pending_asks,
                                         true,
                                     )
                                     .await?
@@ -1181,6 +1204,7 @@ impl HeadlessRun {
                                     client,
                                     session_id,
                                     pending_prompts,
+                                    &mut pending_asks,
                                 )
                                 .await?;
                             }
@@ -1194,6 +1218,7 @@ impl HeadlessRun {
                                         )
                                         .await;
                                 }
+                                cancel_pending_asks(client, &mut pending_asks).await;
                             }
                         }
                     }
@@ -1207,7 +1232,9 @@ impl HeadlessRun {
                                 &mut assistant_text,
                                 turn_started,
                                 app_server,
+                                client,
                                 &mut held_denials,
+                                &mut pending_asks,
                                 false,
                             )
                             .await?
@@ -1230,9 +1257,39 @@ impl HeadlessRun {
         assistant_text: &mut String,
         turn_started: std::time::Instant,
         app_server: &AppServer,
+        client: &AppClient,
         held_denials: &mut Vec<String>,
+        pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
         hold_denials: bool,
     ) -> Result<bool> {
+        match event {
+            StreamEvent::AskUserQuestionRequested {
+                request_id,
+                questions,
+                question,
+                options,
+                ..
+            } => {
+                let questions = canonical_stream_questions(questions, question, options);
+                pending_asks.insert(request_id.clone(), questions);
+                if !hold_denials {
+                    let _ = client
+                        .respond_to_ask_user_question_outcome(
+                            request_id,
+                            AskUserResponseOutcome::Cancelled {
+                                reason: AskUserCancellationReason::Disconnect,
+                            },
+                        )
+                        .await;
+                    pending_asks.remove(request_id);
+                }
+            }
+            StreamEvent::AskUserQuestionResolved { request_id, .. } => {
+                pending_asks.remove(request_id);
+            }
+            _ => {}
+        }
+
         match self.record_event(event, assistant_text, turn_started)? {
             EventOutcome::Continue => Ok(false),
             EventOutcome::Terminal => Ok(true),
@@ -1268,6 +1325,7 @@ impl HeadlessRun {
         client: &AppClient,
         session_id: &str,
         pending_prompts: &mut std::collections::VecDeque<String>,
+        pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
     ) -> Result<()> {
         match frame {
             ControlFrame::Interrupt { request_id } => {
@@ -1289,6 +1347,37 @@ impl HeadlessRun {
             }
             ControlFrame::SetMaxThinkingTokens { request_id, .. } => {
                 self.emit_control_response(max_thinking_tokens_unsupported(&request_id))?;
+            }
+            ControlFrame::ServerResponse {
+                request_id,
+                outcome,
+            } => {
+                let Some(questions) = pending_asks.get(&request_id) else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "unknown, stale, or duplicate server request id",
+                    ))?;
+                    return Ok(());
+                };
+                if let Err(error) = validate_ask_user_outcome(questions, &outcome) {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        &format!("invalid AskUserQuestion response: {error}"),
+                    ))?;
+                    return Ok(());
+                }
+                if client
+                    .respond_to_ask_user_question_outcome(&request_id, outcome)
+                    .await
+                {
+                    pending_asks.remove(&request_id);
+                    self.emit_control_response(control_response_success(&request_id))?;
+                } else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "unknown, stale, or duplicate server request id",
+                    ))?;
+                }
             }
             ControlFrame::UserPrompt(text) => pending_prompts.push_back(text),
             ControlFrame::Unsupported {
@@ -1487,6 +1576,52 @@ impl HeadlessRun {
             &errors_vec,
         );
         (outcome, result_payload)
+    }
+}
+
+fn canonical_stream_questions(
+    questions: &[AskUserQuestionSpec],
+    legacy_question: &str,
+    legacy_options: &[String],
+) -> Vec<AskUserQuestionSpec> {
+    if !questions.is_empty() {
+        return questions.to_vec();
+    }
+    vec![AskUserQuestionSpec {
+        id: "question-1".to_string(),
+        question: legacy_question.to_string(),
+        header: String::new(),
+        multi_select: false,
+        options: legacy_options
+            .iter()
+            .enumerate()
+            .map(|(index, label)| AskUserOption {
+                id: format!("option-{}", index + 1),
+                label: label.clone(),
+                description: String::new(),
+                preview: None,
+            })
+            .collect(),
+        allow_free_text: true,
+        allow_annotation: false,
+    }]
+}
+
+async fn cancel_pending_asks(
+    client: &AppClient,
+    pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
+) {
+    let request_ids: Vec<String> = pending_asks.keys().cloned().collect();
+    pending_asks.clear();
+    for request_id in request_ids {
+        let _ = client
+            .respond_to_ask_user_question_outcome(
+                &request_id,
+                AskUserResponseOutcome::Cancelled {
+                    reason: AskUserCancellationReason::Disconnect,
+                },
+            )
+            .await;
     }
 }
 

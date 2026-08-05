@@ -37,6 +37,7 @@ pub(crate) fn overlay_request_panel(
             .cached_lines(permission_picker_dialog_inner_width(width))
             .to_vec(),
         OverlayState::PermissionRequest(_)
+        | OverlayState::AskUserQuestion(_)
         | OverlayState::Help(_)
         | OverlayState::KeybindHelp(_)
         | OverlayState::Diff(_)
@@ -56,13 +57,16 @@ pub(crate) fn permission_panel_area_for_overlay(
     overlay: Option<&mut OverlayState>,
     transcript_area: Rect,
 ) -> Option<Rect> {
-    let Some(OverlayState::PermissionRequest(permission)) = overlay else {
-        return None;
-    };
-    let inner_width = transcript_area.width.saturating_sub(2).max(1) as usize;
-    let height = {
-        let cached = permission.cached_panel_content(inner_width);
-        permission_panel_height_with_context_from_wrapped(cached.wrapped_body, transcript_area)
+    let height = match overlay? {
+        OverlayState::PermissionRequest(permission) => {
+            let inner_width = transcript_area.width.saturating_sub(2).max(1) as usize;
+            let cached = permission.cached_panel_content(inner_width);
+            permission_panel_height_with_context_from_wrapped(cached.wrapped_body, transcript_area)
+        }
+        OverlayState::AskUserQuestion(state) => {
+            ask_user_question_panel_height(state, transcript_area)
+        }
+        _ => return None,
     };
     Some(Rect {
         x: transcript_area.x,
@@ -76,12 +80,17 @@ pub(crate) fn permission_panel_desired_height(
     overlay: Option<&mut OverlayState>,
     transcript_width: usize,
 ) -> u16 {
-    let Some(OverlayState::PermissionRequest(permission)) = overlay else {
-        return 0;
-    };
-    let inner_width = transcript_width.saturating_sub(2).max(1);
-    let cached = permission.cached_panel_content(inner_width);
-    permission_panel_full_height_from_wrapped(cached.wrapped_body)
+    match overlay {
+        Some(OverlayState::PermissionRequest(permission)) => {
+            let inner_width = transcript_width.saturating_sub(2).max(1);
+            let cached = permission.cached_panel_content(inner_width);
+            permission_panel_full_height_from_wrapped(cached.wrapped_body)
+        }
+        Some(OverlayState::AskUserQuestion(state)) => {
+            ask_user_question_panel_desired_height(state, transcript_width)
+        }
+        _ => 0,
+    }
 }
 
 pub(crate) fn overlay_cursor_style(overlay: Option<&OverlayState>) -> Option<SetCursorStyle> {
@@ -97,6 +106,7 @@ pub(crate) fn overlay_cursor_style(overlay: Option<&OverlayState>) -> Option<Set
         Some(OverlayState::PermissionRequest(permission)) if permission.editing_rule => {
             Some(SetCursorStyle::BlinkingBar)
         }
+        Some(OverlayState::AskUserQuestion(_)) => Some(SetCursorStyle::BlinkingBar),
         _ => None,
     }
 }
@@ -137,6 +147,11 @@ pub(crate) fn draw_overlay_after_layout(
                 && let Some(cursor) = draw_permission_panel(frame, permission, panel_area)
             {
                 frame.set_cursor_position(cursor);
+            }
+        }
+        OverlayState::AskUserQuestion(state) => {
+            if let Some(panel_area) = permission_panel_area {
+                draw_ask_user_question_panel(frame, state, panel_area);
             }
         }
         OverlayState::Help(help) => {

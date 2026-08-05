@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use orbcode_app_server_client::{
-    AppClient, MemoryFileOverview, MemoryOverview, PermissionDecision, PermissionOverview,
-    WorkspaceDiff,
+    AppClient, AskUserResponseOutcome, MemoryFileOverview, MemoryOverview, PermissionDecision,
+    PermissionOverview, WorkspaceDiff,
 };
 use orbcode_config::{
     ModelOption, OutputStyleOption, PermissionRuleSettingKind, SandboxLocalSettings,
@@ -45,6 +45,7 @@ pub(crate) type EffortOverrideSelection = Option<Option<EffortLevel>>;
 
 mod add_dir_picker;
 mod appearance_picker;
+mod ask_user_question;
 mod background_jobs;
 mod config_picker;
 mod diff;
@@ -63,6 +64,7 @@ pub(crate) mod transcript_pager;
 
 pub(crate) use add_dir_picker::*;
 pub(crate) use appearance_picker::*;
+pub(crate) use ask_user_question::*;
 pub(crate) use background_jobs::*;
 pub(crate) use config_picker::*;
 pub(crate) use diff::*;
@@ -89,6 +91,7 @@ pub(crate) enum OverlayState {
     MemoryPicker(MemoryPickerState),
     PermissionPicker(PermissionPickerState),
     PermissionRequest(PermissionOverlayState),
+    AskUserQuestion(AskUserQuestionOverlayState),
     RewindPicker(RewindPickerState),
     Help(HelpOverlayState),
     KeybindHelp(KeybindHelpOverlayState),
@@ -154,6 +157,11 @@ pub(crate) enum OverlayAction {
     Permission {
         request_id: String,
         decision: PermissionDecision,
+    },
+    AskUserQuestion {
+        request_id: String,
+        outcome: AskUserResponseOutcome,
+        interrupt_turn: bool,
     },
     Rewind {
         command: String,

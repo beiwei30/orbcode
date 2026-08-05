@@ -1,0 +1,22 @@
+{
+  "request_id": "ask-2",
+  "outcome": {
+    "outcome": "answered",
+    "answers": {
+      "database": {
+        "kind": "selected",
+        "option_id": "postgres"
+      },
+      "features": {
+        "kind": "selected_many",
+        "option_ids": [
+          "search",
+          "audit"
+        ]
+      }
+    },
+    "annotations": {
+      "database": "Prefer managed hosting"
+    }
+  }
+}

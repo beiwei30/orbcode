@@ -11,12 +11,20 @@ impl AppServer {
             .list_tools()
             .into_iter()
             .map(|t| {
+                let unavailable_reason = matches!(
+                    t.name,
+                    "ask-user-question" | "AskUserQuestion"
+                )
+                .then_some(
+                    "available to the provider only for turns owned by a client that declares the full interactive_questions capability",
+                );
                 serde_json::json!({
                     "name": t.name,
                     "summary": t.summary,
                     "requires_tools_permission": t.requires_tools_permission,
                     "requires_network_permission": t.requires_network_permission,
                     "provider_hidden": t.provider_hidden,
+                    "unavailable_reason": unavailable_reason,
                 })
             })
             .collect();

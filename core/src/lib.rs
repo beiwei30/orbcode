@@ -6,6 +6,7 @@ mod context;
 mod context_estimation;
 mod hook_runner;
 mod hooks;
+mod interaction_runtime;
 mod model_cost;
 mod overview;
 mod permission_state;
@@ -22,6 +23,9 @@ use std::path::PathBuf;
 
 pub use compaction::CompactSessionResult;
 pub use config_provider::apply_provider_request_options;
+pub use interaction_runtime::{
+    InteractionResolveError, InteractiveQuestionCapabilities, TurnInteractionContext,
+};
 pub use model_cost::{
     BillingBasis, CostSummary, CostTracker, ModelCosts, ModelUsage, calculate_usd_cost,
     format_cost, format_model_pricing, get_model_costs,

@@ -425,6 +425,8 @@ pub(crate) async fn print_tools(client: &AppClient) -> Result<()> {
         requires_network_permission: bool,
         #[serde(default)]
         provider_hidden: bool,
+        #[serde(default)]
+        unavailable_reason: Option<String>,
     }
 
     let tools: Vec<ToolEntry> = tools_value
@@ -438,12 +440,16 @@ pub(crate) async fn print_tools(client: &AppClient) -> Result<()> {
     for tool in &tools {
         let hidden = if tool.provider_hidden { " hidden" } else { "" };
         println!(
-            "{:20} tools={} network={}{} {}",
+            "{:20} tools={} network={}{} {}{}",
             tool.name,
             tool.requires_tools_permission,
             tool.requires_network_permission,
             hidden,
-            tool.summary
+            tool.summary,
+            tool.unavailable_reason
+                .as_deref()
+                .map(|reason| format!(" (availability: {reason})"))
+                .unwrap_or_default(),
         );
     }
     Ok(())

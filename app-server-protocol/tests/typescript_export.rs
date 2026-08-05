@@ -255,6 +255,18 @@ fn generate_protocol_ts() -> String {
             "AskUserQuestionResponse",
             schema_for::<orbcode_app_server_protocol::AskUserQuestionResponse>(),
         ),
+        (
+            "AskUserQuestionSpec",
+            schema_for::<orbcode_app_server_protocol::AskUserQuestionSpec>(),
+        ),
+        (
+            "AskUserResponseOutcome",
+            schema_for::<orbcode_app_server_protocol::AskUserResponseOutcome>(),
+        ),
+        (
+            "InteractiveQuestionsCapability",
+            schema_for::<orbcode_app_server_protocol::InteractiveQuestionsCapability>(),
+        ),
     ];
 
     let mut all_defs: BTreeMap<String, Value> = BTreeMap::new();

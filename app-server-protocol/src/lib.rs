@@ -14,8 +14,8 @@ pub use envelope::{
 };
 pub use error::{ErrorCode, ProtocolError};
 pub use initialize::{
-    ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, ServerCapabilities,
-    ServerInfo,
+    ClientCapabilities, ClientInfo, InitializeParams, InitializeResult,
+    InteractiveQuestionsCapability, ServerCapabilities, ServerInfo,
 };
 pub use notification::StreamEventNotification;
 pub use request::BootstrapParams;
@@ -46,5 +46,9 @@ pub use orbcode_mcp::{
     McpAuth, McpOAuthOverview, McpOAuthStatusEntry, McpPromptResult, McpServerConfig,
     McpServerStatus, McpServerTrust, McpTransport,
 };
-pub use orbcode_protocol::{McpTrustApprovalRequest, PermissionRequest, StreamEvent};
+pub use orbcode_protocol::{
+    AskUserAnswerValue, AskUserCancellationReason, AskUserOption, AskUserQuestionSpec,
+    AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError, McpTrustApprovalRequest,
+    PermissionRequest, StreamEvent,
+};
 pub use orbcode_tools::SkillDefinition;

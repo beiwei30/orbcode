@@ -156,7 +156,7 @@ async fn handle_ask_user_request(
     )
     .await;
 
-    if request.options.is_empty() {
+    if !ask_user_is_acp_representable(&request) {
         if take_pending_server_request(&state, pending_session_id.as_deref(), &envelope.id).await {
             respond_to_ask_user_request(&state, envelope.id.clone(), request.request_id, None)
                 .await;
@@ -176,6 +176,23 @@ async fn handle_ask_user_request(
         .and_then(|response| ask_user_answer_from_acp(&request, response));
 
     respond_to_ask_user_request(&state, envelope.id.clone(), request.request_id, answer).await;
+}
+
+fn ask_user_is_acp_representable(request: &AskUserQuestionRequest) -> bool {
+    if request.options.is_empty() {
+        return false;
+    }
+    if request.questions.is_empty() {
+        // Protocol-1.0's legacy option-only request is the shape ACP has
+        // historically represented with session/request_permission.
+        return true;
+    }
+    matches!(request.questions.as_slice(), [question]
+        if !question.multi_select
+            && !question.allow_free_text
+            && !question.allow_annotation
+            && !question.options.is_empty()
+            && question.options.iter().all(|option| option.preview.is_none()))
 }
 
 async fn ask_user_session_id(
@@ -217,7 +234,12 @@ async fn respond_to_ask_user_request(
     request_id: String,
     answer: Option<String>,
 ) {
-    let data = serde_json::to_value(AskUserQuestionResponse { request_id, answer }).ok();
+    let data = serde_json::to_value(AskUserQuestionResponse {
+        request_id,
+        outcome: None,
+        answer,
+    })
+    .ok();
     let _ = state
         .client
         .respond_to_server_request(envelope_id, ResponseResult::Success { data })
@@ -438,6 +460,7 @@ fn cancel_ask_user_result(request_id: String) -> ResponseResult {
     ResponseResult::Success {
         data: serde_json::to_value(AskUserQuestionResponse {
             request_id,
+            outcome: None,
             answer: None,
         })
         .ok(),
@@ -555,7 +578,12 @@ mod tests {
     fn ask_user_options_map_to_acp_request_permission_shape() {
         let request = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-1".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec!["red".into(), "blue".into()],
         };
@@ -590,7 +618,12 @@ mod tests {
     fn acp_ask_user_selected_option_maps_to_answer() {
         let request = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-2".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec!["red".into(), "blue".into()],
         };
@@ -608,7 +641,12 @@ mod tests {
     fn acp_ask_user_cancelled_or_unknown_option_maps_to_none() {
         let request = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-3".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec!["red".into(), "blue".into()],
         };

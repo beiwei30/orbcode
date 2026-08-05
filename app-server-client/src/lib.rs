@@ -28,10 +28,12 @@ pub use websocket_transport::WebSocketTransport;
 
 pub use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
-    AgentDefinition, AgentLoadWarning, AuthOverview, AuthStatusEntry, BillingBasis,
-    BootstrapParams, BootstrapState, CompactDecision, CompactSessionResult,
-    ContextDiagnosticsReport, ContextOverview, ContextTokenSource, ContextUsageOverview,
-    CostOverview, DoctorCheck, DoctorReport, DoctorStatus, HookDiscovery, McpAuth,
+    AgentDefinition, AgentLoadWarning, AskUserAnswerValue, AskUserCancellationReason,
+    AskUserOption, AskUserQuestionRequest, AskUserQuestionResponse, AskUserQuestionSpec,
+    AskUserResponseOutcome, AuthOverview, AuthStatusEntry, BillingBasis, BootstrapParams,
+    BootstrapState, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
+    ContextOverview, ContextTokenSource, ContextUsageOverview, CostOverview, DoctorCheck,
+    DoctorReport, DoctorStatus, HookDiscovery, InteractiveQuestionsCapability, McpAuth,
     McpOAuthOverview, McpOAuthStatusEntry, McpPromptResult, McpResourceSlashSuggestion,
     McpServerConfig, McpServerSlashSuggestion, McpServerStatus, McpServerTrust,
     McpSlashSuggestionCatalog, McpToolSlashSuggestion, McpTransport, MemoryFileOverview,
@@ -47,9 +49,9 @@ use std::sync::Arc;
 #[cfg(feature = "in-process")]
 use orbcode_app_server::{AppConfigOverrides, AppServer};
 use orbcode_app_server_protocol::{
-    AskUserQuestionRequest, AskUserQuestionResponse, InitializeResult, McpTrustDecisionWire,
-    PermissionDecisionWire, PermissionResponseParams, ResponseResult, ServerNotificationEnvelope,
-    ServerRequestEnvelope, StreamEventNotification, method,
+    ClientCapabilities, InitializeResult, McpTrustDecisionWire, PermissionDecisionWire,
+    PermissionResponseParams, ResponseResult, ServerNotificationEnvelope, ServerRequestEnvelope,
+    StreamEventNotification, method,
 };
 use orbcode_protocol::SessionSummary;
 use serde::de::DeserializeOwned;
@@ -84,7 +86,35 @@ struct StreamRoute {
 struct PendingServerRequests {
     permissions: HashMap<String, String>,
     mcp_trust: HashMap<String, String>,
-    ask_user: HashMap<String, String>,
+    ask_user: HashMap<String, PendingAskUser>,
+}
+
+#[derive(Clone)]
+struct PendingAskUser {
+    protocol_request_id: String,
+    request: AskUserQuestionRequest,
+}
+
+fn default_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        streaming: true,
+        experimental_methods: true,
+        interactive_questions: None,
+    }
+}
+
+fn interactive_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        interactive_questions: Some(InteractiveQuestionsCapability::full()),
+        ..default_client_capabilities()
+    }
+}
+
+fn option_only_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        interactive_questions: Some(InteractiveQuestionsCapability::option_only()),
+        ..default_client_capabilities()
+    }
 }
 
 impl AppClient {
@@ -103,6 +133,47 @@ impl AppClient {
     pub async fn new_in_process(app_server: AppServer) -> Result<Self, ClientError> {
         let transport = InProcessTransport::new(app_server.clone());
         let client = Self::from_transport(Box::new(transport)).await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
+    /// Create an in-process client that owns full interactive-question
+    /// rendering. Intended for the TUI; headless and ACP callers should use
+    /// [`Self::new_in_process`] so the capability remains off.
+    #[cfg(feature = "in-process")]
+    pub async fn new_interactive(app_server: AppServer) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_client_capabilities(),
+        )
+        .await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
+    /// Create an in-process client with ACP's stable single-option selection
+    /// subset. This is intentionally insufficient for provider tool exposure.
+    #[cfg(feature = "in-process")]
+    pub async fn new_option_only(app_server: AppServer) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport_with_capabilities(
+            Box::new(transport),
+            option_only_client_capabilities(),
+        )
+        .await?;
         #[cfg(feature = "test-support")]
         {
             let mut client = client;
@@ -146,6 +217,27 @@ impl AppClient {
         Self::from_transport(Box::new(transport)).await
     }
 
+    pub async fn connect_socket_interactive(
+        path: &std::path::Path,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        #[cfg(not(unix))]
+        {
+            let _ = (path, auth_token);
+            return Err(ClientError::Transport(
+                "Unix socket transport is not supported on this platform".into(),
+            ));
+        }
+        #[cfg(unix)]
+        let transport = NdjsonTransport::connect(path, auth_token).await?;
+        #[cfg(unix)]
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_client_capabilities(),
+        )
+        .await
+    }
+
     /// Connect to a `orbcode serve --websocket <addr>` server.
     /// Authenticates with the token and sends `initialize` automatically.
     pub async fn connect_websocket(endpoint: &str, auth_token: &str) -> Result<Self, ClientError> {
@@ -153,10 +245,29 @@ impl AppClient {
         Self::from_transport(Box::new(transport)).await
     }
 
+    pub async fn connect_websocket_interactive(
+        endpoint: &str,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        let transport = WebSocketTransport::connect(endpoint, auth_token).await?;
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_client_capabilities(),
+        )
+        .await
+    }
+
     /// Create a client from an already-constructed transport. The caller is
     /// responsible for ensuring the transport is connected and ready.
     /// Sends the `initialize` handshake automatically.
     pub async fn from_transport(transport: Box<dyn ClientTransport>) -> Result<Self, ClientError> {
+        Self::from_transport_with_capabilities(transport, default_client_capabilities()).await
+    }
+
+    pub async fn from_transport_with_capabilities(
+        transport: Box<dyn ClientTransport>,
+        capabilities: ClientCapabilities,
+    ) -> Result<Self, ClientError> {
         let (notification_tx, notification_rx) = mpsc::channel(256);
         let (server_request_tx, server_request_rx) = mpsc::channel(64);
         let client = Self {
@@ -169,7 +280,7 @@ impl AppClient {
             notification_rx: Mutex::new(Some(notification_rx)),
             server_request_rx: Mutex::new(Some(server_request_rx)),
         };
-        client.initialize().await?;
+        client.initialize(capabilities).await?;
         client
             .start_router_tasks(notification_tx, server_request_tx)
             .await;
@@ -234,7 +345,10 @@ impl AppClient {
     // =========================================================================
 
     /// Send the `initialize` handshake. Called automatically by [`new`].
-    async fn initialize(&self) -> Result<InitializeResult, ClientError> {
+    async fn initialize(
+        &self,
+        capabilities: ClientCapabilities,
+    ) -> Result<InitializeResult, ClientError> {
         let result = self
             .transport
             .request(
@@ -245,10 +359,7 @@ impl AppClient {
                         "name": "orbcode-client",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "capabilities": {
-                        "streaming": true,
-                        "experimental_methods": true,
-                    },
+                    "capabilities": capabilities,
                 })),
             )
             .await?;
@@ -1619,19 +1730,46 @@ impl AppClient {
         request_id: &str,
         answer: Option<String>,
     ) -> bool {
-        let Some(protocol_request_id) = self
-            .pending_server_requests
-            .lock()
-            .await
-            .ask_user
-            .remove(request_id)
+        let response = AskUserQuestionResponse {
+            request_id: request_id.to_string(),
+            outcome: None,
+            answer,
+        };
+        let Some(protocol_request_id) =
+            take_valid_ask_user_response(&self.pending_server_requests, request_id, &response)
+                .await
         else {
             return false;
         };
-        let Ok(data) = serde_json::to_value(AskUserQuestionResponse {
+        let Ok(data) = serde_json::to_value(response) else {
+            return false;
+        };
+        self.respond_to_server_request(
+            protocol_request_id,
+            ResponseResult::Success { data: Some(data) },
+        )
+        .await
+        .is_ok()
+    }
+
+    /// Respond with the canonical typed outcome.
+    pub async fn respond_to_ask_user_question_outcome(
+        &self,
+        request_id: &str,
+        outcome: AskUserResponseOutcome,
+    ) -> bool {
+        let response = AskUserQuestionResponse {
             request_id: request_id.to_string(),
-            answer,
-        }) else {
+            outcome: Some(outcome),
+            answer: None,
+        };
+        let Some(protocol_request_id) =
+            take_valid_ask_user_response(&self.pending_server_requests, request_id, &response)
+                .await
+        else {
+            return false;
+        };
+        let Ok(data) = serde_json::to_value(response) else {
             return false;
         };
         self.respond_to_server_request(
@@ -1830,15 +1968,31 @@ async fn index_server_request(
             if let Ok(request) =
                 serde_json::from_value::<AskUserQuestionRequest>(envelope.params.clone())
             {
-                pending_server_requests
-                    .lock()
-                    .await
-                    .ask_user
-                    .insert(request.request_id, envelope.id.clone());
+                pending_server_requests.lock().await.ask_user.insert(
+                    request.request_id.clone(),
+                    PendingAskUser {
+                        protocol_request_id: envelope.id.clone(),
+                        request,
+                    },
+                );
             }
         }
         _ => {}
     }
+}
+
+async fn take_valid_ask_user_response(
+    pending_server_requests: &Arc<Mutex<PendingServerRequests>>,
+    request_id: &str,
+    response: &AskUserQuestionResponse,
+) -> Option<String> {
+    let mut pending = pending_server_requests.lock().await;
+    let interaction = pending.ask_user.get(request_id)?;
+    response.canonical_outcome(&interaction.request).ok()?;
+    pending
+        .ask_user
+        .remove(request_id)
+        .map(|interaction| interaction.protocol_request_id)
 }
 
 fn permission_decision_to_wire(decision: PermissionDecision) -> PermissionDecisionWire {
@@ -3373,5 +3527,93 @@ mod tests {
             }
             other => panic!("expected Protocol(SessionNotFound), got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn ask_user_response_validation_is_non_consuming_and_exactly_once() {
+        use std::{collections::BTreeMap, sync::Arc};
+
+        use orbcode_app_server_protocol::{
+            AskUserAnswerValue, AskUserOption, AskUserQuestionRequest, AskUserQuestionResponse,
+            AskUserQuestionSpec, AskUserResponseOutcome, ServerRequestEnvelope, method,
+        };
+        use tokio::sync::Mutex;
+
+        use super::{PendingServerRequests, index_server_request, take_valid_ask_user_response};
+
+        let request = AskUserQuestionRequest {
+            session_id: "session-1".into(),
+            turn_id: Some("turn-1".into()),
+            tool_use_id: "tool-1".into(),
+            request_id: "ask-1".into(),
+            deadline: None,
+            validation_error: None,
+            questions: vec![AskUserQuestionSpec {
+                id: "database".into(),
+                question: "Which database?".into(),
+                header: "Database".into(),
+                multi_select: false,
+                options: vec![AskUserOption {
+                    id: "postgres".into(),
+                    label: "PostgreSQL".into(),
+                    description: String::new(),
+                    preview: None,
+                }],
+                allow_free_text: false,
+                allow_annotation: false,
+            }],
+            question: String::new(),
+            options: Vec::new(),
+        };
+        let envelope = ServerRequestEnvelope {
+            id: "server-request-1".into(),
+            method: method::SERVER_REQUEST_ASK_USER.into(),
+            params: serde_json::to_value(request).unwrap(),
+        };
+        let pending = Arc::new(Mutex::new(PendingServerRequests::default()));
+        index_server_request(&envelope, &pending).await;
+
+        let response = |option_id: &str| AskUserQuestionResponse {
+            request_id: "ask-1".into(),
+            outcome: Some(AskUserResponseOutcome::Answered {
+                answers: BTreeMap::from([(
+                    "database".into(),
+                    AskUserAnswerValue::Selected {
+                        option_id: option_id.into(),
+                    },
+                )]),
+                annotations: BTreeMap::new(),
+            }),
+            answer: None,
+        };
+
+        assert!(
+            take_valid_ask_user_response(&pending, "ask-1", &response("unknown"))
+                .await
+                .is_none()
+        );
+        assert_eq!(pending.lock().await.ask_user.len(), 1);
+        assert_eq!(
+            take_valid_ask_user_response(&pending, "ask-1", &response("postgres")).await,
+            Some("server-request-1".into())
+        );
+        assert!(
+            take_valid_ask_user_response(&pending, "ask-1", &response("postgres"))
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ask_user_interactive_capability_is_explicit_and_complete() {
+        let default = super::default_client_capabilities();
+        assert!(default.interactive_questions.is_none());
+        let interactive = super::interactive_client_capabilities();
+        assert!(
+            interactive
+                .interactive_questions
+                .as_ref()
+                .is_some_and(|capability| capability.fully_supported())
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server_client::{AppClient, AskUserQuestionRequest};
 use orbcode_config::calculate_token_warning_state;
 use orbcode_protocol::{
     BudgetOutcome, MessageRole, StreamEvent, TokenUsage, TranscriptBlock, TranscriptMessage,
@@ -19,7 +19,9 @@ use crate::history_cell::hook_note::{hook_notice_transcript_content, parse_hook_
 use crate::history_cell::local_note::{
     LOCAL_TURN_DURATION_PREFIX, local_context_compacted_message, local_error_message,
 };
-use crate::overlays::{OverlayState, PermissionOverlayState, overlay_persists_after_turn};
+use crate::overlays::{
+    AskUserQuestionOverlayState, OverlayState, PermissionOverlayState, overlay_persists_after_turn,
+};
 use crate::prompt_state::ActiveThinkingState;
 use crate::render::request_status::{WAITING_COMPLETION_VERBS, WAITING_VERBS};
 use crate::render::thinking::{
@@ -780,6 +782,10 @@ impl TuiState {
                             activity.is_error = true;
                             "Interrupted".to_string()
                         }
+                        orbcode_protocol::ToolUseCompletionKind::Cancelled => {
+                            activity.is_error = true;
+                            "Cancelled".to_string()
+                        }
                         orbcode_protocol::ToolUseCompletionKind::UnknownTool => {
                             activity.is_error = true;
                             "Unknown tool".to_string()
@@ -1031,10 +1037,54 @@ impl TuiState {
                 self.set_status_line(rendered);
                 true
             }
-            StreamEvent::AskUserQuestionRequested { .. }
-            | StreamEvent::AskUserQuestionResolved { .. } => {
-                // TODO(ask-user-question): render an interactive prompt widget
-                // in the TUI. For now, treat as a no-op redraw trigger.
+            StreamEvent::AskUserQuestionRequested {
+                session_id,
+                turn_id,
+                tool_use_id,
+                request_id,
+                deadline,
+                questions,
+                question,
+                options,
+            } => {
+                let mut request = AskUserQuestionRequest {
+                    session_id,
+                    turn_id,
+                    tool_use_id,
+                    request_id,
+                    deadline,
+                    validation_error: None,
+                    questions,
+                    question,
+                    options,
+                };
+                if request.questions.is_empty() {
+                    match request.canonical_questions() {
+                        Ok(questions) => request.questions = questions,
+                        Err(error) => {
+                            self.set_status_line(format!("Invalid question request: {error}"));
+                            return false;
+                        }
+                    }
+                }
+                if let Some(OverlayState::AskUserQuestion(active)) = self.overlay.as_mut() {
+                    active.enqueue(request);
+                } else {
+                    self.overlay = Some(OverlayState::AskUserQuestion(
+                        AskUserQuestionOverlayState::new(request),
+                    ));
+                }
+                self.set_status_line("Waiting for your answers.");
+                false
+            }
+            StreamEvent::AskUserQuestionResolved { request_id, .. } => {
+                if let Some(OverlayState::AskUserQuestion(state)) = self.overlay.as_mut() {
+                    if state.request.request_id == request_id {
+                        self.overlay = state.take_next_queued().map(OverlayState::AskUserQuestion);
+                    } else {
+                        state.remove_queued(&request_id);
+                    }
+                }
                 false
             }
             StreamEvent::McpTrustApprovalRequested { .. }
