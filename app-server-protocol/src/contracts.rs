@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AgentDefinition, AgentLoadWarning, AuthMethod, SkillDefinition};
+use crate::{AgentDefinition, AgentLoadWarning, AuthMethod, PermissionMode, SkillDefinition};
 
 macro_rules! impl_list_result {
     ($name:ident, $item:ty) => {
@@ -54,6 +54,27 @@ pub struct NoData;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SessionIdParams {
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SetSessionPermissionModeParams {
+    pub session_id: String,
+    pub mode: PermissionMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SetSessionModelParams {
+    pub session_id: String,
+    /// `None` selects the provider's configured default.
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SetSessionEffortParams {
+    pub session_id: String,
+    /// `None` disables the per-session thought/effort override.
+    #[schemars(with = "Option<String>")]
+    pub effort: Option<EffortLevel>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

@@ -2344,6 +2344,84 @@
       "sent"
     ]
   },
+  "SessionControlState": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionControlState",
+    "description": "Canonical session-scoped controls consumed by headless clients and edge\nadapters. Values are resolved by app-server; adapters only project them into\ntheir protocol-specific shapes.",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "permission_mode": {
+        "$ref": "#/$defs/PermissionMode"
+      },
+      "model_options": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/SessionModelOption"
+        }
+      },
+      "effort_level": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "effort_options": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "session_id",
+      "permission_mode",
+      "model_options",
+      "effort_options"
+    ],
+    "$defs": {
+      "PermissionMode": {
+        "description": "Protocol-owned permission mode used by session-scoped client controls.",
+        "type": "string",
+        "enum": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "dontAsk",
+          "plan",
+          "auto"
+        ]
+      },
+      "SessionModelOption": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "description": "`None` denotes the provider's configured default.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "current"
+        ]
+      }
+    }
+  },
   "SessionFindByTitleParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "SessionFindByTitleParams",
@@ -2507,6 +2585,77 @@
     "required": [
       "display_name"
     ]
+  },
+  "SetSessionEffortParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetSessionEffortParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "effort": {
+        "description": "`None` disables the per-session thought/effort override.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "SetSessionModelParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetSessionModelParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "model": {
+        "description": "`None` selects the provider's configured default.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "SetSessionPermissionModeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetSessionPermissionModeParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "mode": {
+        "$ref": "#/$defs/PermissionMode"
+      }
+    },
+    "required": [
+      "session_id",
+      "mode"
+    ],
+    "$defs": {
+      "PermissionMode": {
+        "description": "Protocol-owned permission mode used by session-scoped client controls.",
+        "type": "string",
+        "enum": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "dontAsk",
+          "plan",
+          "auto"
+        ]
+      }
+    }
   },
   "SettingKeyParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

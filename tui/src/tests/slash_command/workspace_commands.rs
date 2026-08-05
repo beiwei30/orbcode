@@ -219,7 +219,7 @@ async fn ctrl_c_in_diff_overlay_uses_global_active_turn_interrupt_path() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server.bootstrap_typed(None).await.expect("bootstrap");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.overlay = Some(OverlayState::Diff(DiffOverlayState::new(WorkspaceDiff {
         cwd,

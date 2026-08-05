@@ -35,14 +35,17 @@ pub use initialize::{
 };
 pub use mcp::*;
 pub use notification::StreamEventNotification;
-pub use permission::{PermissionContext, PermissionDecision, PermissionRuleOverview};
+pub use permission::{
+    PermissionContext, PermissionDecision, PermissionMode, PermissionRuleOverview,
+};
 pub use request::BootstrapParams;
 pub use response::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
     BootstrapState, ContextOverview, DoctorCheck, DoctorReport, DoctorStatus,
     McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
     McpToolSlashSuggestion, MemoryFileOverview, MemoryOverview, PermissionOverview, PlanOverview,
-    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, StatusOverview, WorkspaceDiff,
+    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, SessionControlState,
+    SessionModelOption, StatusOverview, WorkspaceDiff,
 };
 pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,
@@ -57,7 +60,7 @@ pub use settings::{
 // Re-export protocol types used by consumers of this crate.
 pub use orbcode_protocol::{
     BillingBasis, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
-    ContextTokenSource, ContextUsageOverview, CostOverview, McpTrustApprovalRequest,
+    ContextTokenSource, ContextUsageOverview, CostOverview, EffortLevel, McpTrustApprovalRequest,
     PermissionRequest, ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent,
     TurnContext, UsageOverview, WorkflowCommand, WorkflowSource,
 };

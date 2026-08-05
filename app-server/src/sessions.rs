@@ -1,16 +1,18 @@
 use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, BootstrapState, ContextOverview,
+    PermissionMode, SessionControlState, SessionModelOption,
 };
 use orbcode_core::{
     CompactDecision, CompactSessionResult, CoreError, CostOverview, PermissionDecision,
     ProviderRequestDebugSnapshot, StatsOverview, UsageOverview,
 };
 use orbcode_protocol::{
-    SessionRecord, SessionSummary, StreamEvent, TranscriptMessage, TurnContext,
+    EffortLevel, SessionRecord, SessionSummary, StreamEvent, TranscriptMessage, TurnContext,
 };
 use tokio::sync::mpsc;
 
 use super::AppServer;
+use crate::protocol_conversion::{permission_mode_from_wire, permission_mode_to_wire};
 
 impl AppServer {
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
@@ -123,8 +125,71 @@ impl AppServer {
         self.sessions
             .delete_acp_visible_session(&params.session_id, params.cwd)
             .await?;
+        self.sessions.remove_session_controls(&params.session_id);
         self.mcp.remove_session_servers(&params.session_id).await;
         Ok(())
+    }
+
+    pub fn session_control_state(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionControlState, CoreError> {
+        Ok(SessionControlState {
+            session_id: session_id.to_string(),
+            permission_mode: permission_mode_to_wire(
+                self.sessions.session_permission_mode(session_id)?,
+            ),
+            model_options: self
+                .sessions
+                .session_model_options(session_id)?
+                .into_iter()
+                .map(|option| SessionModelOption {
+                    value: option.value,
+                    label: option.label,
+                    description: option.description,
+                    current: option.current,
+                })
+                .collect(),
+            effort_level: self.sessions.session_effort_level(session_id)?,
+            effort_options: self.sessions.session_effort_options(session_id)?,
+        })
+    }
+
+    pub async fn set_session_permission_mode(
+        &self,
+        session_id: &str,
+        mode: PermissionMode,
+    ) -> Result<SessionControlState, CoreError> {
+        self.ensure_setting_mutable("permissions")?;
+        self.sessions
+            .set_session_permission_mode(session_id, permission_mode_from_wire(mode))
+            .await?;
+        self.session_control_state(session_id)
+    }
+
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<SessionControlState, CoreError> {
+        self.ensure_setting_mutable("model")?;
+        self.sessions.set_session_model(session_id, model).await?;
+        self.session_control_state(session_id)
+    }
+
+    pub async fn set_session_effort(
+        &self,
+        session_id: &str,
+        effort: Option<EffortLevel>,
+    ) -> Result<SessionControlState, CoreError> {
+        self.ensure_setting_mutable("effortLevel")?;
+        self.sessions.set_session_effort(session_id, effort).await?;
+        self.session_control_state(session_id)
+    }
+
+    pub async fn cleanup_session(&self, session_id: &str) {
+        self.sessions.remove_session_controls(session_id);
+        self.remove_session_mcp_servers(session_id).await;
     }
 
     pub async fn clear_session(

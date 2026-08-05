@@ -119,7 +119,10 @@ impl ToolResultStore {
             .open(&path)
             .await
         {
-            Ok(mut file) => file.write_all(content.as_bytes()).await?,
+            Ok(mut file) => {
+                file.write_all(content.as_bytes()).await?;
+                file.flush().await?;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }

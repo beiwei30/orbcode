@@ -3,6 +3,21 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Protocol-owned permission mode used by session-scoped client controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionMode {
+    Default,
+    #[serde(alias = "accept-edits")]
+    AcceptEdits,
+    #[serde(alias = "bypass-permissions")]
+    BypassPermissions,
+    #[serde(alias = "dont-ask")]
+    DontAsk,
+    Plan,
+    Auto,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PermissionRuleOverview {
     pub raw: String,

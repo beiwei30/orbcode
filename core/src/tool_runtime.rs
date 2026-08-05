@@ -38,7 +38,7 @@ pub(crate) trait ToolRuntimeHost {
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<ToolLookupOutcome, CoreError>;
 
-    fn permission_context(&self) -> PermissionContext;
+    fn permission_context(&self, session_id: &str) -> PermissionContext;
 
     async fn tool_deny_precedence_reason(
         &self,
@@ -255,7 +255,7 @@ where
             ToolLookupOutcome::UnknownHandled => return Ok(ToolUseOutcome::Continue),
         };
 
-        let permissions = self.host.permission_context();
+        let permissions = self.host.permission_context(session_id);
         if let Some(reason) = self
             .host
             .tool_deny_precedence_reason(
