@@ -50,6 +50,7 @@ pub const PERMISSION_VALIDATE_DIRECTORY: &str = "permission/validate_directory";
 pub const SETTINGS_MODEL_NAME: &str = "settings/model_name";
 pub const SETTINGS_MODEL_OPTIONS: &str = "settings/model_options";
 pub const SETTINGS_SET_MODEL: &str = "settings/set_model";
+pub const SETTINGS_SET_THINKING_BUDGET: &str = "settings/set_thinking_budget";
 pub const SETTINGS_PROVIDERS: &str = "settings/providers";
 pub const SETTINGS_THEME: &str = "settings/theme";
 pub const SETTINGS_SET_THEME: &str = "settings/set_theme";
@@ -85,6 +86,7 @@ pub const USAGE_STATS: &str = "usage/stats";
 // MCP
 // ---------------------------------------------------------------------------
 pub const MCP_LIST_SERVERS: &str = "mcp/list_servers";
+pub const MCP_STATUS: &str = "mcp/status";
 pub const MCP_SERVER_TRUST: &str = "mcp/server_trust";
 pub const MCP_SET_TRUST: &str = "mcp/set_trust";
 pub const MCP_LIST_TOOLS: &str = "mcp/list_tools";
@@ -112,6 +114,7 @@ pub const TOOLS_PLAN: &str = "tools/plan";
 pub const TOOLS_TASK_LIST: &str = "tools/task_list";
 pub const TOOLS_ENTER_PLAN: &str = "tools/enter_plan";
 pub const TOOLS_AGENTS_WITH_WARNINGS: &str = "tools/agents_with_warnings";
+pub const TOOLS_SEED_READ_STATE: &str = "tools/seed_read_state";
 
 // ---------------------------------------------------------------------------
 // Background
@@ -124,6 +127,7 @@ pub const BACKGROUND_LOG: &str = "background/log";
 pub const BACKGROUND_EVENTS: &str = "background/events";
 pub const BACKGROUND_LIST_SUMMARY: &str = "background/list_summary";
 pub const BACKGROUND_SUBSCRIBE: &str = "background/subscribe";
+pub const BACKGROUND_CANCEL_ASYNC: &str = "background/cancel_async";
 
 // ---------------------------------------------------------------------------
 // Workflows
@@ -214,6 +218,7 @@ pub fn stable_client_request_methods() -> Vec<&'static str> {
         SETTINGS_MODEL_NAME,
         SETTINGS_MODEL_OPTIONS,
         SETTINGS_SET_MODEL,
+        SETTINGS_SET_THINKING_BUDGET,
         SETTINGS_PROVIDERS,
         SETTINGS_THEME,
         SETTINGS_SET_THEME,
@@ -243,6 +248,7 @@ pub fn stable_client_request_methods() -> Vec<&'static str> {
         USAGE_STATS,
         // MCP
         MCP_LIST_SERVERS,
+        MCP_STATUS,
         MCP_SERVER_TRUST,
         MCP_SET_TRUST,
         MCP_LIST_TOOLS,
@@ -267,6 +273,7 @@ pub fn stable_client_request_methods() -> Vec<&'static str> {
         TOOLS_TASK_LIST,
         TOOLS_ENTER_PLAN,
         TOOLS_AGENTS_WITH_WARNINGS,
+        TOOLS_SEED_READ_STATE,
         // Auth
         AUTH_OVERVIEW,
         AUTH_LOGIN,
@@ -305,6 +312,7 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         BACKGROUND_EVENTS,
         BACKGROUND_LIST_SUMMARY,
         BACKGROUND_SUBSCRIBE,
+        BACKGROUND_CANCEL_ASYNC,
         // Workflows
         WORKFLOW_LIST,
         WORKFLOW_START,
@@ -405,11 +413,9 @@ mod tests {
 
     #[test]
     fn method_count_matches_expected() {
-        // Current count: 1 lifecycle + 15 session + 4 turn + 10 permission +
-        // 24 settings + 5 context/usage + 16 mcp + 8 tools + 8 background +
-        // 4 workflows + 3 auth + 9 diagnostics + 1 notification +
-        // 3 server requests = 111
-        assert_eq!(all_methods().len(), 111);
+        // Main's 111 methods plus SDK thinking-budget, MCP-status,
+        // read-state, and cancellation methods.
+        assert_eq!(all_methods().len(), 115);
     }
 
     #[test]
@@ -516,22 +522,21 @@ mod tests {
 
     #[test]
     fn client_request_methods_count() {
-        // 1 lifecycle + 10 stable session + 5 experimental session + 4 turn + 10 permission + 24 settings +
-        // 5 context/usage + 16 mcp + 8 tools + 8 background + 4 workflows +
-        // 3 auth + 9 diagnostics = 107
-        assert_eq!(client_request_methods().len(), 107);
+        // Stable and experimental client methods are counted independently
+        // below; this assertion locks their union.
+        assert_eq!(client_request_methods().len(), 111);
     }
 
     #[test]
     fn stable_client_request_methods_count() {
-        // 1 lifecycle + 10 session + 4 turn + 10 permission + 24 settings +
-        // 5 context/usage + 16 mcp + 8 tools + 3 auth + 9 diagnostics = 90
-        assert_eq!(stable_client_request_methods().len(), 90);
+        // Includes the stable thinking-budget, MCP-status, and read-state
+        // controls added for SDK/headless convergence.
+        assert_eq!(stable_client_request_methods().len(), 93);
     }
 
     #[test]
     fn experimental_client_request_methods_count() {
-        // 5 session + 8 background + 4 workflows = 17
-        assert_eq!(experimental_client_request_methods().len(), 17);
+        // Includes explicit async-task cancellation.
+        assert_eq!(experimental_client_request_methods().len(), 18);
     }
 }

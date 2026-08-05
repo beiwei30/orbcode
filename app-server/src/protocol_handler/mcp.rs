@@ -3,7 +3,7 @@ use orbcode_app_server_protocol::{
     McpInvokeToolParams, McpListPromptsResult, McpListResourcesResult, McpListServersResult,
     McpListToolsResult, McpLogoutOAuthTokenResult, McpOAuthOverviewParams, McpReadResourceParams,
     McpRemoveServerResult, McpServerIdParams, McpServerInput, McpServerTrustResult,
-    McpSessionServerParams, McpSetTrustParams, ResponseResult,
+    McpSessionServerParams, McpSetTrustParams, McpStatusResult, ResponseResult,
 };
 use serde_json::Value;
 
@@ -25,6 +25,10 @@ impl AppServer {
             .map(mcp_server_overview_from_config)
             .collect();
         success(McpListServersResult(servers))
+    }
+
+    pub(super) async fn handle_mcp_status(&self, _params: Option<Value>) -> ResponseResult {
+        success(McpStatusResult(self.mcp_status().await))
     }
 
     pub(super) async fn handle_mcp_server_trust(&self, params: Option<Value>) -> ResponseResult {

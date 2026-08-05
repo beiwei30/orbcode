@@ -660,6 +660,55 @@
       "subscription_id"
     ]
   },
+  "CancelAsyncTaskParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "CancelAsyncTaskParams",
+    "description": "Cancel one background task owned by a session.",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "task_id"
+    ]
+  },
+  "CancelAsyncTaskResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "CancelAsyncTaskResult",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "outcome": {
+        "$ref": "#/$defs/AsyncCancellationResultKind"
+      }
+    },
+    "required": [
+      "session_id",
+      "task_id",
+      "outcome"
+    ],
+    "$defs": {
+      "AsyncCancellationResultKind": {
+        "type": "string",
+        "enum": [
+          "signalled",
+          "already_terminal",
+          "not_found"
+        ]
+      }
+    }
+  },
   "ChildSessionOrphanCleanupResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "ChildSessionOrphanCleanupResult",
@@ -1716,6 +1765,50 @@
       "server_id"
     ]
   },
+  "McpServerStatusOverview": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpServerStatusOverview",
+    "description": "Secret-free status projection for a configured MCP server.\n\nMutation-only configuration (endpoint, arguments, environment, headers and\nauth values) is deliberately absent from this read DTO.",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "transport": {
+        "type": "string"
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "status": {
+        "type": "string"
+      },
+      "trust": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "auth_mode": {
+        "type": "string"
+      },
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "transport",
+      "enabled",
+      "status",
+      "trust",
+      "summary",
+      "auth_mode"
+    ]
+  },
   "McpServerTrustResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "McpServerTrustResult",
@@ -1781,6 +1874,58 @@
           "unknown",
           "trusted",
           "denied"
+        ]
+      }
+    }
+  },
+  "McpStatusResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpServerStatusOverview",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpServerStatusOverview"
+    },
+    "$defs": {
+      "McpServerStatusOverview": {
+        "description": "Secret-free status projection for a configured MCP server.\n\nMutation-only configuration (endpoint, arguments, environment, headers and\nauth values) is deliberately absent from this read DTO.",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trust": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "auth_mode": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "transport",
+          "enabled",
+          "status",
+          "trust",
+          "summary",
+          "auth_mode"
         ]
       }
     }
@@ -2331,6 +2476,57 @@
       }
     }
   },
+  "SeedReadStateParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SeedReadStateParams",
+    "description": "Seed one validated file identity into the shared stale-write guard.",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "mtime": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "session_id",
+      "path",
+      "mtime"
+    ]
+  },
+  "SeedReadStateResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SeedReadStateResult",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "mtime": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 0
+      },
+      "seeded": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "session_id",
+      "path",
+      "mtime",
+      "seeded"
+    ]
+  },
   "SentResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "SentResult",
@@ -2487,6 +2683,12 @@
     "title": "SetModelParams",
     "type": "object",
     "properties": {
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "model": {
         "type": [
           "string",
@@ -2506,6 +2708,28 @@
     },
     "required": [
       "display_name"
+    ]
+  },
+  "SetThinkingBudgetParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetThinkingBudgetParams",
+    "description": "Set or clear the per-session thinking-token override.",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "max_thinking_tokens": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "session_id"
     ]
   },
   "SettingKeyParams": {
@@ -2764,6 +2988,27 @@
     },
     "required": [
       "theme"
+    ]
+  },
+  "ThinkingBudgetResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ThinkingBudgetResult",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "max_thinking_tokens": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "session_id"
     ]
   },
   "ToolInvokeParams": {

@@ -41,7 +41,7 @@ use orbcode_session_store::{
     ChildSessionStore, LiveSessionRegistryStore, PromptHistoryStore, RawContentBlock, SessionStore,
     raw_content_blocks,
 };
-use orbcode_tools::{LocalShellTaskRegistry, ToolRegistry};
+use orbcode_tools::{FileReadState, LocalShellTaskRegistry, ToolRegistry};
 use serde::Serialize;
 use serde_json::Value;
 #[cfg(test)]
@@ -257,6 +257,7 @@ pub struct SessionManager {
     count_tokens_cache: Arc<CountTokensCache>,
     live_cost: LiveCostStore,
     local_shell_tasks: LocalShellTaskRegistry,
+    read_state: Arc<FileReadState>,
     ask_user_pending:
         Arc<std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>>>,
     /// Per-session mutex serializing transcript appends. `append_message` reads
@@ -413,6 +414,9 @@ impl SessionManager {
             LiveSessionRegistryStore::new(config.sessions_dir.clone(), config.cwd.clone());
         let child_session_store = ChildSessionStore::new(config.sessions_dir.clone());
         let local_shell_tasks = LocalShellTaskRegistry::new(&config.home_dir);
+        let read_state = Arc::new(FileReadState::with_persistence(
+            config.home_dir.join("file-read-state.json"),
+        ));
         let initial_styles = built_in_output_style_definitions();
         let initial_active =
             resolve_active_output_style(&initial_styles, orbcode_config::DEFAULT_OUTPUT_STYLE_NAME);
@@ -437,6 +441,7 @@ impl SessionManager {
             count_tokens_cache: Arc::new(CountTokensCache::new()),
             live_cost: LiveCostStore::default(),
             local_shell_tasks,
+            read_state,
             ask_user_pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
             transcript_append_locks: TranscriptAppendLocks::default(),
         })
@@ -997,6 +1002,7 @@ impl SessionManager {
                 self.permission_runtime
                     .set_session_permission_rules(Vec::new(), Vec::new());
                 self.runtime_state.set_effort_override(None);
+                self.runtime_state.set_max_thinking_tokens(None);
 
                 let mut session = SessionRecord::new();
                 if let Some(cwd) = cwd.as_ref() {
@@ -1333,6 +1339,7 @@ impl SessionManager {
     }
 
     async fn restore_runtime_context_for_session(&self, session: &SessionRecord) {
+        self.runtime_state.set_max_thinking_tokens(None);
         self.runtime_state
             .set_runtime_additional_directories(Vec::new());
         self.permission_runtime.set_session_permission_rules(
@@ -1393,6 +1400,7 @@ impl SessionManager {
         self.permission_runtime
             .set_session_permission_rules(Vec::new(), Vec::new());
         self.runtime_state.set_effort_override(None);
+        self.runtime_state.set_max_thinking_tokens(None);
         let config = self.effective_config();
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);

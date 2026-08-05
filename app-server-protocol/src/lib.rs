@@ -36,13 +36,17 @@ pub use initialize::{
 pub use mcp::*;
 pub use notification::StreamEventNotification;
 pub use permission::{PermissionContext, PermissionDecision, PermissionRuleOverview};
-pub use request::BootstrapParams;
+pub use request::{
+    BootstrapParams, CancelAsyncTaskParams, SeedReadStateParams, SetThinkingBudgetParams,
+};
 pub use response::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, AddDirectoryCandidate, AddedDirectory,
-    BootstrapState, ContextOverview, DoctorCheck, DoctorReport, DoctorStatus,
-    McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
-    McpToolSlashSuggestion, MemoryFileOverview, MemoryOverview, PermissionOverview, PlanOverview,
-    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, StatusOverview, WorkspaceDiff,
+    AsyncCancellationResultKind, BootstrapState, CancelAsyncTaskResult, ContextOverview,
+    DoctorCheck, DoctorReport, DoctorStatus, McpResourceSlashSuggestion, McpServerSlashSuggestion,
+    McpServerStatusOverview, McpSlashSuggestionCatalog, McpStatusResult, McpToolSlashSuggestion,
+    MemoryFileOverview, MemoryOverview, ModelChangeResult, PermissionOverview, PlanOverview,
+    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, SeedReadStateResult,
+    StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
 };
 pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,

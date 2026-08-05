@@ -8,6 +8,8 @@ use orbcode_config::{
 };
 use orbcode_model_provider::{ProviderDescriptor, supported_providers};
 use orbcode_protocol::EffortLevel;
+use orbcode_tools::FileReadState;
+use std::sync::Arc;
 
 use super::SessionManager;
 use crate::{
@@ -72,6 +74,19 @@ impl SessionManager {
 
     pub fn set_runtime_effort_override(&self, effort: Option<EffortLevel>) {
         self.runtime_state.set_effort_override(effort);
+    }
+
+    pub fn max_thinking_tokens(&self) -> Option<u32> {
+        self.runtime_state.max_thinking_tokens()
+    }
+
+    pub fn set_max_thinking_tokens(&self, max_thinking_tokens: Option<u32>) {
+        self.runtime_state
+            .set_max_thinking_tokens(max_thinking_tokens);
+    }
+
+    pub fn read_state(&self) -> Arc<FileReadState> {
+        Arc::clone(&self.read_state)
     }
 
     pub async fn set_effort_override_for_session(
