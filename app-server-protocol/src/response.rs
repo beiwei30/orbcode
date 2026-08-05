@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use orbcode_config::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, ThemeSetting,
-    TokenWarningOptions,
-};
-use orbcode_core::{ContextDiagnosticsReport, ContextUsageOverview, PermissionContext};
 use orbcode_protocol::{
-    EffortLevel, MemorySourceStatus, ProviderId, SessionRecord, StreamEvent, TurnContext,
+    ContextDiagnosticsReport, ContextUsageOverview, EffortLevel, MemorySourceStatus, ProviderId,
+    SessionRecord, StreamEvent, TurnContext,
+};
+
+use crate::{
+    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionContext,
+    StatusAuthOverview, ThemeSetting, TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -125,7 +126,7 @@ pub struct StatusOverview {
     pub sandbox_mode: String,
     pub sandbox_allow_network: bool,
     pub permissions: PermissionOverview,
-    pub auth: orbcode_config::AuthOverview,
+    pub auth: StatusAuthOverview,
     pub persisted_session_count: usize,
     pub background_job_count: usize,
     pub available_tool_count: usize,

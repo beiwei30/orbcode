@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use orbcode_app_server_protocol::ResponseResult;
+use orbcode_app_server_protocol::{
+    ResponseResult, SessionIdParams, TurnCancelResult, TurnInterruptResult, TurnSubmitParams,
+    TurnSubmitResult,
+};
 use orbcode_protocol::StreamEvent;
-use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 
@@ -18,32 +20,20 @@ pub(crate) type ActiveStreams = Arc<Mutex<HashMap<String, mpsc::UnboundedReceive
 
 impl AppServer {
     pub(super) async fn handle_turn_submit(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            prompt: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: TurnSubmitParams = try_parse!(params);
         match self.submit_turn(&p.session_id, p.prompt).await {
             Ok(rx) => {
                 let subscription_id = uuid::Uuid::new_v4().to_string();
                 let streams = self.active_streams();
                 streams.lock().await.insert(subscription_id.clone(), rx);
-                success(serde_json::json!({
-                    "subscription_id": subscription_id,
-                }))
+                success(TurnSubmitResult { subscription_id })
             }
             Err(e) => core_error(e),
         }
     }
 
     pub(super) async fn handle_turn_steer(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-            prompt: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: TurnSubmitParams = try_parse!(params);
         match self.steer_turn(&p.session_id, p.prompt).await {
             Ok(()) => super::success_empty(),
             Err(e) => core_error(e),
@@ -51,22 +41,14 @@ impl AppServer {
     }
 
     pub(super) async fn handle_turn_cancel(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         let cancelled = self.cancel_turn(&p.session_id).await;
-        success(serde_json::json!({ "cancelled": cancelled }))
+        success(TurnCancelResult { cancelled })
     }
 
     pub(super) async fn handle_turn_interrupt(&self, params: Option<Value>) -> ResponseResult {
-        #[derive(Deserialize)]
-        struct Params {
-            session_id: String,
-        }
-        let p: Params = try_parse!(params);
+        let p: SessionIdParams = try_parse!(params);
         let interrupted = self.interrupt_turn(&p.session_id).await;
-        success(serde_json::json!({ "interrupted": interrupted }))
+        success(TurnInterruptResult { interrupted })
     }
 }

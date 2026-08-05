@@ -27,20 +27,23 @@ pub(super) use crossterm::{
     event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
 };
 pub(super) use orbcode_app_server::{
-    AppServer, AuthMethod, AuthOverview, AuthStatusEntry, ContextDiagnosticsReport,
-    ContextOverview, ContextTokenSource, ContextUsageOverview, ContextWindowOptions, CostOverview,
-    CostSummary, DoctorCheck, DoctorReport, DoctorStatus, EditorModeSetting, MaxOutputTokenOptions,
-    McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
-    McpToolSlashSuggestion, MemoryFileOverview, MemoryOverview, ModelOption, ModelUsage,
-    OutputStyleOption, PermissionOverview, PermissionRule, PermissionRuleSettingKind,
-    ProviderRequestDebugSnapshot, SandboxFilesystemLocalSettings, SandboxLocalSettings,
-    SandboxNetworkLocalSettings, StatsActivityDay, StatsOverview, StatusOverview, ThemeSetting,
-    TokenWarningOptions, UsageOverview, WorkspaceDiff, suggested_bash_permission_rules,
+    AppServer, CostSummary, ModelOption, ModelUsage, OutputStyleOption, PermissionRuleSettingKind,
+    suggested_bash_permission_rules,
 };
 pub(super) use orbcode_app_server::{
     BudgetOutcome, EffortLevel, MemorySourceStatus, MessageRole, PermissionRequest, ProviderId,
     SessionSummary, StreamErrorCategory, StreamEvent, TokenUsage, TranscriptBlock,
     TranscriptMessage, TurnContext,
+};
+pub(super) use orbcode_app_server_client::{
+    AuthMethod, AuthOverview, AuthStatusEntry, ContextDiagnosticsReport, ContextOverview,
+    ContextTokenSource, ContextUsageOverview, ContextWindowOptions, CostOverview, DoctorCheck,
+    DoctorReport, DoctorStatus, MaxOutputTokenOptions, McpResourceSlashSuggestion,
+    McpServerSlashSuggestion, McpSlashSuggestionCatalog, McpToolSlashSuggestion,
+    MemoryFileOverview, MemoryOverview, PermissionOverview, PermissionRuleOverview,
+    ProviderRequestDebugSnapshot, SandboxFilesystemLocalSettings, SandboxLocalSettings,
+    SandboxNetworkLocalSettings, StatsActivityDay, StatsOverview, StatusAuthOverview,
+    StatusOverview, ThemeSetting, TokenWarningOptions, UsageOverview, WorkspaceDiff,
 };
 pub(super) use orbcode_protocol::{MemorySource, MemorySourceKind};
 pub(super) use ratatui::{

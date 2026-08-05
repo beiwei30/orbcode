@@ -110,7 +110,7 @@ impl SlashCommand for ClearCommand {
             let _ = ctx.app_server.clear_session(&previous_session_id).await;
             let bootstrap = ctx
                 .app_server
-                .bootstrap_typed(None)
+                .bootstrap(None)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             *ctx.state = crate::state::TuiState::new(ctx.state.client.clone(), bootstrap);

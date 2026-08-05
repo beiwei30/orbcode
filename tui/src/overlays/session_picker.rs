@@ -45,7 +45,7 @@ impl TuiState {
         self.overlay = Some(OverlayState::SessionPicker(SessionPickerState::new(
             command,
             title.to_string(),
-            sessions,
+            sessions.into_inner(),
             &self.session_id,
         )));
         self.set_status_line(

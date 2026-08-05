@@ -1,0 +1,2995 @@
+{
+  "ActiveOutputStyleResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ActiveOutputStyleResult",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "matched": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "name",
+      "matched"
+    ]
+  },
+  "AddDirectoryParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AddDirectoryParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "directory": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "directory"
+    ]
+  },
+  "AdvancedCapabilitiesResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_AdvancedCapabilityOverview",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/AdvancedCapabilityOverview"
+    },
+    "$defs": {
+      "AdvancedCapabilityOverview": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "summary",
+          "status"
+        ]
+      }
+    }
+  },
+  "AgentDefinitionsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_AgentSummary",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/AgentSummary"
+    },
+    "$defs": {
+      "AgentSummary": {
+        "type": "object",
+        "properties": {
+          "agent_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_type",
+          "description"
+        ]
+      }
+    }
+  },
+  "AgentDefinitionsWithWarningsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AgentDefinitionsWithWarningsResult",
+    "type": "object",
+    "properties": {
+      "definitions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/AgentDefinition"
+        }
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/AgentLoadWarning"
+        }
+      }
+    },
+    "required": [
+      "definitions",
+      "warnings"
+    ],
+    "$defs": {
+      "AgentDefinition": {
+        "type": "object",
+        "properties": {
+          "agent_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "disallowed_tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permission_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AgentPermissionMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mcp_server_names": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "hooks": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentHookMatcher"
+              }
+            }
+          },
+          "source": {
+            "$ref": "#/$defs/AgentSource"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "agent_type",
+          "description",
+          "prompt",
+          "skills",
+          "hooks",
+          "source"
+        ]
+      },
+      "AgentPermissionMode": {
+        "type": "string",
+        "enum": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "dontAsk",
+          "plan",
+          "auto"
+        ]
+      },
+      "AgentHookMatcher": {
+        "type": "object",
+        "properties": {
+          "matcher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AgentHookCommand"
+            },
+            "default": []
+          }
+        }
+      },
+      "AgentHookCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "if": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              },
+              "timeout": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "default": null
+              },
+              "type": {
+                "type": "string",
+                "const": "command"
+              }
+            },
+            "required": [
+              "type",
+              "command"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "Unsupported"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        ]
+      },
+      "AgentSource": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "built_in",
+              "user_settings",
+              "project_settings"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "plugin": {
+                "type": "object",
+                "properties": {
+                  "plugin_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "plugin_id"
+                ]
+              }
+            },
+            "required": [
+              "plugin"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AgentLoadWarning": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/AgentWarningKind"
+          },
+          "source": {
+            "$ref": "#/$defs/AgentSource"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "message"
+        ]
+      },
+      "AgentWarningKind": {
+        "type": "string",
+        "enum": [
+          "missing_field",
+          "duplicate_name"
+        ]
+      }
+    }
+  },
+  "AllowAllParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AllowAllParams",
+    "type": "object",
+    "properties": {
+      "allow_all": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "allow_all"
+    ]
+  },
+  "AllowAllResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AllowAllResult",
+    "type": "object",
+    "properties": {
+      "allow_all": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "allow_all"
+    ]
+  },
+  "AuthLoginParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AuthLoginParams",
+    "type": "object",
+    "properties": {
+      "provider": {
+        "type": "string"
+      },
+      "method": {
+        "$ref": "#/$defs/AuthMethod"
+      },
+      "token": {
+        "description": "Secret-bearing mutation input. Never returned by the server.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "env_var": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "provider",
+      "method"
+    ],
+    "$defs": {
+      "AuthMethod": {
+        "type": "string",
+        "enum": [
+          "api_key",
+          "o_auth_device",
+          "chatgpt"
+        ]
+      }
+    }
+  },
+  "AuthLoginResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AuthLoginResult",
+    "type": "object",
+    "properties": {
+      "provider": {
+        "type": "string"
+      },
+      "method": {
+        "type": "string"
+      },
+      "source_summary": {
+        "type": "string"
+      },
+      "persisted": {
+        "type": "boolean"
+      },
+      "usable": {
+        "type": "boolean"
+      },
+      "active": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "provider",
+      "method",
+      "source_summary",
+      "persisted",
+      "usable",
+      "active"
+    ]
+  },
+  "AuthLogoutParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AuthLogoutParams",
+    "type": "object",
+    "properties": {
+      "provider": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "AuthLogoutResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AuthLogoutResult",
+    "type": "object",
+    "properties": {
+      "removed": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "removed"
+    ]
+  },
+  "AuthOverview": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "AuthOverview",
+    "type": "object",
+    "properties": {
+      "store_path": {
+        "type": "string"
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/AuthStatusEntry"
+        }
+      }
+    },
+    "required": [
+      "store_path",
+      "entries"
+    ],
+    "$defs": {
+      "AuthStatusEntry": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "method": {
+            "$ref": "#/$defs/AuthMethod"
+          },
+          "source_summary": {
+            "type": "string"
+          },
+          "persisted": {
+            "type": "boolean"
+          },
+          "usable": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "method",
+          "source_summary",
+          "persisted",
+          "usable",
+          "active"
+        ]
+      },
+      "AuthMethod": {
+        "type": "string",
+        "enum": [
+          "api_key",
+          "o_auth_device",
+          "chatgpt"
+        ]
+      }
+    }
+  },
+  "BackgroundCancelResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundCancelResult",
+    "type": "object",
+    "properties": {
+      "job_id": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "job_id",
+      "status"
+    ]
+  },
+  "BackgroundCreateParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundCreateParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "prompt"
+    ]
+  },
+  "BackgroundCreateResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundCreateResult",
+    "type": "object",
+    "properties": {
+      "job_id": {
+        "type": "string"
+      },
+      "session_id": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      },
+      "log_path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "job_id",
+      "session_id",
+      "status",
+      "log_path"
+    ]
+  },
+  "BackgroundEventsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundEventsResult",
+    "type": "object",
+    "properties": {
+      "events": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "events"
+    ]
+  },
+  "BackgroundJobParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundJobParams",
+    "type": "object",
+    "properties": {
+      "job_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "job_id"
+    ]
+  },
+  "BackgroundLogResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundLogResult",
+    "type": "object",
+    "properties": {
+      "log": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "log"
+    ]
+  },
+  "BackgroundSubscribeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundSubscribeParams",
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ]
+  },
+  "BackgroundSubscribeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "BackgroundSubscribeResult",
+    "type": "object",
+    "properties": {
+      "subscription_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "subscription_id"
+    ]
+  },
+  "ChildSessionOrphanCleanupResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ChildSessionOrphanCleanupResult",
+    "type": "object",
+    "properties": {
+      "dry_run": {
+        "type": "boolean"
+      },
+      "scoped_cwds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "inspected_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "orphan_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "eligible_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "stale_running_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "skipped_running_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "removed_metadata": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "removed_transcripts": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "orphan_child_session_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "dry_run",
+      "scoped_cwds",
+      "inspected_metadata",
+      "orphan_metadata",
+      "eligible_metadata",
+      "stale_running_metadata",
+      "skipped_running_metadata",
+      "removed_metadata",
+      "removed_transcripts",
+      "orphan_child_session_ids"
+    ]
+  },
+  "DiagnosticsCleanupChildSessionsParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "DiagnosticsCleanupChildSessionsParams",
+    "type": "object",
+    "properties": {
+      "dry_run": {
+        "type": "boolean",
+        "default": true
+      },
+      "stale_running_cutoff_ms": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "int64",
+        "default": null
+      }
+    }
+  },
+  "EditorModeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EditorModeParams",
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mode"
+    ]
+  },
+  "EditorModeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EditorModeResult",
+    "type": "object",
+    "properties": {
+      "editor_mode": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "editor_mode"
+    ]
+  },
+  "EffortParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EffortParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "effort": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "EffortResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EffortResult",
+    "type": "object",
+    "properties": {
+      "effort": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "EmptyParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EmptyParams",
+    "type": "object"
+  },
+  "EnabledParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EnabledParams",
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "enabled"
+    ]
+  },
+  "EnabledResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EnabledResult",
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "enabled"
+    ]
+  },
+  "EnterPlanModeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EnterPlanModeResult",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "output": {
+        "type": "string"
+      },
+      "metadata": {
+        "description": "Tool-defined metadata. Its schema is intentionally opaque."
+      }
+    },
+    "required": [
+      "name",
+      "summary",
+      "output"
+    ]
+  },
+  "HookDiscovery": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "HookDiscovery",
+    "type": "object",
+    "properties": {
+      "hooks": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/DiscoveredHook"
+        }
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/HookDiscoveryWarning"
+        }
+      }
+    },
+    "required": [
+      "hooks",
+      "warnings"
+    ],
+    "$defs": {
+      "DiscoveredHook": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/$defs/HookProvenance"
+          },
+          "matcher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "validation": {
+            "$ref": "#/$defs/HookValidationStatus"
+          }
+        },
+        "required": [
+          "event",
+          "provenance",
+          "command",
+          "trusted",
+          "validation"
+        ]
+      },
+      "HookProvenance": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "built_in"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/HookLayer"
+              }
+            },
+            "required": [
+              "settings"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "skill": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "skill"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "agent": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "agent"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "plugin": {
+                "type": "object",
+                "properties": {
+                  "plugin_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "plugin_id"
+                ]
+              }
+            },
+            "required": [
+              "plugin"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "HookLayer": {
+        "type": "string",
+        "enum": [
+          "user",
+          "project",
+          "local",
+          "managed"
+        ]
+      },
+      "HookValidationStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "valid"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "invalid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "invalid"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "HookDiscoveryWarning": {
+        "type": "object",
+        "properties": {
+          "provenance": {
+            "$ref": "#/$defs/HookProvenance"
+          },
+          "event": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provenance",
+          "event",
+          "message"
+        ]
+      }
+    }
+  },
+  "KeybindingsFileResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "KeybindingsFileResult",
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "created": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "created"
+    ]
+  },
+  "KeybindingsLoadResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "KeybindingsLoadResult",
+    "type": "object",
+    "properties": {
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "warnings"
+    ]
+  },
+  "LastProviderRequestResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Nullable_ProviderRequestDebugOverview",
+    "anyOf": [
+      {
+        "$ref": "#/$defs/ProviderRequestDebugOverview"
+      },
+      {
+        "type": "null"
+      }
+    ],
+    "$defs": {
+      "ProviderRequestDebugOverview": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "captured_at": {
+            "type": "string"
+          },
+          "recent_activity_json": {
+            "type": "string"
+          },
+          "previous_turn_json": {
+            "type": "string"
+          },
+          "body_json": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "source",
+          "session_id",
+          "model",
+          "base_url",
+          "captured_at",
+          "recent_activity_json",
+          "previous_turn_json",
+          "body_json"
+        ]
+      }
+    }
+  },
+  "McpCapabilitiesResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpCapability",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpCapability"
+    },
+    "$defs": {
+      "McpCapability": {
+        "type": "object",
+        "properties": {
+          "transport": {
+            "$ref": "#/$defs/McpTransport"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "transport",
+          "enabled",
+          "note"
+        ]
+      },
+      "McpTransport": {
+        "description": "Transport selected for an MCP server.\n\nThis is a wire DTO. Runtime transport behavior remains owned by\n`orbcode-mcp` and is converted at the app-server boundary.",
+        "type": "string",
+        "enum": [
+          "stdio",
+          "http",
+          "https",
+          "streamable_http",
+          "web_socket"
+        ]
+      }
+    }
+  },
+  "McpDiagnoseResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpDiagnosticCheck",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpDiagnosticCheck"
+    },
+    "$defs": {
+      "McpDiagnosticCheck": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/McpDiagnosticStatus"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "detail"
+        ]
+      },
+      "McpDiagnosticStatus": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "warn",
+          "fail"
+        ]
+      }
+    }
+  },
+  "McpGetPromptParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpGetPromptParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "arguments": {
+        "description": "MCP prompt arguments are extension-defined.",
+        "default": null
+      },
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "server_id",
+      "name"
+    ]
+  },
+  "McpInvokeToolParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpInvokeToolParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "tool_name": {
+        "type": "string"
+      },
+      "input": {
+        "type": "string",
+        "default": "{}"
+      }
+    },
+    "required": [
+      "server_id",
+      "tool_name"
+    ]
+  },
+  "McpListPromptsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpPrompt",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpPrompt"
+    },
+    "$defs": {
+      "McpPrompt": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/McpPromptArgument"
+            },
+            "default": []
+          },
+          "skill": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "additionalProperties": true
+      },
+      "McpPromptArgument": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "required"
+        ]
+      }
+    }
+  },
+  "McpListResourcesResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpResourceSummary",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpResourceSummary"
+    },
+    "$defs": {
+      "McpResourceSummary": {
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "annotations": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/McpAnnotations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "uri",
+          "name",
+          "mime_type",
+          "description"
+        ]
+      },
+      "McpAnnotations": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priority": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "McpListToolsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_McpToolSpec",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/McpToolSpec"
+    },
+    "$defs": {
+      "McpToolSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "summary"
+        ]
+      }
+    }
+  },
+  "McpLogoutOAuthTokenResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpLogoutOAuthTokenResult",
+    "type": "object",
+    "properties": {
+      "logged_out": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "logged_out"
+    ]
+  },
+  "McpOAuthOverview": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpOAuthOverview",
+    "description": "Secret-free OAuth status returned by `mcp/oauth_overview`.",
+    "type": "object",
+    "properties": {
+      "store_path": {
+        "type": "string"
+      },
+      "entries": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/McpOAuthStatusEntry"
+        }
+      }
+    },
+    "required": [
+      "store_path",
+      "entries"
+    ],
+    "$defs": {
+      "McpOAuthStatusEntry": {
+        "type": "object",
+        "properties": {
+          "server_id": {
+            "type": "string"
+          },
+          "source_summary": {
+            "type": "string"
+          },
+          "usable": {
+            "type": "boolean"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "has_refresh_token": {
+            "type": "boolean"
+          },
+          "has_token_endpoint": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "server_id",
+          "source_summary",
+          "usable",
+          "expired",
+          "has_refresh_token"
+        ]
+      }
+    }
+  },
+  "McpOAuthOverviewParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpOAuthOverviewParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "McpPromptResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpPromptResult",
+    "description": "Result of `prompts/get`: the rendered prompt messages.",
+    "type": "object",
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "messages": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/McpPromptMessage"
+        }
+      }
+    },
+    "required": [
+      "description",
+      "messages"
+    ],
+    "$defs": {
+      "McpPromptMessage": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "content": {
+            "$ref": "#/$defs/McpContent"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "McpContent": {
+        "description": "A protocol-owned MCP content block.",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_binary": {
+            "type": "boolean",
+            "default": false
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "annotations": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/McpAnnotations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "McpAnnotations": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priority": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "McpReadResourceParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpReadResourceParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "uri": {
+        "type": "string"
+      },
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "server_id",
+      "uri"
+    ]
+  },
+  "McpRemoveServerResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpRemoveServerResult",
+    "type": "object",
+    "properties": {
+      "removed": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "removed"
+    ]
+  },
+  "McpResourceContent": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpResourceContent",
+    "type": "object",
+    "properties": {
+      "uri": {
+        "type": "string"
+      },
+      "mime_type": {
+        "type": "string"
+      },
+      "contents": {
+        "type": "string"
+      },
+      "blob": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "is_binary": {
+        "type": "boolean",
+        "default": false
+      },
+      "annotations": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/McpAnnotations"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "uri",
+      "mime_type",
+      "contents"
+    ],
+    "$defs": {
+      "McpAnnotations": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priority": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "McpServerIdParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpServerIdParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "server_id"
+    ]
+  },
+  "McpServerTrustResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpServerTrustResult",
+    "type": "object",
+    "properties": {
+      "trust": {
+        "$ref": "#/$defs/McpServerTrust"
+      }
+    },
+    "required": [
+      "trust"
+    ],
+    "$defs": {
+      "McpServerTrust": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "trusted",
+          "denied"
+        ]
+      }
+    }
+  },
+  "McpSessionServerParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpSessionServerParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "server_id"
+    ]
+  },
+  "McpSetTrustParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpSetTrustParams",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "trust": {
+        "$ref": "#/$defs/McpServerTrust"
+      }
+    },
+    "required": [
+      "server_id",
+      "trust"
+    ],
+    "$defs": {
+      "McpServerTrust": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "trusted",
+          "denied"
+        ]
+      }
+    }
+  },
+  "McpToolResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "McpToolResult",
+    "type": "object",
+    "properties": {
+      "server_id": {
+        "type": "string"
+      },
+      "tool_name": {
+        "type": "string"
+      },
+      "output": {
+        "type": "string"
+      },
+      "is_error": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "required": [
+      "server_id",
+      "tool_name",
+      "output"
+    ]
+  },
+  "ModelNameResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ModelNameResult",
+    "type": "object",
+    "properties": {
+      "model_name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "model_name"
+    ]
+  },
+  "ModelOptionsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_ModelOptionOverview",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/ModelOptionOverview"
+    },
+    "$defs": {
+      "ModelOptionOverview": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "current"
+        ]
+      }
+    }
+  },
+  "NoData": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "NoData",
+    "description": "Successful method result whose response envelope intentionally has no data payload.\n\nTransports normalize an omitted `data` field to JSON `null`, which is the\nserde representation of this unit struct.",
+    "type": "null"
+  },
+  "OutputStyleOptionsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_OutputStyleOptionOverview",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/OutputStyleOptionOverview"
+    },
+    "$defs": {
+      "OutputStyleOptionOverview": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description",
+          "current"
+        ]
+      }
+    }
+  },
+  "OutputStyleParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "OutputStyleParams",
+    "type": "object",
+    "properties": {
+      "style": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "style"
+    ]
+  },
+  "OutputStyleResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "OutputStyleResult",
+    "type": "object",
+    "properties": {
+      "style": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "style"
+    ]
+  },
+  "PathResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PathResult",
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "PermissionContext": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionContext",
+    "description": "Data-only view of the effective permission context.\n\nPermission evaluation and structured bash/path matching remain internal to\ncore and config; this DTO exposes only the values clients render.",
+    "type": "object",
+    "properties": {
+      "cwd": {
+        "type": "string"
+      },
+      "allow_network": {
+        "type": "boolean"
+      },
+      "provider_allow_network": {
+        "type": "boolean"
+      },
+      "allow_tools": {
+        "type": "boolean"
+      },
+      "allowed_rules": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PermissionRuleOverview"
+        }
+      },
+      "denied_rules": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PermissionRuleOverview"
+        }
+      },
+      "ask_rules": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PermissionRuleOverview"
+        }
+      },
+      "additional_directories": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "cwd",
+      "allow_network",
+      "provider_allow_network",
+      "allow_tools",
+      "allowed_rules",
+      "denied_rules",
+      "ask_rules",
+      "additional_directories"
+    ],
+    "$defs": {
+      "PermissionRuleOverview": {
+        "type": "object",
+        "properties": {
+          "raw": {
+            "type": "string"
+          },
+          "tool_name": {
+            "type": "string"
+          },
+          "rule_content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "raw",
+          "tool_name"
+        ]
+      }
+    }
+  },
+  "PermissionModeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionModeResult",
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mode"
+    ]
+  },
+  "PermissionRuleParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionRuleParams",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string"
+      },
+      "rule": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "rule"
+    ]
+  },
+  "PermissionRuleUpdateResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionRuleUpdateResult",
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "rule": {
+        "type": "string"
+      },
+      "changed": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "rule",
+      "changed"
+    ]
+  },
+  "PermissionSetModeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionSetModeParams",
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "mode"
+    ]
+  },
+  "PreUserInstructionsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PreUserInstructionsResult",
+    "type": "object",
+    "properties": {
+      "preview": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "preview"
+    ]
+  },
+  "ProvidersResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ProvidersResult",
+    "type": "object",
+    "properties": {
+      "default_provider": {
+        "type": "string"
+      },
+      "fallback_provider": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "max_retries": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      },
+      "resolutions": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/ProviderResolutionOverview"
+        }
+      }
+    },
+    "required": [
+      "default_provider",
+      "max_retries",
+      "resolutions"
+    ],
+    "$defs": {
+      "ProviderResolutionOverview": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "request_model": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "request_model",
+          "display_name",
+          "capabilities"
+        ]
+      }
+    }
+  },
+  "SandboxExcludedCommandParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SandboxExcludedCommandParams",
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "command"
+    ]
+  },
+  "SandboxExcludedCommandResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SandboxExcludedCommandResult",
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "pattern",
+      "path"
+    ]
+  },
+  "SandboxLocalSettings": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SandboxLocalSettings",
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "auto_allow_bash_if_sandboxed": {
+        "type": "boolean"
+      },
+      "allow_unsandboxed_commands": {
+        "type": "boolean"
+      },
+      "excluded_commands": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "filesystem": {
+        "$ref": "#/$defs/SandboxFilesystemLocalSettings"
+      },
+      "network": {
+        "$ref": "#/$defs/SandboxNetworkLocalSettings"
+      }
+    },
+    "required": [
+      "enabled",
+      "auto_allow_bash_if_sandboxed",
+      "allow_unsandboxed_commands",
+      "excluded_commands",
+      "filesystem",
+      "network"
+    ],
+    "$defs": {
+      "SandboxFilesystemLocalSettings": {
+        "type": "object",
+        "properties": {
+          "allow_write": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny_write": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny_read": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allow_read": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "allow_write",
+          "deny_write",
+          "deny_read",
+          "allow_read"
+        ]
+      },
+      "SandboxNetworkLocalSettings": {
+        "type": "object",
+        "properties": {
+          "allowed_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allow_unix_sockets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allow_all_unix_sockets": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "allow_local_binding": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "http_proxy_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "socks_proxy_port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "allowed_domains",
+          "allow_unix_sockets"
+        ]
+      }
+    }
+  },
+  "SandboxSettingsUpdate": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SandboxSettingsUpdate",
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "auto_allow_bash_if_sandboxed": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "allow_unsandboxed_commands": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      }
+    }
+  },
+  "SentResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SentResult",
+    "type": "object",
+    "properties": {
+      "sent": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "sent"
+    ]
+  },
+  "SessionFindByTitleParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionFindByTitleParams",
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "title"
+    ]
+  },
+  "SessionFindByTitleResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionFindByTitleResult",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "SessionForkParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionForkParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "SessionIdParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionIdParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "SessionPermissionRuleParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionPermissionRuleParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "rule": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "kind",
+      "rule"
+    ]
+  },
+  "SessionRecordMessageParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionRecordMessageParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "message"
+    ]
+  },
+  "SessionRenameParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionRenameParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "new_title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "new_title"
+    ]
+  },
+  "SessionRewindParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionRewindParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "keep_messages": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "session_id",
+      "keep_messages"
+    ]
+  },
+  "SetModelParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetModelParams",
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    }
+  },
+  "SetModelResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetModelResult",
+    "type": "object",
+    "properties": {
+      "display_name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "display_name"
+    ]
+  },
+  "SettingKeyParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SettingKeyParams",
+    "type": "object",
+    "properties": {
+      "key": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "key"
+    ]
+  },
+  "SettingLockedResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SettingLockedResult",
+    "type": "object",
+    "properties": {
+      "locked": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "locked"
+    ]
+  },
+  "SkillDefinitionsParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SkillDefinitionsParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "default": null
+      }
+    }
+  },
+  "SkillDefinitionsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_SkillDefinition",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/SkillDefinition"
+    },
+    "$defs": {
+      "SkillDefinition": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "when_to_use": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allowed_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/$defs/SkillSource"
+          }
+        },
+        "required": [
+          "name",
+          "allowed_tools",
+          "assets",
+          "path",
+          "body",
+          "source"
+        ]
+      },
+      "SkillSource": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "User",
+              "Project",
+              "Bundled"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "Plugin": {
+                "type": "object",
+                "properties": {
+                  "plugin_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "plugin_id"
+                ]
+              }
+            },
+            "required": [
+              "Plugin"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "Mcp": {
+                "type": "object",
+                "properties": {
+                  "server_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "server_id"
+                ]
+              }
+            },
+            "required": [
+              "Mcp"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "StringPathParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "StringPathParams",
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "TaskListParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TaskListParams",
+    "type": "object",
+    "properties": {
+      "task_list_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_list_id"
+    ]
+  },
+  "TaskListResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TaskListResult",
+    "type": "object",
+    "properties": {
+      "task_list_id": {
+        "type": "string"
+      },
+      "directory": {
+        "type": "string"
+      },
+      "tasks": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/TaskOverview"
+        }
+      }
+    },
+    "required": [
+      "task_list_id",
+      "directory",
+      "tasks"
+    ],
+    "$defs": {
+      "TaskOverview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subject",
+          "description",
+          "status"
+        ]
+      }
+    }
+  },
+  "ThemeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ThemeParams",
+    "type": "object",
+    "properties": {
+      "theme": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "theme"
+    ]
+  },
+  "ThemeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ThemeResult",
+    "type": "object",
+    "properties": {
+      "theme": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "theme"
+    ]
+  },
+  "ToolInvokeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ToolInvokeParams",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "input": {
+        "type": "string",
+        "default": "{}"
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "ToolInvokeResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ToolInvokeResult",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "output": {
+        "type": "string"
+      },
+      "metadata": {
+        "description": "Tool-defined metadata. Its schema is intentionally opaque."
+      },
+      "changed_paths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "name",
+      "summary",
+      "output",
+      "changed_paths"
+    ]
+  },
+  "ToolsListResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Array_of_ToolOverview",
+    "type": "array",
+    "items": {
+      "$ref": "#/$defs/ToolOverview"
+    },
+    "$defs": {
+      "ToolOverview": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "requires_tools_permission": {
+            "type": "boolean"
+          },
+          "requires_network_permission": {
+            "type": "boolean"
+          },
+          "provider_hidden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "summary",
+          "requires_tools_permission",
+          "requires_network_permission",
+          "provider_hidden"
+        ]
+      }
+    }
+  },
+  "TurnCancelResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TurnCancelResult",
+    "type": "object",
+    "properties": {
+      "cancelled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "cancelled"
+    ]
+  },
+  "TurnInterruptResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TurnInterruptResult",
+    "type": "object",
+    "properties": {
+      "interrupted": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "interrupted"
+    ]
+  },
+  "TurnSubmitParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TurnSubmitParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "session_id",
+      "prompt"
+    ]
+  },
+  "TurnSubmitResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "TurnSubmitResult",
+    "type": "object",
+    "properties": {
+      "subscription_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "subscription_id"
+    ]
+  },
+  "ValidateDirectoryParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ValidateDirectoryParams",
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "WorkflowResumeParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "WorkflowResumeParams",
+    "type": "object",
+    "properties": {
+      "run_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id"
+    ]
+  },
+  "WorkflowStartDynamicParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "WorkflowStartDynamicParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "spec": {
+        "description": "Dynamic workflow definitions are extension-owned and intentionally opaque."
+      },
+      "arguments": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "required": [
+      "session_id",
+      "name",
+      "spec"
+    ]
+  },
+  "WorkflowStartParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "WorkflowStartParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "arguments": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "required": [
+      "session_id",
+      "name"
+    ]
+  },
+  "WorkflowTaskResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "WorkflowTaskResult",
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ]
+  }
+}

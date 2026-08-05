@@ -1,0 +1,1441 @@
+[
+  {
+    "method": "initialize",
+    "stability": "stable",
+    "params": "InitializeParams",
+    "result": "InitializeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/bootstrap",
+    "stability": "stable",
+    "params": "BootstrapParams",
+    "result": "BootstrapState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "session_mcp_servers[*].endpoint",
+      "session_mcp_servers[*].args",
+      "session_mcp_servers[*].env",
+      "session_mcp_servers[*].headers",
+      "session_mcp_servers[*].auth",
+      "session_mcp_servers[*].error"
+    ]
+  },
+  {
+    "method": "session/list",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "SessionListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/rename",
+    "stability": "stable",
+    "params": "SessionRenameParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/fork",
+    "stability": "stable",
+    "params": "SessionForkParams",
+    "result": "SessionForkResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/clear",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "BootstrapState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/rewind",
+    "stability": "stable",
+    "params": "SessionRewindParams",
+    "result": "BootstrapState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/record_message",
+    "stability": "stable",
+    "params": "SessionRecordMessageParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "content"
+    ]
+  },
+  {
+    "method": "session/compact",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "CompactSessionResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/compact_decision",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "CompactDecision",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/find_by_title",
+    "stability": "stable",
+    "params": "SessionFindByTitleParams",
+    "result": "SessionFindByTitleResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "turn/submit",
+    "stability": "stable",
+    "params": "TurnSubmitParams",
+    "result": "TurnSubmitResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "prompt"
+    ]
+  },
+  {
+    "method": "turn/steer",
+    "stability": "stable",
+    "params": "TurnSubmitParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "prompt"
+    ]
+  },
+  {
+    "method": "turn/cancel",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "TurnCancelResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "turn/interrupt",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "TurnInterruptResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/respond",
+    "stability": "stable",
+    "params": "PermissionResponseParams",
+    "result": "SentResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/overview",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "PermissionOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/mode",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "PermissionModeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/set_mode",
+    "stability": "stable",
+    "params": "PermissionSetModeParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/add_rule",
+    "stability": "stable",
+    "params": "PermissionRuleParams",
+    "result": "PermissionRuleUpdateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/remove_rule",
+    "stability": "stable",
+    "params": "PermissionRuleParams",
+    "result": "PermissionRuleUpdateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/add_session_rule",
+    "stability": "stable",
+    "params": "SessionPermissionRuleParams",
+    "result": "PermissionRuleUpdateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/remove_session_rule",
+    "stability": "stable",
+    "params": "SessionPermissionRuleParams",
+    "result": "PermissionRuleUpdateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/headless.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/add_directory",
+    "stability": "stable",
+    "params": "AddDirectoryParams",
+    "result": "AddedDirectory",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "permission/validate_directory",
+    "stability": "stable",
+    "params": "ValidateDirectoryParams",
+    "result": "AddDirectoryCandidate",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/model_name",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ModelNameResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/model_options",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ModelOptionsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_model",
+    "stability": "stable",
+    "params": "SetModelParams",
+    "result": "SetModelResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/providers",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ProvidersResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/theme",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ThemeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_theme",
+    "stability": "stable",
+    "params": "ThemeParams",
+    "result": "ThemeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/effort",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "EffortResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_effort",
+    "stability": "stable",
+    "params": "EffortParams",
+    "result": "EffortResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/output_style",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "OutputStyleResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_output_style",
+    "stability": "stable",
+    "params": "OutputStyleParams",
+    "result": "OutputStyleResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/sandbox",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "SandboxLocalSettings",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/update_sandbox",
+    "stability": "stable",
+    "params": "SandboxSettingsUpdate",
+    "result": "PathResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/keybindings",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "KeybindingsFileResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/load_keybindings",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "KeybindingsLoadResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/editor_mode",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "EditorModeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_editor_mode",
+    "stability": "stable",
+    "params": "EditorModeParams",
+    "result": "EditorModeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/output_style_options",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "OutputStyleOptionsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/active_output_style",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ActiveOutputStyleResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/is_locked",
+    "stability": "stable",
+    "params": "SettingKeyParams",
+    "result": "SettingLockedResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_auto_memory",
+    "stability": "stable",
+    "params": "EnabledParams",
+    "result": "EnabledResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/ensure_memory_file",
+    "stability": "stable",
+    "params": "StringPathParams",
+    "result": "PathResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/add_sandbox_excluded",
+    "stability": "stable",
+    "params": "SandboxExcludedCommandParams",
+    "result": "SandboxExcludedCommandResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/allow_all",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "AllowAllResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "settings/set_allow_all",
+    "stability": "stable",
+    "params": "AllowAllParams",
+    "result": "AllowAllResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "context/preview",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "TurnContext",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "context/overview",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "ContextOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "usage/overview",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "UsageOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "usage/cost",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "CostOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "usage/stats",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "StatsOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/list_servers",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "McpListServersResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/server_trust",
+    "stability": "stable",
+    "params": "McpServerIdParams",
+    "result": "McpServerTrustResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/set_trust",
+    "stability": "stable",
+    "params": "McpSetTrustParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/list_tools",
+    "stability": "stable",
+    "params": "McpServerIdParams",
+    "result": "McpListToolsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/list_resources",
+    "stability": "stable",
+    "params": "McpSessionServerParams",
+    "result": "McpListResourcesResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/read_resource",
+    "stability": "stable",
+    "params": "McpReadResourceParams",
+    "result": "McpResourceContent",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/list_prompts",
+    "stability": "stable",
+    "params": "McpSessionServerParams",
+    "result": "McpListPromptsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [
+      "result[*].extra"
+    ],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/get_prompt",
+    "stability": "stable",
+    "params": "McpGetPromptParams",
+    "result": "McpPromptResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [
+      "arguments",
+      "result.messages[*].content.annotations.extra"
+    ],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/invoke_tool",
+    "stability": "stable",
+    "params": "McpInvokeToolParams",
+    "result": "McpToolResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "input"
+    ]
+  },
+  {
+    "method": "mcp/diagnose",
+    "stability": "stable",
+    "params": "McpServerIdParams",
+    "result": "McpDiagnoseResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/upsert_server",
+    "stability": "stable",
+    "params": "McpServerInput",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "endpoint",
+      "args",
+      "env",
+      "headers",
+      "auth",
+      "error"
+    ]
+  },
+  {
+    "method": "mcp/remove_server",
+    "stability": "stable",
+    "params": "McpServerIdParams",
+    "result": "McpRemoveServerResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/capabilities",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "McpCapabilitiesResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/slash_suggestions",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "McpSlashSuggestionCatalog",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/oauth_overview",
+    "stability": "stable",
+    "params": "McpOAuthOverviewParams",
+    "result": "McpOAuthOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "mcp/logout_oauth_token",
+    "stability": "stable",
+    "params": "McpServerIdParams",
+    "result": "McpLogoutOAuthTokenResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/list",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "ToolsListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/invoke",
+    "stability": "stable",
+    "params": "ToolInvokeParams",
+    "result": "ToolInvokeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [
+      "result.metadata"
+    ],
+    "sensitive_fields": [
+      "input"
+    ]
+  },
+  {
+    "method": "tools/skills",
+    "stability": "stable",
+    "params": "SkillDefinitionsParams",
+    "result": "SkillDefinitionsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/agents",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "AgentDefinitionsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/plan",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "PlanOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/task_list",
+    "stability": "stable",
+    "params": "TaskListParams",
+    "result": "TaskListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/enter_plan",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "EnterPlanModeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [
+      "result.metadata"
+    ],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/agents_with_warnings",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "AgentDefinitionsWithWarningsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "auth/overview",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "AuthOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "auth/login",
+    "stability": "stable",
+    "params": "AuthLoginParams",
+    "result": "AuthLoginResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "token"
+    ]
+  },
+  {
+    "method": "auth/logout",
+    "stability": "stable",
+    "params": "AuthLogoutParams",
+    "result": "AuthLogoutResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/commands/mod.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/status",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "StatusOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/memory",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "MemoryOverview",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/doctor",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "DoctorReport",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/hooks",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "HookDiscovery",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/diff",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "WorkspaceDiff",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/advanced",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "AdvancedCapabilitiesResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/cleanup_child_sessions",
+    "stability": "stable",
+    "params": "DiagnosticsCleanupChildSessionsParams",
+    "result": "ChildSessionOrphanCleanupResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "diagnostics/last_request",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "LastProviderRequestResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.body_json",
+      "result.recent_activity_json",
+      "result.previous_turn_json"
+    ]
+  },
+  {
+    "method": "diagnostics/pre_user_instructions",
+    "stability": "stable",
+    "params": "SessionIdParams",
+    "result": "PreUserInstructionsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.preview"
+    ]
+  },
+  {
+    "method": "session/acp_load_preflight",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "AcpLoadReplayPreflight",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/acp_load_setup",
+    "stability": "experimental",
+    "params": "BootstrapParams",
+    "result": "BootstrapState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "session_mcp_servers[*].endpoint",
+      "session_mcp_servers[*].args",
+      "session_mcp_servers[*].env",
+      "session_mcp_servers[*].headers",
+      "session_mcp_servers[*].auth"
+    ]
+  },
+  {
+    "method": "session/acp_resume_setup",
+    "stability": "experimental",
+    "params": "BootstrapParams",
+    "result": "BootstrapState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "session_mcp_servers[*].endpoint",
+      "session_mcp_servers[*].args",
+      "session_mcp_servers[*].env",
+      "session_mcp_servers[*].headers",
+      "session_mcp_servers[*].auth"
+    ]
+  },
+  {
+    "method": "session/acp_delete",
+    "stability": "experimental",
+    "params": "AcpDeleteSessionParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/acp_close",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "NoData",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/create",
+    "stability": "experimental",
+    "params": "BackgroundCreateParams",
+    "result": "BackgroundCreateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "prompt"
+    ]
+  },
+  {
+    "method": "background/list",
+    "stability": "experimental",
+    "params": "EmptyParams",
+    "result": "BackgroundTaskListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/detail",
+    "stability": "experimental",
+    "params": "BackgroundJobParams",
+    "result": "BackgroundTaskView",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/cancel",
+    "stability": "experimental",
+    "params": "BackgroundJobParams",
+    "result": "BackgroundCancelResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/log",
+    "stability": "experimental",
+    "params": "BackgroundJobParams",
+    "result": "BackgroundLogResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.log"
+    ]
+  },
+  {
+    "method": "background/events",
+    "stability": "experimental",
+    "params": "BackgroundJobParams",
+    "result": "BackgroundEventsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.events"
+    ]
+  },
+  {
+    "method": "background/list_summary",
+    "stability": "experimental",
+    "params": "EmptyParams",
+    "result": "BackgroundTaskListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/subscribe",
+    "stability": "experimental",
+    "params": "BackgroundSubscribeParams",
+    "result": "BackgroundSubscribeResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "workflow/list",
+    "stability": "experimental",
+    "params": "EmptyParams",
+    "result": "WorkflowListResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "workflow/start",
+    "stability": "experimental",
+    "params": "WorkflowStartParams",
+    "result": "WorkflowTaskResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "arguments"
+    ]
+  },
+  {
+    "method": "workflow/start_dynamic",
+    "stability": "experimental",
+    "params": "WorkflowStartDynamicParams",
+    "result": "WorkflowTaskResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [
+      "spec"
+    ],
+    "sensitive_fields": [
+      "arguments"
+    ]
+  },
+  {
+    "method": "workflow/resume",
+    "stability": "experimental",
+    "params": "WorkflowResumeParams",
+    "result": "WorkflowTaskResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  }
+]

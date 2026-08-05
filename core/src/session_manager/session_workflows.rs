@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use orbcode_config::AgentDefinition;
 use orbcode_config::PermissionRuleSettingKind;
 use orbcode_protocol::{BackgroundTaskProgressEvent, StreamEvent};
+pub use orbcode_protocol::{WorkflowCommand, WorkflowSource};
 use orbcode_session_store::{ChildSessionStatus, StartChildSessionInput};
 use orbcode_tools::{
     AgentToolInput, BackgroundTaskRecord, BackgroundTaskStatus, SkillDefinition,
@@ -36,20 +37,6 @@ use crate::CoreError;
 
 const DEFAULT_MAX_CONCURRENCY: usize = 4;
 const MAX_CONCURRENCY_LIMIT: usize = 16;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowSource {
-    Project,
-    User,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkflowCommand {
-    pub name: String,
-    pub description: String,
-    pub source: WorkflowSource,
-}
 
 #[derive(Clone, Debug)]
 struct DiscoveredWorkflow {

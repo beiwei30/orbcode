@@ -1667,6 +1667,7 @@ dependencies = [
  "orbcode-app-server-protocol",
  "orbcode-app-server-transport",
  "orbcode-compat-fixtures",
+ "orbcode-config",
  "orbcode-model-provider",
  "orbcode-protocol",
  "orbcode-tui",
@@ -1696,6 +1697,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
  "uuid",
 ]
 
@@ -1725,11 +1727,8 @@ dependencies = [
 name = "orbcode-app-server-protocol"
 version = "0.0.1"
 dependencies = [
- "orbcode-config",
- "orbcode-core",
- "orbcode-mcp",
+ "chrono",
  "orbcode-protocol",
- "orbcode-tools",
  "schemars 1.2.1",
  "serde",
  "serde_json",

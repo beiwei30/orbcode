@@ -1,6 +1,5 @@
 use anyhow::Result;
-use orbcode_app_server_client::AppClient;
-use orbcode_config::EditorModeSetting;
+use orbcode_app_server_client::{AppClient, EditorModeSetting};
 
 use crate::bottom_pane::vim::VimRuntimeState;
 use crate::state::TuiState;
@@ -43,9 +42,8 @@ impl TuiState {
         app_server: &AppClient,
         mode: EditorModeSetting,
     ) -> Result<String> {
-        let value = app_server.set_editor_mode_setting(mode.as_str()).await?;
-        let mode_str = value["editor_mode"].as_str().unwrap_or(mode.as_str());
-        let mode = EditorModeSetting::parse(mode_str).unwrap_or(mode);
+        let result = app_server.set_editor_mode_setting(mode.as_str()).await?;
+        let mode = EditorModeSetting::parse(&result.editor_mode).unwrap_or(mode);
         self.editor_mode = editor_mode_from_setting(mode);
         self.normal_pending = None;
         self.normal_count = None;

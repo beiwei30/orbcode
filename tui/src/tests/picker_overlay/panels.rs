@@ -20,10 +20,7 @@ async fn memory_picker_creates_missing_file_and_requests_editor() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     state.overlay = Some(OverlayState::MemoryPicker(MemoryPickerState::new(
         "/memory",
@@ -79,7 +76,7 @@ async fn ctrl_t_toggle_collapses_and_re_expands_task_panel() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server.bootstrap_typed(None).await.expect("bootstrap");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
 
     let snapshot = TaskListSnapshot {
@@ -142,7 +139,7 @@ async fn task_panel_hydrates_from_disk_on_resume() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server.bootstrap_typed(None).await.expect("bootstrap");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap");
     let session_id = bootstrap.session.session_id.clone();
 
     let task_list_id = session_task_list_id(Some(&session_id));
@@ -249,8 +246,10 @@ fn rewind_picker_requires_a_user_turn() {
 
 #[test]
 fn render_hook_discovery_formats_hooks_and_warnings() {
-    use orbcode_app_server::{DiscoveredHook, HookDiscovery, HookDiscoveryWarning};
-    use orbcode_config::{HookLayer, HookProvenance, HookValidationStatus};
+    use orbcode_app_server_client::{
+        DiscoveredHook, HookDiscovery, HookDiscoveryWarning, HookLayer, HookProvenance,
+        HookValidationStatus,
+    };
 
     let discovery = HookDiscovery {
         hooks: vec![
@@ -291,7 +290,7 @@ fn render_hook_discovery_formats_hooks_and_warnings() {
 
 #[test]
 fn render_hook_discovery_shows_empty_message() {
-    use orbcode_app_server::HookDiscovery;
+    use orbcode_app_server_client::HookDiscovery;
 
     let discovery = HookDiscovery::default();
     let rendered = render_hook_discovery(&discovery);
@@ -300,7 +299,7 @@ fn render_hook_discovery_shows_empty_message() {
 
 #[test]
 fn render_skill_definitions_formats_skills_with_source() {
-    use orbcode_app_server::{SkillDefinition, SkillSource};
+    use orbcode_app_server_client::{SkillDefinition, SkillSource};
 
     let definitions = vec![
         SkillDefinition {
@@ -329,7 +328,7 @@ fn render_skill_definitions_formats_skills_with_source() {
 
 #[test]
 fn render_skill_definitions_shows_empty_message() {
-    use orbcode_app_server::SkillDefinition;
+    use orbcode_app_server_client::SkillDefinition;
 
     let rendered = render_skill_definitions(&Vec::<SkillDefinition>::new());
     assert_eq!(rendered, "No skills available.");
@@ -337,13 +336,22 @@ fn render_skill_definitions_shows_empty_message() {
 
 #[test]
 fn render_agent_definitions_formats_agents_with_tools_and_model() {
-    use orbcode_app_server::AgentDefinition;
+    use orbcode_app_server_client::{AgentDefinition, AgentSource};
 
-    let definitions = vec![AgentDefinition::built_in(
-        "general-purpose",
-        "General purpose agent",
-        "You are a helpful assistant.",
-    )];
+    let definitions = vec![AgentDefinition {
+        agent_type: "general-purpose".to_string(),
+        description: "General purpose agent".to_string(),
+        prompt: "You are a helpful assistant.".to_string(),
+        tools: None,
+        disallowed_tools: None,
+        model: None,
+        permission_mode: None,
+        skills: Vec::new(),
+        mcp_server_names: None,
+        hooks: std::collections::BTreeMap::new(),
+        source: AgentSource::BuiltIn,
+        path: None,
+    }];
 
     let rendered = render_agent_definitions(&definitions);
     assert!(rendered.contains("[built-in]"));
@@ -353,7 +361,7 @@ fn render_agent_definitions_formats_agents_with_tools_and_model() {
 
 #[test]
 fn render_agent_definitions_shows_empty_message() {
-    use orbcode_app_server::AgentDefinition;
+    use orbcode_app_server_client::AgentDefinition;
 
     let rendered = render_agent_definitions(&Vec::<AgentDefinition>::new());
     assert_eq!(rendered, "No agent definitions available.");
@@ -365,16 +373,27 @@ fn render_agent_definitions_shows_empty_message() {
 
 #[test]
 fn render_agent_definitions_with_warnings_appends_warnings_section() {
-    use orbcode_app_server::{AgentDefinition, AgentLoadWarning, AgentSource, AgentWarningKind};
+    use orbcode_app_server_client::{
+        AgentDefinition, AgentLoadWarning, AgentSource, AgentWarningKind,
+    };
     use std::path::PathBuf;
 
     use crate::render::slash_output::render_agent_definitions_with_warnings;
 
-    let definitions = vec![AgentDefinition::built_in(
-        "general-purpose",
-        "General purpose agent",
-        "You are a helpful assistant.",
-    )];
+    let definitions = vec![AgentDefinition {
+        agent_type: "general-purpose".to_string(),
+        description: "General purpose agent".to_string(),
+        prompt: "You are a helpful assistant.".to_string(),
+        tools: None,
+        disallowed_tools: None,
+        model: None,
+        permission_mode: None,
+        skills: Vec::new(),
+        mcp_server_names: None,
+        hooks: std::collections::BTreeMap::new(),
+        source: AgentSource::BuiltIn,
+        path: None,
+    }];
     let warnings = vec![AgentLoadWarning {
         kind: AgentWarningKind::MissingField,
         source: AgentSource::ProjectSettings,
@@ -394,15 +413,24 @@ fn render_agent_definitions_with_warnings_appends_warnings_section() {
 
 #[test]
 fn render_agent_definitions_with_no_warnings_omits_section() {
-    use orbcode_app_server::{AgentDefinition, AgentLoadWarning};
+    use orbcode_app_server_client::{AgentDefinition, AgentLoadWarning, AgentSource};
 
     use crate::render::slash_output::render_agent_definitions_with_warnings;
 
-    let definitions = vec![AgentDefinition::built_in(
-        "general-purpose",
-        "General purpose agent",
-        "You are a helpful assistant.",
-    )];
+    let definitions = vec![AgentDefinition {
+        agent_type: "general-purpose".to_string(),
+        description: "General purpose agent".to_string(),
+        prompt: "You are a helpful assistant.".to_string(),
+        tools: None,
+        disallowed_tools: None,
+        model: None,
+        permission_mode: None,
+        skills: Vec::new(),
+        mcp_server_names: None,
+        hooks: std::collections::BTreeMap::new(),
+        source: AgentSource::BuiltIn,
+        path: None,
+    }];
 
     let rendered =
         render_agent_definitions_with_warnings(&definitions, &Vec::<AgentLoadWarning>::new());
@@ -417,7 +445,7 @@ fn render_agent_definitions_with_no_warnings_omits_section() {
 #[test]
 fn permission_picker_lines_at_wide_200_col() {
     let overview = PermissionOverview {
-        permissions: orbcode_app_server::PermissionContext {
+        permissions: orbcode_app_server_client::PermissionContext {
             cwd: PathBuf::from("/tmp/project"),
             allow_network: true,
             provider_allow_network: false,
@@ -685,10 +713,7 @@ async fn background_jobs_overlay_y_copies_selected_workflow_step_output() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
 
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let detail = BackgroundTaskView {
@@ -786,10 +811,7 @@ async fn background_jobs_child_session_y_copies_selected_workflow_step_output() 
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    let bootstrap = app_server
-        .bootstrap_typed(None)
-        .await
-        .expect("bootstrap session");
+    let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
 
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let detail = BackgroundTaskView {

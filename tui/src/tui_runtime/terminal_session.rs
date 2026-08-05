@@ -29,10 +29,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
-use orbcode_app_server_client::{
-    AppClient, McpResourceSlashSuggestion, McpServerSlashSuggestion, McpSlashSuggestionCatalog,
-    McpToolSlashSuggestion,
-};
+use orbcode_app_server_client::AppClient;
 use orbcode_protocol::StreamEvent;
 
 use crate::chat::stream_events::mark_redraw;
@@ -166,63 +163,9 @@ async fn refresh_mcp_slash_suggestions_if_needed(
         return;
     }
     state.mcp_slash_suggestion_refresh_key = key;
-    let catalog = match app_server.mcp_slash_suggestions().await {
-        Ok(value) => parse_mcp_slash_suggestion_catalog(&value),
-        Err(_) => McpSlashSuggestionCatalog::default(),
-    };
+    let catalog = app_server.mcp_slash_suggestions().await.unwrap_or_default();
     state.update_mcp_slash_suggestions(catalog);
     mark_redraw(needs_redraw, redraw_reasons, "mcp_slash_suggestions");
-}
-
-fn parse_mcp_slash_suggestion_catalog(value: &serde_json::Value) -> McpSlashSuggestionCatalog {
-    let servers = value["servers"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| {
-                    Some(McpServerSlashSuggestion {
-                        id: s["id"].as_str()?.to_string(),
-                        summary: s["summary"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let tools = value["tools"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(McpToolSlashSuggestion {
-                        server_id: t["server_id"].as_str()?.to_string(),
-                        name: t["name"].as_str()?.to_string(),
-                        provider_name: t["provider_name"].as_str().unwrap_or("").to_string(),
-                        description: t["description"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let resources = value["resources"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|r| {
-                    Some(McpResourceSlashSuggestion {
-                        server_id: r["server_id"].as_str()?.to_string(),
-                        uri: r["uri"].as_str()?.to_string(),
-                        name: r["name"].as_str().unwrap_or("").to_string(),
-                        description: r["description"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    McpSlashSuggestionCatalog {
-        servers,
-        tools,
-        resources,
-    }
 }
 
 pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {

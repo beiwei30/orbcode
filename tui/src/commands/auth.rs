@@ -1,6 +1,5 @@
 use anyhow::Result;
-use orbcode_app_server_client::AppClient;
-use orbcode_config::{AuthMethod, AuthOverview, AuthStatusEntry};
+use orbcode_app_server_client::{AppClient, AuthMethod};
 use orbcode_protocol::ProviderId;
 
 use crate::render::slash_output::render_auth_overview;
@@ -12,11 +11,10 @@ pub(crate) async fn run_login_slash_command(
 ) -> Result<(String, Option<String>)> {
     let args = args.trim();
     if args.is_empty() || args == "status" {
-        let value = app_server
+        let overview = app_server
             .auth_overview()
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let overview: AuthOverview = serde_json::from_value(value)?;
         return Ok((
             "Auth status loaded.".to_string(),
             Some(render_auth_overview(&overview)),
@@ -24,21 +22,14 @@ pub(crate) async fn run_login_slash_command(
     }
 
     let (provider, env_var) = parse_login_env_var_args(args)?;
-    let value = app_server
-        .auth_login(
-            provider.as_str(),
-            &AuthMethod::ApiKey.to_string(),
-            None,
-            Some(env_var.as_str()),
-        )
+    let entry = app_server
+        .auth_login(provider, AuthMethod::ApiKey, None, Some(env_var.as_str()))
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let entry: AuthStatusEntry = serde_json::from_value(value)?;
-    let value = app_server
+    let overview = app_server
         .auth_overview()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let overview: AuthOverview = serde_json::from_value(value)?;
     Ok((
         format!(
             "Stored auth metadata for {} via {}.",
@@ -104,16 +95,15 @@ pub(crate) async fn run_logout_slash_command(
     args: &str,
 ) -> Result<(String, Option<String>)> {
     let provider = parse_logout_provider_arg(args)?;
-    let value = app_server
-        .auth_logout(provider.map(orbcode_protocol::ProviderId::as_str))
+    let result = app_server
+        .auth_logout(provider)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let removed = value["removed"].as_u64().unwrap_or(0) as usize;
-    let value = app_server
+    let removed = result.removed;
+    let overview = app_server
         .auth_overview()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let overview: AuthOverview = serde_json::from_value(value)?;
     let scope = provider.map_or_else(
         || "all providers".to_string(),
         |provider| provider.to_string(),

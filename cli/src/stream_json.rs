@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use orbcode_app_server::{
-    McpServerConfig, MessageRole, PermissionMode, ProviderId, StreamEvent, TokenUsage,
-    ToolUseCompletionKind, TranscriptBlock, TranscriptMessage,
+use orbcode_config::PermissionMode;
+use orbcode_protocol::{
+    MessageRole, ProviderId, StreamEvent, TokenUsage, ToolUseCompletionKind, TranscriptBlock,
+    TranscriptMessage,
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -240,15 +241,6 @@ pub struct InitMetadata {
 pub struct McpServerInfo {
     pub name: String,
     pub status: String,
-}
-
-impl From<&McpServerConfig> for McpServerInfo {
-    fn from(server: &McpServerConfig) -> Self {
-        Self {
-            name: server.id.clone(),
-            status: server.status.as_str().to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -838,10 +830,10 @@ pub fn control_response_error(request_id: &str, error: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbcode_app_server::{
-        PermissionRequest, PermissionResolutionKind, ToolUseCompletionKind, TurnCancellationKind,
+    use orbcode_protocol::{
+        PermissionRequest, PermissionResolutionKind, SessionId, ToolUseCompletionKind,
+        TurnCancellationKind,
     };
-    use orbcode_protocol::SessionId;
     use serde_json::json;
 
     fn session_id() -> SessionId {

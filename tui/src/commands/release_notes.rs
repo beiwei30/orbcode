@@ -1,5 +1,5 @@
 use anyhow::Result;
-use orbcode_app_server_client::{AppClient, StatusOverview};
+use orbcode_app_server_client::AppClient;
 
 use crate::render::slash_output::{format_release_notes, parse_changelog_release_notes};
 
@@ -11,11 +11,10 @@ pub(crate) async fn run_release_notes_slash_command(
     app_server: &AppClient,
     session_id: &str,
 ) -> Result<(String, Option<String>)> {
-    let value = app_server
+    let overview = app_server
         .status_overview(session_id)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let overview: StatusOverview = serde_json::from_value(value)?;
     let cache_path = overview.home_dir.join("cache").join("changelog.md");
     let changelog = tokio::fs::read_to_string(&cache_path)
         .await

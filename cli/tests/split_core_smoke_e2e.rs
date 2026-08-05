@@ -3,15 +3,71 @@
 //! path that a remote TUI uses, verifying that sessions, turns, and
 //! server-requests work correctly over IPC.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server_client::{
+    AppClient, McpAuth, McpListServersResult, McpServerInput, McpServerStatus, McpServerTrust,
+    McpTransport,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 const ORBCODE_BIN: &str = env!("CARGO_BIN_EXE_orbcode");
+
+fn secret_bearing_mcp_input() -> McpServerInput {
+    McpServerInput {
+        id: "transport-redaction-server".to_string(),
+        transport: McpTransport::StreamableHttp,
+        endpoint: "https://url-user-canary:url-password-canary@example.com/mcp?token=url-query-canary#url-fragment-canary".to_string(),
+        args: vec!["arg-canary".to_string()],
+        env: BTreeMap::from([("TOKEN".to_string(), "env-canary".to_string())]),
+        cwd: None,
+        headers: BTreeMap::from([(
+            "Authorization".to_string(),
+            "header-canary".to_string(),
+        )]),
+        enabled: false,
+        status: McpServerStatus::Failed,
+        error: Some("error-canary".to_string()),
+        summary: "transport redaction fixture".to_string(),
+        auth: McpAuth::Header {
+            name: "X-Auth".to_string(),
+            value: "auth-header-canary".to_string(),
+        },
+        trust: McpServerTrust::Unknown,
+        transport_type_hint: None,
+        source: None,
+    }
+}
+
+async fn upsert_and_list_redacted(client: &AppClient) -> McpListServersResult {
+    client
+        .upsert_mcp_server(secret_bearing_mcp_input())
+        .await
+        .expect("upsert secret-bearing MCP fixture");
+    let result = client.list_mcp_servers().await.expect("list MCP servers");
+    let serialized = serde_json::to_string(&result).expect("serialize typed MCP list result");
+    for canary in [
+        "url-user-canary",
+        "url-password-canary",
+        "url-query-canary",
+        "url-fragment-canary",
+        "arg-canary",
+        "env-canary",
+        "header-canary",
+        "auth-header-canary",
+        "error-canary",
+    ] {
+        assert!(
+            !serialized.contains(canary),
+            "leaked {canary}: {serialized}"
+        );
+    }
+    result
+}
 
 async fn spawn_serve_socket() -> (
     tokio::process::Child,
@@ -145,6 +201,72 @@ async fn split_core_bootstrap_and_session_list() {
 
     drop(client);
     child.kill().await.ok();
+}
+
+#[tokio::test]
+async fn mcp_list_redaction_is_equivalent_in_process_ndjson_and_websocket() {
+    let in_process_home = tempfile::tempdir().expect("in-process home");
+    let in_process_cwd = tempfile::tempdir().expect("in-process cwd");
+    let app = orbcode_app_server::AppServer::new(
+        in_process_cwd.path(),
+        orbcode_app_server::AppConfigOverrides {
+            home_dir: Some(in_process_home.path().to_path_buf()),
+            ..orbcode_app_server::AppConfigOverrides::default()
+        },
+    )
+    .await
+    .expect("in-process app server");
+    let in_process_client = AppClient::new(app).await.expect("in-process client");
+    let in_process_result = upsert_and_list_redacted(&in_process_client).await;
+
+    let (mut socket_child, path, socket_token, _socket_home, _socket_cwd, _sock_dir) =
+        spawn_serve_socket().await;
+    let socket_client = AppClient::connect_socket(std::path::Path::new(&path), &socket_token)
+        .await
+        .expect("socket client");
+    let socket_result = upsert_and_list_redacted(&socket_client).await;
+
+    let (mut websocket_child, addr, websocket_token, _websocket_home, _websocket_cwd) =
+        spawn_serve_websocket().await;
+    let websocket_client = AppClient::connect_websocket(&format!("ws://{addr}"), &websocket_token)
+        .await
+        .expect("websocket client");
+    let websocket_result = upsert_and_list_redacted(&websocket_client).await;
+
+    assert_eq!(in_process_result, socket_result);
+    assert_eq!(in_process_result, websocket_result);
+
+    let in_process_tools = in_process_client
+        .list_tools()
+        .await
+        .expect("in-process tools");
+    let socket_tools = socket_client.list_tools().await.expect("socket tools");
+    let websocket_tools = websocket_client
+        .list_tools()
+        .await
+        .expect("websocket tools");
+    assert_eq!(in_process_tools, socket_tools);
+    assert_eq!(in_process_tools, websocket_tools);
+
+    let in_process_capabilities = in_process_client
+        .mcp_capabilities()
+        .await
+        .expect("in-process MCP capabilities");
+    let socket_capabilities = socket_client
+        .mcp_capabilities()
+        .await
+        .expect("socket MCP capabilities");
+    let websocket_capabilities = websocket_client
+        .mcp_capabilities()
+        .await
+        .expect("websocket MCP capabilities");
+    assert_eq!(in_process_capabilities, socket_capabilities);
+    assert_eq!(in_process_capabilities, websocket_capabilities);
+
+    drop(socket_client);
+    drop(websocket_client);
+    socket_child.kill().await.ok();
+    websocket_child.kill().await.ok();
 }
 
 #[tokio::test]

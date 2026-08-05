@@ -3,6 +3,11 @@ use orbcode_core::CoreError;
 use orbcode_protocol::{SessionRecord, StreamEvent};
 
 use super::AppServer;
+use crate::protocol_conversion::{
+    context_window_options_to_wire, editor_mode_setting_to_wire, max_output_token_options_to_wire,
+    mcp_server_config_from_input, permission_context_to_wire, theme_setting_to_wire,
+    token_warning_options_to_wire,
+};
 
 impl AppServer {
     pub async fn bootstrap(
@@ -35,13 +40,18 @@ impl AppServer {
             && params.cwd.is_none()
             && params.additional_directories.is_empty()
             && params.session_mcp_servers.is_empty();
+        let session_mcp_servers = params
+            .session_mcp_servers
+            .into_iter()
+            .map(mcp_server_config_from_input)
+            .collect();
         let result = self
             .sessions
             .start_or_resume_with_setup(
                 params.session_id.as_deref(),
                 params.cwd,
                 params.additional_directories,
-                params.session_mcp_servers,
+                session_mcp_servers,
             )
             .await;
         let (session, bootstrap_event) = match result {
@@ -70,13 +80,18 @@ impl AppServer {
                 "session/acp_load_setup requires cwd".into(),
             ));
         };
+        let session_mcp_servers = params
+            .session_mcp_servers
+            .into_iter()
+            .map(mcp_server_config_from_input)
+            .collect();
         let (session, bootstrap_event) = self
             .sessions
             .load_session_with_setup(
                 &session_id,
                 cwd,
                 params.additional_directories,
-                params.session_mcp_servers,
+                session_mcp_servers,
             )
             .await?;
         self.bootstrap_state(session, bootstrap_event, false).await
@@ -96,13 +111,18 @@ impl AppServer {
                 "session/acp_resume_setup requires cwd".into(),
             ));
         };
+        let session_mcp_servers = params
+            .session_mcp_servers
+            .into_iter()
+            .map(mcp_server_config_from_input)
+            .collect();
         let (session, bootstrap_event) = self
             .sessions
             .load_session_with_setup(
                 &session_id,
                 cwd,
                 params.additional_directories,
-                params.session_mcp_servers,
+                session_mcp_servers,
             )
             .await?;
         self.bootstrap_state(session, bootstrap_event, false).await
@@ -174,15 +194,17 @@ impl AppServer {
             home_dir: config.home_dir.clone(),
             cwd: config.cwd.clone(),
             model_display_name: self.sessions.model_display_name(),
-            context_window_options: config.context_window_options(),
-            max_output_token_options: config.max_output_token_options(),
-            token_warning_options: config.token_warning_options(),
-            theme: self.sessions.theme_setting(),
-            editor_mode: self.sessions.editor_mode_setting(),
+            context_window_options: context_window_options_to_wire(config.context_window_options()),
+            max_output_token_options: max_output_token_options_to_wire(
+                config.max_output_token_options(),
+            ),
+            token_warning_options: token_warning_options_to_wire(config.token_warning_options()),
+            theme: theme_setting_to_wire(self.sessions.theme_setting()),
+            editor_mode: editor_mode_setting_to_wire(self.sessions.editor_mode_setting()),
             default_provider: config.default_provider,
             fallback_provider: config.fallback_provider,
             max_retries: config.max_retries,
-            permissions: self.sessions.permission_context(),
+            permissions: permission_context_to_wire(self.sessions.permission_context()),
             mcp_slash_suggestions,
             statusline_command: config.settings.statusline_command.clone(),
             statusline_refresh_interval_secs: config
@@ -198,9 +220,10 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use orbcode_app_server_protocol::BootstrapParams;
+    use orbcode_app_server_protocol::{
+        BootstrapParams, McpAuth, McpServerInput, McpServerStatus, McpServerTrust, McpTransport,
+    };
     use orbcode_config::{AppConfigOverrides, sanitize_path};
-    use orbcode_mcp::{McpAuth, McpServerConfig, McpServerStatus, McpServerTrust, McpTransport};
     use serde_json::json;
 
     use super::super::AppServer;
@@ -754,7 +777,7 @@ mod tests {
             .bootstrap_with_params(BootstrapParams {
                 cwd: Some(session_cwd.clone()),
                 additional_directories: vec![extra.clone()],
-                session_mcp_servers: vec![McpServerConfig {
+                session_mcp_servers: vec![McpServerInput {
                     id: "docs".to_string(),
                     transport: McpTransport::Stdio,
                     endpoint: "mock-mcp".to_string(),
@@ -804,7 +827,7 @@ mod tests {
             .await;
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].id, "docs");
-        assert_eq!(servers[0].trust, McpServerTrust::Unknown);
+        assert_eq!(servers[0].trust, orbcode_mcp::McpServerTrust::Unknown);
         assert!(
             !tokio::fs::try_exists(home.join("mcp").join("servers.json"))
                 .await

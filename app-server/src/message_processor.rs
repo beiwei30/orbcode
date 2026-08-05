@@ -8,9 +8,9 @@ use tokio::task::JoinHandle;
 use orbcode_app_server_protocol::{
     ClientCapabilities, ClientInfo, ClientMessage, ClientRequestEnvelope, ErrorCode,
     InitializeParams, McpTrustDecisionWire, McpTrustResponseParams, PermissionDecisionWire,
-    PermissionResponseParams, ProtocolError, RequestId, ResponseResult, ServerMessage,
+    PermissionResponseParams, ProtocolError, RequestId, ResponseResult, SentResult, ServerMessage,
     ServerNotificationEnvelope, ServerRequestEnvelope, ServerRequestResponse,
-    ServerResponseEnvelope, StreamEventNotification, method,
+    ServerResponseEnvelope, StreamEventNotification, TurnSubmitParams, TurnSubmitResult, method,
 };
 use orbcode_core::PermissionDecision;
 use orbcode_protocol::StreamEvent;
@@ -283,12 +283,7 @@ impl MessageProcessor {
         &mut self,
         params: Option<serde_json::Value>,
     ) -> ResponseResult {
-        #[derive(serde::Deserialize)]
-        struct Params {
-            session_id: String,
-            prompt: String,
-        }
-        let p: Params = match crate::protocol_handler::parse_params(params) {
+        let p: TurnSubmitParams = match crate::protocol_handler::parse_params(params) {
             Ok(v) => v,
             Err(e) => return ResponseResult::Error(e),
         };
@@ -326,25 +321,18 @@ impl MessageProcessor {
         self.active_subscriptions
             .insert(subscription_id.clone(), handle);
 
-        ResponseResult::Success {
-            data: Some(serde_json::json!({
-                "subscription_id": subscription_id,
-            })),
-        }
+        crate::protocol_handler::success(TurnSubmitResult { subscription_id })
     }
 
     async fn handle_background_subscribe_with_pump(
         &mut self,
         params: Option<serde_json::Value>,
     ) -> ResponseResult {
-        #[derive(serde::Deserialize)]
-        struct Params {
-            task_id: String,
-        }
-        let p: Params = match crate::protocol_handler::parse_params(params) {
-            Ok(v) => v,
-            Err(e) => return ResponseResult::Error(e),
-        };
+        let p: orbcode_app_server_protocol::BackgroundSubscribeParams =
+            match crate::protocol_handler::parse_params(params) {
+                Ok(v) => v,
+                Err(e) => return ResponseResult::Error(e),
+            };
 
         let rx = match self
             .app_server
@@ -380,11 +368,9 @@ impl MessageProcessor {
         self.active_subscriptions
             .insert(subscription_id.clone(), handle);
 
-        ResponseResult::Success {
-            data: Some(serde_json::json!({
-                "subscription_id": subscription_id,
-            })),
-        }
+        crate::protocol_handler::success(orbcode_app_server_protocol::BackgroundSubscribeResult {
+            subscription_id,
+        })
     }
 
     /// Fallback handler for `permission/respond` sent as a regular client
@@ -406,9 +392,7 @@ impl MessageProcessor {
             .app_server
             .respond_to_permission_request(&p.request_id, decision)
             .await;
-        ResponseResult::Success {
-            data: Some(serde_json::json!({ "sent": sent })),
-        }
+        crate::protocol_handler::success(SentResult { sent })
     }
 
     /// Route a client response to a pending server-request.
