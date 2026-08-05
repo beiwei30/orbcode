@@ -27,11 +27,13 @@ this checklist before changing the verified version in the README.
 2. Configure one supported provider without putting a token in the repository,
    Zed settings, screenshots, or captured logs. Environment variables supplied
    by a secure launcher are preferred.
-3. Create a disposable home for the smoke so it cannot reuse normal sessions:
+3. Create a disposable home for the smoke and print its exact path:
 
-       export ORBCODE_ZED_SMOKE_HOME="$(mktemp -d)"
+       ORBCODE_ZED_SMOKE_HOME="$(mktemp -d)"
+       printf '%s\n' "$ORBCODE_ZED_SMOKE_HOME"
 
-   Remove that exact directory after the run. Do not point this variable at a
+   Use the printed path as `ORBCODE_HOME` in the Zed configuration below.
+   Remove that exact directory after the run, and do not point the setting at a
    normal Claude or orbcode home.
 
 For a deterministic repository-only run, the ACP process tests use the
@@ -42,7 +44,8 @@ the test key.
 ## Zed configuration
 
 Add a custom server under `agent_servers` in Zed's `settings.json`. Replace the
-paths and provider environment with values for your machine:
+paths and provider environment with values for your machine. The `ORBCODE_HOME`
+value must be the disposable path printed in prerequisite step 3:
 
 ```jsonc
 {
