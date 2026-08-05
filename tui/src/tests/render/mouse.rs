@@ -1,4 +1,41 @@
 use crate::tests::support::*;
+use orbcode_app_server_client::{AskUserOption, AskUserQuestionRequest, AskUserQuestionSpec};
+
+#[test]
+fn ask_user_mouse_focus_change_requests_redraw() {
+    let request = AskUserQuestionRequest {
+        session_id: "session-1".into(),
+        turn_id: Some("turn-1".into()),
+        tool_use_id: "tool-1".into(),
+        request_id: "ask-1".into(),
+        deadline: None,
+        validation_error: None,
+        questions: vec![AskUserQuestionSpec {
+            id: "database".into(),
+            question: "Which database?".into(),
+            header: "Database".into(),
+            multi_select: false,
+            options: vec![AskUserOption {
+                id: "postgres".into(),
+                label: "PostgreSQL".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            allow_free_text: false,
+            allow_annotation: false,
+        }],
+        question: String::new(),
+        options: Vec::new(),
+    };
+    let mut overlay = AskUserQuestionOverlayState::new(request);
+    overlay.panel_area = Rect::new(0, 0, 40, 10);
+    let mut state = normal_state("", 0);
+    state.overlay = Some(OverlayState::AskUserQuestion(overlay));
+
+    let changed = state.handle_mouse(mouse_event(MouseEventKind::Down(MouseButton::Left), 2, 6));
+
+    assert!(changed);
+}
 
 #[test]
 fn mouse_scroll_up_ignores_events_at_top_boundary() {

@@ -56,6 +56,14 @@ enum EventPayload {
     },
     #[serde(rename = "permission_resolved")]
     PermissionResolved { request_id: String, kind: String },
+    #[serde(rename = "server_request")]
+    ServerRequest {
+        request_id: String,
+        method: &'static str,
+        params: Value,
+    },
+    #[serde(rename = "server_request_resolved")]
+    ServerRequestResolved { request_id: String, outcome: Value },
     #[serde(rename = "error")]
     Error {
         message: String,
@@ -417,6 +425,42 @@ impl StreamJsonEmitter {
                     kind: kind.as_str().to_string(),
                 })]
             }
+            StreamEvent::AskUserQuestionRequested {
+                session_id,
+                turn_id,
+                tool_use_id,
+                request_id,
+                deadline,
+                questions,
+                question,
+                options,
+            } => vec![self.build_stream_event(EventPayload::ServerRequest {
+                request_id: request_id.clone(),
+                method: "ask_user/request",
+                params: serde_json::json!({
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "tool_use_id": tool_use_id,
+                    "request_id": request_id,
+                    "deadline": deadline,
+                    "questions": questions,
+                    "question": question,
+                    "options": options,
+                }),
+            })],
+            StreamEvent::AskUserQuestionResolved {
+                request_id,
+                outcome,
+                answer,
+            } => vec![
+                self.build_stream_event(EventPayload::ServerRequestResolved {
+                    request_id: request_id.clone(),
+                    outcome: outcome
+                        .as_ref()
+                        .and_then(|outcome| serde_json::to_value(outcome).ok())
+                        .unwrap_or_else(|| serde_json::json!({ "legacy_answer": answer })),
+                }),
+            ],
             StreamEvent::AssistantMessageCompleted {
                 message,
                 provider,

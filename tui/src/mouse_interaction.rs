@@ -83,6 +83,13 @@ impl TuiState {
                 permission.panel_scroll.hash(&mut hasher);
                 Self::hash_viewport_interaction_state(&permission.viewport, &mut hasher);
             }
+            Some(OverlayState::AskUserQuestion(state)) => {
+                16_u8.hash(&mut hasher);
+                state.question_index.hash(&mut hasher);
+                state.focused_row().hash(&mut hasher);
+                state.panel_scroll.hash(&mut hasher);
+                state.validation_error.hash(&mut hasher);
+            }
             Some(OverlayState::Help(help)) => {
                 9_u8.hash(&mut hasher);
                 help.scroll.hash(&mut hasher);
@@ -155,6 +162,23 @@ impl TuiState {
     }
 
     fn apply_mouse_event(&mut self, mouse_event: MouseEvent) {
+        if let Some(OverlayState::AskUserQuestion(state)) = self.overlay.as_mut() {
+            if rect_contains(state.panel_area, mouse_event.column, mouse_event.row) {
+                match mouse_event.kind {
+                    MouseEventKind::ScrollUp => {
+                        state.panel_scroll = state.panel_scroll.saturating_add(3);
+                    }
+                    MouseEventKind::ScrollDown => {
+                        state.panel_scroll = state.panel_scroll.saturating_sub(3);
+                    }
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        state.focus_from_mouse_row(mouse_event.row);
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         if matches!(self.overlay, Some(OverlayState::PermissionRequest(_))) {
             let permission_area = match &self.overlay {
                 Some(OverlayState::PermissionRequest(permission)) => permission.viewport.area,

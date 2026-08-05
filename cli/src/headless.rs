@@ -1,16 +1,21 @@
-use std::io::{self, Write};
-use std::sync::{Arc, Mutex, mpsc as std_mpsc};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+    sync::{Arc, Mutex, mpsc as std_mpsc},
+};
 
 use anyhow::Result;
 use orbcode_app_server::AppServer;
 use orbcode_app_server_client::{AppClient, PermissionDecision, PermissionDecisionWire};
 use orbcode_config::PermissionMode;
 use orbcode_protocol::{
+    AskUserCancellationReason, AskUserQuestionSpec, AskUserResponseOutcome,
     AsyncCancellationOutcome, ControlRequest, ControlRequestEnvelope, SUPPORTED_CONTROL_SUBTYPES,
     SdkAsyncCancellationResponse, SdkContextCategoriesResponse, SdkContextUsageResponse,
     SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse, SdkModelChangeResponse,
     SdkSeedReadStateResponse, SdkSessionStateResponse, SdkThinkingBudgetResponse,
     StreamErrorCategory, StreamEvent, TokenUsage, ToolPermissionResult, ToolUseCompletionKind,
+    validate_ask_user_outcome,
 };
 use serde::Serialize;
 
@@ -168,6 +173,9 @@ pub(crate) async fn run_headless_prompt(
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::Interrupted => {
                                     "was interrupted"
+                                }
+                                orbcode_protocol::ToolUseCompletionKind::Cancelled => {
+                                    "was cancelled"
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::UnknownTool => {
                                     "was rejected as unknown"
@@ -578,6 +586,9 @@ pub(crate) async fn run_background_worker(
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::Interrupted => {
                                     "was interrupted"
+                                }
+                                orbcode_protocol::ToolUseCompletionKind::Cancelled => {
+                                    "was cancelled"
                                 }
                                 orbcode_protocol::ToolUseCompletionKind::UnknownTool => {
                                     "was rejected as unknown"
@@ -1092,6 +1103,7 @@ impl HeadlessRun {
         let mut pending_prompts: std::collections::VecDeque<String> =
             std::collections::VecDeque::new();
         let mut pending_permissions = std::collections::HashMap::<String, String>::new();
+        let mut pending_asks = HashMap::<String, Vec<AskUserQuestionSpec>>::new();
         let mut server_request_rx =
             client.take_server_request_receiver().await.ok_or_else(|| {
                 anyhow::anyhow!("headless control server-request receiver unavailable")
@@ -1118,6 +1130,7 @@ impl HeadlessRun {
                                         client,
                                         session_id,
                                         &mut pending_permissions,
+                                        &mut pending_asks,
                                         true,
                                     )
                                     .await?,
@@ -1132,6 +1145,7 @@ impl HeadlessRun {
                                         client,
                                         session_id,
                                         &mut pending_permissions,
+                                        &mut pending_asks,
                                     )
                                     .await?
                                 {
@@ -1163,6 +1177,7 @@ impl HeadlessRun {
                 &mut control_rx,
                 &mut pending_prompts,
                 &mut pending_permissions,
+                &mut pending_asks,
                 &mut stdin_open,
                 &mut server_request_rx,
                 &mut server_requests_open,
@@ -1180,6 +1195,7 @@ impl HeadlessRun {
 
         self.deny_pending_permissions(client, &mut pending_permissions)
             .await;
+        cancel_pending_asks(client, &mut pending_asks).await;
         result
     }
 
@@ -1189,6 +1205,7 @@ impl HeadlessRun {
         client: &AppClient,
         session_id: &str,
         pending_permissions: &mut std::collections::HashMap<String, String>,
+        pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
     ) -> Result<ControlAction> {
         match frame {
             ControlFrame::UserPrompt(text) => Ok(ControlAction::Prompt(text)),
@@ -1345,6 +1362,38 @@ impl HeadlessRun {
                 }
                 Ok(ControlAction::None)
             }
+            ControlFrame::AskUserResponse {
+                request_id,
+                outcome,
+            } => {
+                let Some(questions) = pending_asks.get(&request_id) else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "unknown, stale, or duplicate server request id",
+                    ))?;
+                    return Ok(ControlAction::None);
+                };
+                if let Err(error) = validate_ask_user_outcome(questions, &outcome) {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        &format!("invalid AskUserQuestion response: {error}"),
+                    ))?;
+                    return Ok(ControlAction::None);
+                }
+                if client
+                    .respond_to_ask_user_question_outcome(&request_id, outcome)
+                    .await
+                {
+                    pending_asks.remove(&request_id);
+                    self.emit_control_response(control_response_success(&request_id))?;
+                } else {
+                    self.emit_control_response(control_response_error(
+                        &request_id,
+                        "unknown, stale, or duplicate server request id",
+                    ))?;
+                }
+                Ok(ControlAction::None)
+            }
             ControlFrame::ServerResponse { request_id, result } => {
                 let Some(expected_tool_use_id) = pending_permissions.get(&request_id).cloned()
                 else {
@@ -1433,6 +1482,7 @@ impl HeadlessRun {
         control_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ControlFrame>,
         pending_prompts: &mut std::collections::VecDeque<String>,
         pending_permissions: &mut std::collections::HashMap<String, String>,
+        pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
         stdin_open: &mut bool,
         server_request_rx: &mut tokio::sync::mpsc::Receiver<
             orbcode_app_server_client::ServerRequestEnvelope,
@@ -1460,6 +1510,7 @@ impl HeadlessRun {
                                 client,
                                 session_id,
                                 pending_permissions,
+                                pending_asks,
                                 *stdin_open,
                             )
                             .await?,
@@ -1476,6 +1527,7 @@ impl HeadlessRun {
                                     client,
                                     session_id,
                                     pending_permissions,
+                                    pending_asks,
                                 )
                                 .await?
                             {
@@ -1485,20 +1537,23 @@ impl HeadlessRun {
                         TurnInput::Control(None) => {
                             *stdin_open = false;
                             self.deny_pending_permissions(client, pending_permissions).await;
+                            cancel_pending_asks(client, pending_asks).await;
                         }
                         TurnInput::Stream(Some(event)) => {
                             prefer_control = true;
                             match self.record_event(&event, &mut assistant_text, turn_started)? {
                                 EventOutcome::Terminal => {
                                     self.deny_pending_permissions(client, pending_permissions).await;
+                                    cancel_pending_asks(client, pending_asks).await;
                                     break;
                                 }
                                 EventOutcome::Continue | EventOutcome::Permission(_) => {}
                             }
                         }
                         TurnInput::Stream(None) => {
-                                self.deny_pending_permissions(client, pending_permissions).await;
-                                break;
+                            self.deny_pending_permissions(client, pending_permissions).await;
+                            cancel_pending_asks(client, pending_asks).await;
+                            break;
                         }
                     }
                 }
@@ -1515,9 +1570,60 @@ impl HeadlessRun {
         client: &AppClient,
         session_id: &str,
         pending_permissions: &mut std::collections::HashMap<String, String>,
+        pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
         stdin_open: bool,
     ) -> Result<()> {
-        if envelope.method != "permission/request" {
+        if envelope.method == orbcode_app_server_client::method::SERVER_REQUEST_ASK_USER {
+            let request: orbcode_app_server_client::AskUserQuestionRequest =
+                match serde_json::from_value(envelope.params) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        client
+                            .reject_server_request(
+                                envelope.id,
+                                format!("invalid AskUserQuestion server request: {error}"),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+            let questions = match request.canonical_questions() {
+                Ok(questions) => questions,
+                Err(error) => {
+                    client
+                        .reject_server_request(
+                            envelope.id,
+                            format!("invalid AskUserQuestion server request: {error}"),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+            };
+            if request.session_id != session_id {
+                client
+                    .reject_server_request(
+                        envelope.id,
+                        "AskUserQuestion session does not match the active headless session",
+                    )
+                    .await?;
+                return Ok(());
+            }
+            if !stdin_open {
+                let _ = client
+                    .respond_to_ask_user_question_outcome(
+                        &request.request_id,
+                        AskUserResponseOutcome::Cancelled {
+                            reason: AskUserCancellationReason::Disconnect,
+                        },
+                    )
+                    .await;
+                return Ok(());
+            }
+            pending_asks.insert(request.request_id, questions);
+            return Ok(());
+        }
+
+        if envelope.method != orbcode_app_server_client::method::SERVER_REQUEST_PERMISSION {
             client
                 .reject_server_request(
                     envelope.id,
@@ -1812,6 +1918,24 @@ impl HeadlessRun {
             &errors_vec,
         );
         (outcome, result_payload)
+    }
+}
+
+async fn cancel_pending_asks(
+    client: &AppClient,
+    pending_asks: &mut HashMap<String, Vec<AskUserQuestionSpec>>,
+) {
+    let request_ids: Vec<String> = pending_asks.keys().cloned().collect();
+    pending_asks.clear();
+    for request_id in request_ids {
+        let _ = client
+            .respond_to_ask_user_question_outcome(
+                &request_id,
+                AskUserResponseOutcome::Cancelled {
+                    reason: AskUserCancellationReason::Disconnect,
+                },
+            )
+            .await;
     }
 }
 

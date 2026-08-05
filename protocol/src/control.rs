@@ -31,6 +31,17 @@ pub const CONTROL_REQUEST_TYPE: &str = "control_request";
 /// (`{"type":"control_response",...}`).
 pub const CONTROL_RESPONSE_TYPE: &str = "control_response";
 
+/// Wire discriminator for an inbound response to a server-initiated request.
+pub const SERVER_RESPONSE_TYPE: &str = "server_response";
+
+/// Generic SDK response ingress. The request-specific payload stays opaque at
+/// this boundary and is decoded by the owner of the server request.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ServerResponseInputEnvelope {
+    pub request_id: String,
+    pub response: Value,
+}
+
 /// SDK controls with intentionally supported behavior in duplex stream-json.
 ///
 /// This is the canonical support inventory consumed by initialization responses
@@ -415,6 +426,16 @@ mod tests {
                 mode: "bypassPermissions".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn server_response_input_keeps_typed_payload_opaque() {
+        let envelope: ServerResponseInputEnvelope = serde_json::from_str(
+            r#"{"type":"server_response","request_id":"ask-1","response":{"outcome":"clarify"}}"#,
+        )
+        .unwrap();
+        assert_eq!(envelope.request_id, "ask-1");
+        assert_eq!(envelope.response["outcome"], "clarify");
     }
 
     #[test]

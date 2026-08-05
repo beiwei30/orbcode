@@ -30,8 +30,8 @@ pub use extensions::{
     HookProvenance, HookValidationStatus, SkillDefinition, SkillSource,
 };
 pub use initialize::{
-    ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, ServerCapabilities,
-    ServerInfo,
+    ClientCapabilities, ClientInfo, InitializeParams, InitializeResult,
+    InteractiveQuestionsCapability, ServerCapabilities, ServerInfo,
 };
 pub use mcp::*;
 pub use notification::StreamEventNotification;
@@ -60,10 +60,12 @@ pub use settings::{
 
 // Re-export protocol types used by consumers of this crate.
 pub use orbcode_protocol::{
-    BillingBasis, CompactDecision, CompactSessionResult, ContextDiagnosticsReport,
-    ContextTokenSource, ContextUsageOverview, CostOverview, McpTrustApprovalRequest,
-    PermissionRequest, ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent,
-    TurnContext, UsageOverview, WorkflowCommand, WorkflowSource,
+    AskUserAnswerValue, AskUserCancellationReason, AskUserOption, AskUserQuestionSpec,
+    AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError, BillingBasis,
+    CompactDecision, CompactSessionResult, ContextDiagnosticsReport, ContextTokenSource,
+    ContextUsageOverview, CostOverview, McpTrustApprovalRequest, PermissionRequest,
+    ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent, TurnContext,
+    UsageOverview, WorkflowCommand, WorkflowSource,
 };
 
 pub fn format_cost(cost: f64) -> String {

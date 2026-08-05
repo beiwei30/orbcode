@@ -127,7 +127,7 @@ impl AcpSdkState {
 
 pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()> {
     let client = Arc::new(
-        AppClient::new(app_server)
+        AppClient::new_option_only(app_server)
             .await
             .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
     );

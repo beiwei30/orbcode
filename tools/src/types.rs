@@ -7,7 +7,9 @@ use std::sync::{
 
 use async_trait::async_trait;
 use orbcode_mcp::McpRegistry;
-use orbcode_protocol::{ProviderToolDefinition, SandboxMode};
+use orbcode_protocol::{
+    AskUserQuestionSpec, AskUserResponseOutcome, ProviderToolDefinition, SandboxMode,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -22,17 +24,15 @@ use crate::skills::SkillDefinition;
 /// on `ToolContext::ask_user_tx` and awaits the oneshot for the answer.
 pub struct AskUserRequest {
     pub request_id: String,
-    pub question: String,
-    pub options: Vec<String>,
-    pub response_tx: oneshot::Sender<Option<String>>,
+    pub questions: Vec<AskUserQuestionSpec>,
+    pub response_tx: oneshot::Sender<AskUserResponseOutcome>,
 }
 
 impl fmt::Debug for AskUserRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AskUserRequest")
             .field("request_id", &self.request_id)
-            .field("question", &self.question)
-            .field("options", &self.options)
+            .field("questions", &self.questions)
             .field("response_tx", &"<oneshot sender>")
             .finish()
     }
@@ -61,6 +61,12 @@ pub struct ToolSpec {
     pub requires_tools_permission: bool,
     pub requires_network_permission: bool,
     pub provider_hidden: bool,
+}
+
+/// Per-provider-request visibility for client-owned interaction tools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InteractionToolVisibility {
+    pub ask_user_question: bool,
 }
 
 type CwdChangeCallback = Arc<dyn Fn(&Path) + Send + Sync>;
@@ -248,6 +254,8 @@ pub enum ToolError {
     Interrupted,
     #[error("tool interrupted")]
     InterruptedWithMetadata { metadata: Value },
+    #[error("tool interaction cancelled")]
+    CancelledWithMetadata { metadata: Value },
     #[error("{0}")]
     Mcp(String),
     #[error("plugin tool error: {0}")]
@@ -285,10 +293,15 @@ impl ToolError {
         )
     }
 
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, ToolError::CancelledWithMetadata { .. })
+    }
+
     pub fn metadata(&self) -> Option<Value> {
         match self {
             ToolError::ExecutionFailedWithMetadata { metadata, .. }
-            | ToolError::InterruptedWithMetadata { metadata } => Some(metadata.clone()),
+            | ToolError::InterruptedWithMetadata { metadata }
+            | ToolError::CancelledWithMetadata { metadata } => Some(metadata.clone()),
             _ => None,
         }
     }

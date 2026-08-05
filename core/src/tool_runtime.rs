@@ -5,7 +5,9 @@ use std::sync::{
 
 use async_trait::async_trait;
 use orbcode_config::mcp_permission_target;
-use orbcode_protocol::{StreamEvent, ToolUseCompletionKind};
+use orbcode_protocol::{
+    AskUserCancellationReason, AskUserResponseOutcome, StreamEvent, ToolUseCompletionKind,
+};
 use orbcode_tools::{
     SkillDefinition, ToolContext, ToolOutcome, ToolProgressReporter, ToolRegistry, ToolSpec,
 };
@@ -15,6 +17,7 @@ use crate::{
     CoreError,
     agent_loop::tool_round::ToolRoundReadyItem,
     hooks::{HookPermissionDecision, PreToolPhaseOutcome},
+    interaction_runtime::{InteractionRuntime, PendingInteraction},
     permissions::PermissionContext,
     tool_flow::{
         BufferedToolResult, BufferedToolUseCompletion, McpTrustResolutionOutcome,
@@ -117,13 +120,12 @@ pub(crate) trait ToolRuntimeHost {
 
     async fn skill_definitions(&self, session_id: &str) -> Vec<SkillDefinition>;
 
-    fn ask_user_pending(
+    fn ask_user_pending(&self) -> InteractionRuntime;
+
+    async fn active_interaction_context(
         &self,
-    ) -> Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>,
-        >,
-    >;
+        session_id: &str,
+    ) -> Option<(uuid::Uuid, crate::TurnInteractionContext)>;
 
     async fn tool_success_result_details(
         &self,
@@ -534,7 +536,9 @@ where
             context.skill_definitions = Some(self.host.skill_definitions(session_id).await);
         }
 
-        let _ask_forward_handle = self.attach_ask_user_channel(session_id, &mut context, tx);
+        let _ask_forward_handle = self
+            .attach_ask_user_channel(session_id, tool_use_id, &mut context, tx)
+            .await;
 
         match self.tools.invoke(tool_name, tool_input, &context).await {
             Ok(outcome) => {
@@ -582,7 +586,10 @@ where
                         tx,
                     )
                     .await?;
-                if details.completion_kind == ToolUseCompletionKind::Interrupted {
+                if matches!(
+                    details.completion_kind,
+                    ToolUseCompletionKind::Interrupted | ToolUseCompletionKind::Cancelled
+                ) {
                     self.host.emit_tool_use_completed(
                         session_id,
                         tool_use_id,
@@ -680,7 +687,9 @@ where
         if tool_name.eq_ignore_ascii_case("Skill") {
             context.skill_definitions = Some(self.host.skill_definitions(session_id).await);
         }
-        let _ask_forward_handle = self.attach_ask_user_channel(session_id, &mut context, tx);
+        let _ask_forward_handle = self
+            .attach_ask_user_channel(session_id, &tool_use_id, &mut context, tx)
+            .await;
 
         let result = match self.tools.invoke(&tool_name, &tool_input, &context).await {
             Ok(outcome) => {
@@ -710,46 +719,105 @@ where
             }
         };
         let outcome = match result.completion_kind {
-            ToolUseCompletionKind::Interrupted => ToolUseOutcome::Cancelled,
+            ToolUseCompletionKind::Interrupted | ToolUseCompletionKind::Cancelled => {
+                ToolUseOutcome::Cancelled
+            }
             _ => ToolUseOutcome::Continue,
         };
         Ok(BufferedToolUseCompletion { outcome, result })
     }
 
-    fn attach_ask_user_channel(
+    async fn attach_ask_user_channel(
         &self,
         session_id: &str,
+        tool_use_id: &str,
         context: &mut ToolContext,
         tx: &mpsc::UnboundedSender<StreamEvent>,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let (turn_id, interaction) = self.host.active_interaction_context(session_id).await?;
+        if !interaction.capabilities.any_supported() {
+            return None;
+        }
         let (ask_tx, mut ask_rx) = mpsc::unbounded_channel::<orbcode_tools::AskUserRequest>();
         context.ask_user_tx = Some(ask_tx);
 
         let tx_clone = tx.clone();
         let session_id = session_id.to_string();
-        let ask_user_pending = self.host.ask_user_pending();
-        tokio::spawn(async move {
+        let tool_use_id = tool_use_id.to_string();
+        let turn_id = turn_id.to_string();
+        let owner_id = interaction.owner_id;
+        let capability_snapshot = interaction.capabilities;
+        let interaction_runtime = self.host.ask_user_pending();
+        Some(tokio::spawn(async move {
             while let Some(req) = ask_rx.recv().await {
                 let request_id = req.request_id.clone();
-                let question = req.question.clone();
-                let options = req.options.clone();
-                ask_user_pending
-                    .lock()
-                    .unwrap()
-                    .insert(request_id.clone(), req.response_tx);
+                let questions = req.questions.clone();
+                if !capability_snapshot.can_complete(&questions) {
+                    let _ = req.response_tx.send(AskUserResponseOutcome::Cancelled {
+                        reason: AskUserCancellationReason::ClientClosed,
+                    });
+                    continue;
+                }
+                let legacy = legacy_stream_fields(&questions);
+                let deadline = chrono::Utc::now() + chrono::Duration::seconds(300);
+                if interaction_runtime
+                    .register(
+                        request_id.clone(),
+                        PendingInteraction {
+                            session_id: session_id.clone(),
+                            turn_id: turn_id.clone(),
+                            tool_use_id: tool_use_id.clone(),
+                            owner_id: owner_id.clone(),
+                            capability_snapshot: capability_snapshot.clone(),
+                            deadline: Some(deadline.to_rfc3339()),
+                            questions: questions.clone(),
+                            response_tx: req.response_tx,
+                        },
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
                 if tx_clone
                     .send(StreamEvent::AskUserQuestionRequested {
                         session_id: session_id.clone(),
+                        turn_id: Some(turn_id.clone()),
+                        tool_use_id: tool_use_id.clone(),
                         request_id: request_id.clone(),
-                        question,
-                        options,
+                        deadline: Some(deadline.to_rfc3339()),
+                        questions,
+                        question: legacy.0,
+                        options: legacy.1,
                     })
                     .is_err()
-                    && let Some(response_tx) = ask_user_pending.lock().unwrap().remove(&request_id)
                 {
-                    let _ = response_tx.send(None);
+                    interaction_runtime
+                        .cancel_request(&request_id, AskUserCancellationReason::DeliveryFailed);
+                    continue;
                 }
+                let timeout_runtime = interaction_runtime.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    timeout_runtime.cancel_request(&request_id, AskUserCancellationReason::Timeout);
+                });
             }
-        })
+        }))
+    }
+}
+
+fn legacy_stream_fields(
+    questions: &[orbcode_protocol::AskUserQuestionSpec],
+) -> (String, Vec<String>) {
+    if questions.len() == 1 && !questions[0].multi_select {
+        (
+            questions[0].question.clone(),
+            questions[0]
+                .options
+                .iter()
+                .map(|option| option.label.clone())
+                .collect(),
+        )
+    } else {
+        (String::new(), Vec::new())
     }
 }

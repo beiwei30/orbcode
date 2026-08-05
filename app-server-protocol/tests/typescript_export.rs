@@ -160,7 +160,7 @@ fn emit_named_type(name: &str, schema: &Value) -> String {
         writeln!(out, "/** {desc} */").expect("writing to String cannot fail");
     }
     let body = json_schema_to_ts(schema, 0);
-    if is_pure_object(schema) && !body.contains('|') {
+    if is_pure_object(schema) && body.starts_with('{') && !body.contains('|') {
         writeln!(out, "export interface {name} {body}").expect("writing to String cannot fail");
     } else {
         writeln!(out, "export type {name} = {body};").expect("writing to String cannot fail");
@@ -266,6 +266,18 @@ fn generate_protocol_ts() -> String {
         (
             "AskUserQuestionResponse",
             schema_for::<orbcode_app_server_protocol::AskUserQuestionResponse>(),
+        ),
+        (
+            "AskUserQuestionSpec",
+            schema_for::<orbcode_app_server_protocol::AskUserQuestionSpec>(),
+        ),
+        (
+            "AskUserResponseOutcome",
+            schema_for::<orbcode_app_server_protocol::AskUserResponseOutcome>(),
+        ),
+        (
+            "InteractiveQuestionsCapability",
+            schema_for::<orbcode_app_server_protocol::InteractiveQuestionsCapability>(),
         ),
     ];
 
@@ -487,4 +499,14 @@ fn typescript_protocol_ts() {
             client_copy_path.display()
         );
     }
+}
+
+#[test]
+fn empty_object_schema_emits_type_alias() {
+    let schema = serde_json::json!({ "type": "object" });
+
+    assert_eq!(
+        emit_named_type("EmptyParams", &schema),
+        "export type EmptyParams = Record<string, unknown>;\n"
+    );
 }

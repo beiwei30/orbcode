@@ -3084,6 +3084,12 @@
           },
           "provider_hidden": {
             "type": "boolean"
+          },
+          "unavailable_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

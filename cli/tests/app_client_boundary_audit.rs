@@ -82,8 +82,8 @@ fn headless_stream_json_and_acp_have_no_raw_protocol_requests() {
 fn acp_keeps_app_server_only_at_client_construction() {
     let source = cli_source("acp_sdk/mod.rs");
     let construction = source
-        .find("AppClient::new(app_server)")
-        .expect("ACP constructs its AppClient from AppServer");
+        .find("AppClient::new_option_only(app_server)")
+        .expect("ACP constructs its option-only AppClient from AppServer");
     assert!(
         !source[construction..].contains("app_server."),
         "ACP must not retain a parallel AppServer business path"

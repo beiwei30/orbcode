@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::background_task_view::BackgroundTaskView;
+use crate::interaction::{AskUserQuestionSpec, AskUserResponseOutcome};
 use crate::permission::{
     McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,
 };
@@ -313,22 +314,32 @@ pub enum StreamEvent {
         max_budget_usd: f64,
         pricing_known: bool,
     },
-    /// A tool (typically `AskUserQuestion`) needs the client to prompt the user
-    /// for input. The client should display `question` (and optional `options`)
-    /// and resolve via `AskUserQuestionResolved` when the user answers or the
-    /// request times out.
+    /// A tool needs the active capable client to complete an interactive
+    /// question request. Legacy single-question fields remain additive during
+    /// the protocol-1.0 compatibility window.
     AskUserQuestionRequested {
         #[serde(default, skip_serializing_if = "String::is_empty")]
         session_id: SessionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        tool_use_id: String,
         request_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deadline: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        questions: Vec<AskUserQuestionSpec>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         question: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         options: Vec<String>,
     },
-    /// Resolution of a prior `AskUserQuestionRequested`. `answer` is `None`
-    /// when the request was cancelled or timed out.
+    /// Resolution of a prior `AskUserQuestionRequested`.
     AskUserQuestionResolved {
         request_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<AskUserResponseOutcome>,
+        /// Legacy protocol-1.0 answer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer: Option<String>,
     },
@@ -595,11 +606,19 @@ impl StreamEvent {
                 kind: "ask_user_question_requested".to_string(),
                 content: Some(format!("{request_id}:{question}")),
             },
-            Self::AskUserQuestionResolved { request_id, answer } => NormalizedEvent {
+            Self::AskUserQuestionResolved {
+                request_id,
+                outcome,
+                answer,
+            } => NormalizedEvent {
                 kind: "ask_user_question_resolved".to_string(),
                 content: Some(format!(
                     "{request_id}:{}",
-                    answer.as_deref().unwrap_or("<cancelled>")
+                    outcome
+                        .as_ref()
+                        .map(|outcome| format!("{outcome:?}"))
+                        .or_else(|| answer.clone())
+                        .unwrap_or_else(|| "<cancelled>".to_string())
                 )),
             },
             Self::LocalTaskProgress {
@@ -814,7 +833,11 @@ mod tests {
     fn ask_user_question_requested_is_not_terminal() {
         let event = StreamEvent::AskUserQuestionRequested {
             session_id: "s1".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "auq-1".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Pick a colour".into(),
             options: vec!["red".into(), "blue".into()],
         };
@@ -825,6 +848,7 @@ mod tests {
     fn ask_user_question_resolved_is_not_terminal() {
         let event = StreamEvent::AskUserQuestionResolved {
             request_id: "auq-1".into(),
+            outcome: None,
             answer: Some("red".into()),
         };
         assert!(!event.is_terminal());
@@ -834,6 +858,7 @@ mod tests {
     fn ask_user_question_resolved_cancelled_is_not_terminal() {
         let event = StreamEvent::AskUserQuestionResolved {
             request_id: "auq-2".into(),
+            outcome: None,
             answer: None,
         };
         assert!(!event.is_terminal());
@@ -847,7 +872,11 @@ mod tests {
     fn ask_user_question_requested_serde_round_trip() {
         let event = StreamEvent::AskUserQuestionRequested {
             session_id: "s1".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "auq-42".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Which environment?".into(),
             options: vec!["staging".into(), "production".into()],
         };
@@ -870,7 +899,11 @@ mod tests {
     fn ask_user_question_requested_empty_options_serde_round_trip() {
         let event = StreamEvent::AskUserQuestionRequested {
             session_id: "s1".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "auq-43".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Free-form answer?".into(),
             options: Vec::new(),
         };
@@ -886,6 +919,7 @@ mod tests {
     fn ask_user_question_resolved_serde_round_trip() {
         let event = StreamEvent::AskUserQuestionResolved {
             request_id: "auq-42".into(),
+            outcome: None,
             answer: Some("staging".into()),
         };
         let json = serde_json::to_string(&event).unwrap();
@@ -901,6 +935,7 @@ mod tests {
     fn ask_user_question_resolved_cancelled_serde_round_trip() {
         let event = StreamEvent::AskUserQuestionResolved {
             request_id: "auq-44".into(),
+            outcome: None,
             answer: None,
         };
         let json = serde_json::to_string(&event).unwrap();

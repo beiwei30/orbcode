@@ -32,8 +32,9 @@ use orbcode_protocol::PermissionResolutionKind;
 #[cfg(test)]
 use orbcode_protocol::TurnCancellationKind;
 use orbcode_protocol::{
-    MessageRole, ProviderId, SessionRecord, SessionSummary, StreamEvent, ToolResultContent,
-    TranscriptBlock, TranscriptMessage, TurnContext, visible_content_from_blocks,
+    AskUserCancellationReason, AskUserResponseOutcome, MessageRole, ProviderId, SessionRecord,
+    SessionSummary, StreamEvent, ToolResultContent, TranscriptBlock, TranscriptMessage,
+    TurnContext, visible_content_from_blocks,
 };
 #[cfg(test)]
 use orbcode_session_store::PERSISTED_OUTPUT_TAG;
@@ -66,10 +67,11 @@ use crate::tool_flow::{INTERRUPTED_TOOL_RESULT, ToolUseOutcome};
 #[cfg(test)]
 use crate::turn_loop::TurnLoopOutcome;
 use crate::{
-    BillingBasis, CoreError,
+    BillingBasis, CoreError, TurnInteractionContext,
     agent_loop::messages::repair_missing_tool_results,
     context::build_turn_context_with_memory_home,
     context_estimation::estimate_category_breakdown,
+    interaction_runtime::{InteractionResolveError, InteractionRuntime, PendingInteraction},
     overview::{
         ContextDiagnosticsReport, ContextTokenSource, ContextUsageOverview, CostOverview,
         StatsOverview, UsageOverview, build_context_diagnostics_report,
@@ -257,9 +259,8 @@ pub struct SessionManager {
     count_tokens_cache: Arc<CountTokensCache>,
     live_cost: LiveCostStore,
     local_shell_tasks: LocalShellTaskRegistry,
+    interaction_runtime: InteractionRuntime,
     read_state: Arc<FileReadState>,
-    ask_user_pending:
-        Arc<std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>>>,
     /// Per-session mutex serializing transcript appends. `append_message` reads
     /// the current last message to compute `parent_uuid` and then writes; if two
     /// turn drivers overlap (e.g. an interrupted turn still draining while the
@@ -441,37 +442,86 @@ impl SessionManager {
             count_tokens_cache: Arc::new(CountTokensCache::new()),
             live_cost: LiveCostStore::default(),
             local_shell_tasks,
+            interaction_runtime: InteractionRuntime::default(),
             read_state,
-            ask_user_pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
             transcript_append_locks: TranscriptAppendLocks::default(),
         })
     }
 
     /// Resolve a pending AskUserQuestion request. Called by the protocol layer
     /// (via AppServer) when the client responds to a server-request.
-    pub fn resolve_ask_user_question(&self, request_id: &str, answer: Option<String>) {
-        if let Some(tx) = self.ask_user_pending.lock().unwrap().remove(request_id) {
-            let _ = tx.send(answer);
-        }
+    pub fn resolve_ask_user_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        outcome: AskUserResponseOutcome,
+    ) -> Result<(), InteractionResolveError> {
+        self.interaction_runtime
+            .resolve(session_id, request_id, outcome)
     }
 
     /// Cancel specific pending AskUserQuestion requests by request_id,
     /// resolving each with `None`. Used by per-pump cleanup guards so one
     /// pump ending doesn't cancel unrelated sessions' requests.
-    pub fn cancel_pending_ask_user(&self, request_ids: &[String]) {
-        let mut pending = self.ask_user_pending.lock().unwrap();
-        for rid in request_ids {
-            if let Some(tx) = pending.remove(rid) {
-                let _ = tx.send(None);
-            }
+    pub fn cancel_pending_ask_user(
+        &self,
+        request_ids: &[String],
+        reason: AskUserCancellationReason,
+    ) {
+        self.interaction_runtime
+            .cancel_requests(request_ids, reason);
+    }
+
+    pub fn cancel_pending_ask_user_for_owner(
+        &self,
+        owner_id: &str,
+        reason: AskUserCancellationReason,
+    ) {
+        self.interaction_runtime.cancel_owner(owner_id, reason);
+    }
+
+    /// Cancel every active turn and pending interaction owned by a disconnected
+    /// client connection. Ownership is scoped to the turn snapshot, never a
+    /// process-global capability flag.
+    pub async fn disconnect_interaction_owner(&self, owner_id: &str) -> Vec<String> {
+        let sessions = self.active_turns.cancel_owner(owner_id).await;
+        for session_id in &sessions {
+            self.discard_queued_user_commands(session_id).await;
         }
+        self.interaction_runtime
+            .cancel_owner(owner_id, AskUserCancellationReason::Disconnect);
+        sessions
     }
 
     #[doc(hidden)]
-    pub fn ask_user_pending_for_test(
+    pub fn ask_user_pending_len_for_test(&self) -> usize {
+        self.interaction_runtime.len()
+    }
+
+    #[doc(hidden)]
+    pub fn register_pending_ask_user_for_test(
         &self,
-    ) -> Arc<std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>>> {
-        self.ask_user_pending.clone()
+        session_id: &str,
+        request_id: &str,
+        questions: Vec<orbcode_protocol::AskUserQuestionSpec>,
+    ) -> tokio::sync::oneshot::Receiver<AskUserResponseOutcome> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.interaction_runtime
+            .register(
+                request_id.to_string(),
+                PendingInteraction {
+                    session_id: session_id.to_string(),
+                    turn_id: "test-turn".to_string(),
+                    tool_use_id: "test-tool".to_string(),
+                    owner_id: "test-owner".to_string(),
+                    capability_snapshot: crate::InteractiveQuestionCapabilities::full(),
+                    deadline: None,
+                    questions,
+                    response_tx,
+                },
+            )
+            .expect("test interaction request id must be unique");
+        response_rx
     }
 
     /// Shared durable registry that backs Bash subprocess execution. Exposed so
@@ -1689,12 +1739,22 @@ impl SessionManager {
         session_id: &str,
         prompt: impl Into<String>,
     ) -> Result<mpsc::UnboundedReceiver<StreamEvent>, CoreError> {
+        self.submit_turn_with_interaction(session_id, prompt, TurnInteractionContext::disabled())
+            .await
+    }
+
+    pub async fn submit_turn_with_interaction(
+        &self,
+        session_id: &str,
+        prompt: impl Into<String>,
+        interaction: TurnInteractionContext,
+    ) -> Result<mpsc::UnboundedReceiver<StreamEvent>, CoreError> {
         let prompt = prompt.into();
         let turn_id = Uuid::new_v4();
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         self.active_turns
-            .insert(session_id, turn_id, cancel_flag.clone())
+            .insert(session_id, turn_id, cancel_flag.clone(), interaction)
             .await?;
 
         // The active-turn entry is normally cleared by the detached driver task
@@ -1736,6 +1796,10 @@ impl SessionManager {
             manager
                 .run_turn_loop(&session_id, turn_id, &prompt, &config, cancel_flag, &tx)
                 .await;
+            manager.interaction_runtime.cancel_turn(
+                &turn_id.to_string(),
+                AskUserCancellationReason::SessionClosed,
+            );
             manager
                 .active_turns
                 .clear_if_matching(&session_id, turn_id)
@@ -1815,6 +1879,8 @@ impl SessionManager {
         let cancelled = self.active_turns.cancel(session_id).await;
         if cancelled {
             self.discard_queued_user_commands(session_id).await;
+            self.interaction_runtime
+                .cancel_session(session_id, AskUserCancellationReason::Interrupt);
         }
         cancelled
     }
@@ -1823,6 +1889,8 @@ impl SessionManager {
         let interrupted = self.active_turns.interrupt(session_id).await;
         if interrupted {
             self.discard_queued_user_commands(session_id).await;
+            self.interaction_runtime
+                .cancel_session(session_id, AskUserCancellationReason::Interrupt);
         }
         interrupted
     }

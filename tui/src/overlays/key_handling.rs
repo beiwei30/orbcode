@@ -351,6 +351,22 @@ impl TuiState {
                         }
                     }
                 }
+                OverlayState::AskUserQuestion(state) => {
+                    match apply_ask_user_question_key(state, &key_event) {
+                        AskUserQuestionKeyAction::None => {}
+                        AskUserQuestionKeyAction::Respond {
+                            request_id,
+                            outcome,
+                            interrupt_turn,
+                        } => {
+                            action = OverlayAction::AskUserQuestion {
+                                request_id,
+                                outcome,
+                                interrupt_turn,
+                            };
+                        }
+                    }
+                }
                 OverlayState::BackgroundJobs(state) => {
                     match apply_background_jobs_key(state, &key_event) {
                         BackgroundJobsOverlayAction::None => {}
@@ -623,6 +639,34 @@ impl TuiState {
                     }
                 } else {
                     self.set_status_line("Permission request expired.");
+                    self.overlay = None;
+                }
+                Ok(true)
+            }
+            OverlayAction::AskUserQuestion {
+                request_id,
+                outcome,
+                interrupt_turn,
+            } => {
+                if app_server
+                    .respond_to_ask_user_question_outcome(&request_id, outcome)
+                    .await
+                {
+                    let next = match self.overlay.as_mut() {
+                        Some(OverlayState::AskUserQuestion(state)) => {
+                            state.take_next_queued().map(OverlayState::AskUserQuestion)
+                        }
+                        _ => None,
+                    };
+                    self.overlay = next;
+                    if interrupt_turn {
+                        let _ = app_server.interrupt_turn(&self.session_id).await;
+                        self.set_status_line("Question cancelled; interrupting turn.");
+                    } else {
+                        self.set_status_line("Question response sent.");
+                    }
+                } else {
+                    self.set_status_line("Question request expired.");
                     self.overlay = None;
                 }
                 Ok(true)

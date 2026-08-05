@@ -34,8 +34,10 @@ impl TuiState {
 
         let input_inner_width = area.width.saturating_sub(3).max(1) as usize;
         let request_panel_width = area.width.max(1) as usize;
-        let permission_overlay_open =
-            matches!(self.overlay, Some(OverlayState::PermissionRequest(_)));
+        let permission_overlay_open = matches!(
+            self.overlay,
+            Some(OverlayState::PermissionRequest(_) | OverlayState::AskUserQuestion(_))
+        );
         let cwd = self.cwd.clone();
         let overlay_request_panel =
             overlay_request_panel(self.overlay.as_mut(), &cwd, request_panel_width);

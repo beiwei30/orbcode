@@ -6,14 +6,17 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use orbcode_app_server_protocol::{
-    ClientCapabilities, ClientInfo, ClientMessage, ClientRequestEnvelope, ErrorCode,
-    InitializeParams, McpTrustDecisionWire, McpTrustResponseParams, PermissionDecisionWire,
-    PermissionResponseParams, ProtocolError, RequestId, ResponseResult, SentResult, ServerMessage,
-    ServerNotificationEnvelope, ServerRequestEnvelope, ServerRequestResponse,
-    ServerResponseEnvelope, StreamEventNotification, TurnSubmitParams, TurnSubmitResult, method,
+    AskUserQuestionRequest, AskUserQuestionResponse, ClientCapabilities, ClientInfo, ClientMessage,
+    ClientRequestEnvelope, ErrorCode, InitializeParams, McpTrustDecisionWire,
+    McpTrustResponseParams, PermissionDecisionWire, PermissionResponseParams, ProtocolError,
+    RequestId, ResponseResult, SentResult, ServerMessage, ServerNotificationEnvelope,
+    ServerRequestEnvelope, ServerRequestResponse, ServerResponseEnvelope, StreamEventNotification,
+    TurnSubmitParams, TurnSubmitResult, method,
 };
-use orbcode_core::PermissionDecision;
-use orbcode_protocol::StreamEvent;
+use orbcode_core::{InteractiveQuestionCapabilities, PermissionDecision, TurnInteractionContext};
+use orbcode_protocol::{
+    AskUserCancellationReason, AskUserValidationCode, AskUserValidationError, StreamEvent,
+};
 
 use crate::AppServer;
 use crate::protocol_handler::permissions::wire_to_core;
@@ -124,6 +127,7 @@ pub struct MessageProcessor {
     client_info: Option<ClientInfo>,
     client_capabilities: ClientCapabilities,
     initialized: bool,
+    connection_id: String,
     pending_server_requests: Arc<Mutex<HashMap<RequestId, oneshot::Sender<ResponseResult>>>>,
     active_subscriptions: HashMap<String, JoinHandle<()>>,
     /// Monotonically increasing counter for generating unique server-request
@@ -139,6 +143,7 @@ impl MessageProcessor {
             client_info: None,
             client_capabilities: ClientCapabilities::default(),
             initialized: false,
+            connection_id: uuid::Uuid::new_v4().to_string(),
             pending_server_requests: Arc::new(Mutex::new(HashMap::new())),
             active_subscriptions: HashMap::new(),
             next_server_request_id: 0,
@@ -288,7 +293,31 @@ impl MessageProcessor {
             Err(e) => return ResponseResult::Error(e),
         };
 
-        let rx = match self.app_server.submit_turn(&p.session_id, p.prompt).await {
+        let interactive = self
+            .client_capabilities
+            .interactive_questions
+            .as_ref()
+            .map(|capability| InteractiveQuestionCapabilities {
+                single_select: capability.single_select,
+                multi_select: capability.multi_select,
+                free_text: capability.free_text,
+                previews: capability.previews,
+                annotations: capability.annotations,
+                special_outcomes: capability.special_outcomes,
+            })
+            .unwrap_or_default();
+        let rx = match self
+            .app_server
+            .submit_turn_with_interaction(
+                &p.session_id,
+                p.prompt,
+                TurnInteractionContext {
+                    owner_id: self.connection_id.clone(),
+                    capabilities: interactive,
+                },
+            )
+            .await
+        {
             Ok(rx) => rx,
             Err(e) => return crate::protocol_handler::core_error(e),
         };
@@ -423,6 +452,19 @@ impl Drop for MessageProcessor {
         for (_, handle) in self.active_subscriptions.drain() {
             handle.abort();
         }
+        self.app_server.cancel_pending_ask_user_for_owner(
+            &self.connection_id,
+            AskUserCancellationReason::Disconnect,
+        );
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let app_server = self.app_server.clone();
+            let connection_id = self.connection_id.clone();
+            std::mem::drop(runtime.spawn(async move {
+                app_server
+                    .disconnect_interaction_owner(&connection_id)
+                    .await;
+            }));
+        }
     }
 }
 
@@ -443,7 +485,8 @@ struct PumpAskUserGuard {
 impl Drop for PumpAskUserGuard {
     fn drop(&mut self) {
         if !self.request_ids.is_empty() {
-            self.app_server.cancel_pending_ask_user(&self.request_ids);
+            self.app_server
+                .cancel_pending_ask_user(&self.request_ids, AskUserCancellationReason::Disconnect);
         }
     }
 }
@@ -621,7 +664,11 @@ pub async fn pump_events(
         // the client's response, mirroring the permission flow above.
         if let StreamEvent::AskUserQuestionRequested {
             ref session_id,
+            ref turn_id,
+            ref tool_use_id,
             ref request_id,
+            ref deadline,
+            ref questions,
             ref question,
             ref options,
         } = event
@@ -636,9 +683,14 @@ pub async fn pump_events(
 
             let cleanup_id = server_req_id.clone();
 
-            let ask_params = orbcode_app_server_protocol::AskUserQuestionRequest {
+            let ask_params = AskUserQuestionRequest {
                 session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                tool_use_id: tool_use_id.clone(),
                 request_id: request_id.clone(),
+                deadline: deadline.clone(),
+                validation_error: None,
+                questions: questions.clone(),
                 question: question.clone(),
                 options: options.clone(),
             };
@@ -650,41 +702,120 @@ pub async fn pump_events(
             }));
 
             let app = app_server.clone();
+            let core_session_id = session_id.clone();
             let core_request_id = request_id.clone();
+            let original_request = ask_params.clone();
             let pending_cleanup = Arc::clone(&pending);
             let sink_for_waiter = Arc::clone(&sink);
-            let deadline = tokio::time::Instant::now() + permission_timeout;
+            let subscription_id_for_waiter = subscription_id.clone();
+            let response_deadline = tokio::time::Instant::now() + permission_timeout;
             // Detached waiter; it owns cleanup for the pending ask-user request.
             let _ask_user_waiter_handle = tokio::spawn(async move {
                 let mut rx_oneshot = rx_oneshot;
-                let result = loop {
-                    tokio::select! {
-                        r = &mut rx_oneshot => break Ok(r),
-                        _ = tokio::time::sleep_until(deadline) => break Err(()),
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                            if sink_for_waiter.is_closed() {
-                                break Err(());
+                loop {
+                    let result = loop {
+                        tokio::select! {
+                            r = &mut rx_oneshot => break Ok(r),
+                            _ = tokio::time::sleep_until(response_deadline) => break Err(()),
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                                if sink_for_waiter.is_closed() {
+                                    break Err(());
+                                }
                             }
                         }
-                    }
-                };
+                    };
 
-                pending_cleanup.lock().await.remove(&cleanup_id);
+                    pending_cleanup.lock().await.remove(&cleanup_id);
 
-                let answer = match result {
-                    Ok(Ok(ResponseResult::Success { data: Some(data) })) => {
-                        if let Ok(resp) = serde_json::from_value::<
-                            orbcode_app_server_protocol::AskUserQuestionResponse,
-                        >(data)
-                        {
-                            resp.answer
-                        } else {
-                            None
+                    match result {
+                        Ok(Ok(ResponseResult::Success { data: Some(data) })) => {
+                            let outcome = serde_json::from_value::<AskUserQuestionResponse>(data)
+                                .map_err(|error| AskUserValidationError {
+                                    code: AskUserValidationCode::MalformedResponse,
+                                    message: format!("invalid AskUserQuestion response: {error}"),
+                                })
+                                .and_then(|response| {
+                                    if response.request_id != core_request_id {
+                                        return Err(AskUserValidationError {
+                                            code: AskUserValidationCode::RequestIdMismatch,
+                                            message: format!(
+                                                "response request id `{}` does not match `{}`",
+                                                response.request_id, core_request_id
+                                            ),
+                                        });
+                                    }
+                                    response.canonical_outcome(&original_request)
+                                });
+                            match outcome {
+                                Ok(outcome) => {
+                                    if app
+                                        .resolve_ask_user_question(
+                                            &core_session_id,
+                                            &core_request_id,
+                                            outcome.clone(),
+                                        )
+                                        .is_ok()
+                                    {
+                                        let notification = StreamEventNotification {
+                                            subscription_id: subscription_id_for_waiter.clone(),
+                                            event: StreamEvent::AskUserQuestionResolved {
+                                                request_id: core_request_id.clone(),
+                                                outcome: Some(outcome),
+                                                answer: None,
+                                            },
+                                        };
+                                        sink_for_waiter.send(ServerMessage::Notification(
+                                            ServerNotificationEnvelope {
+                                                method: method::NOTIFICATION_STREAM_EVENT
+                                                    .to_string(),
+                                                params: serde_json::to_value(notification)
+                                                    .unwrap_or_default(),
+                                            },
+                                        ));
+                                    }
+                                    break;
+                                }
+                                Err(validation_error) => {
+                                    let (retry_tx, retry_rx) = oneshot::channel();
+                                    pending_cleanup
+                                        .lock()
+                                        .await
+                                        .insert(cleanup_id.clone(), retry_tx);
+                                    let mut retry_request = original_request.clone();
+                                    retry_request.validation_error = Some(validation_error);
+                                    sink_for_waiter.send(ServerMessage::Request(
+                                        ServerRequestEnvelope {
+                                            id: cleanup_id.clone(),
+                                            method: method::SERVER_REQUEST_ASK_USER.to_string(),
+                                            params: serde_json::to_value(retry_request)
+                                                .unwrap_or_default(),
+                                        },
+                                    ));
+                                    rx_oneshot = retry_rx;
+                                }
+                            }
+                        }
+                        Ok(Ok(_)) | Ok(Err(_)) => {
+                            app.cancel_pending_ask_user(
+                                std::slice::from_ref(&core_request_id),
+                                AskUserCancellationReason::ClientClosed,
+                            );
+                            break;
+                        }
+                        Err(()) => {
+                            let reason = if sink_for_waiter.is_closed() {
+                                AskUserCancellationReason::Disconnect
+                            } else {
+                                AskUserCancellationReason::Timeout
+                            };
+                            app.cancel_pending_ask_user(
+                                std::slice::from_ref(&core_request_id),
+                                reason,
+                            );
+                            break;
                         }
                     }
-                    _ => None,
-                };
-                app.resolve_ask_user_question(&core_request_id, answer);
+                }
             });
         }
 
@@ -2354,23 +2485,23 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn pump_exit_resolves_core_pending_with_none() {
+    async fn ask_user_pump_exit_resolves_core_pending_as_disconnect() {
         let app = test_app("ask-dc").await;
         let (sink, _messages) = TestSink::new();
         let pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<ResponseResult>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        let (core_tx, core_rx) = oneshot::channel::<Option<String>>();
-        app.ask_user_pending_for_test()
-            .lock()
-            .unwrap()
-            .insert("ask-dc-1".to_string(), core_tx);
+        let core_rx = app.register_pending_ask_user_for_test("session-ask", "ask-dc-1", Vec::new());
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<StreamEvent>();
         event_tx
             .send(StreamEvent::AskUserQuestionRequested {
                 session_id: "session-ask".into(),
+                turn_id: Some("test-turn".into()),
+                tool_use_id: "test-tool".into(),
                 request_id: "ask-dc-1".into(),
+                deadline: None,
+                questions: Vec::new(),
                 question: "Will I hang?".into(),
                 options: vec![],
             })
@@ -2397,31 +2528,38 @@ mod tests {
 
         let _ = tokio::time::timeout(Duration::from_secs(5), pump_handle).await;
 
-        let answer = tokio::time::timeout(Duration::from_millis(100), core_rx)
+        let outcome = tokio::time::timeout(Duration::from_millis(100), core_rx)
             .await
             .expect("core oneshot should resolve quickly")
             .expect("core oneshot should not be dropped");
-        assert_eq!(answer, None, "guard should resolve with None on pump exit");
+        assert_eq!(
+            outcome,
+            orbcode_protocol::AskUserResponseOutcome::Cancelled {
+                reason: AskUserCancellationReason::Disconnect
+            },
+            "guard should resolve with disconnect on pump exit"
+        );
     }
 
     #[tokio::test]
-    async fn pump_abort_resolves_core_pending_with_none() {
+    async fn ask_user_pump_abort_resolves_core_pending_as_disconnect() {
         let app = test_app("ask-abort").await;
         let (sink, _messages) = TestSink::new();
         let pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<ResponseResult>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
-        let (core_tx, core_rx) = oneshot::channel::<Option<String>>();
-        app.ask_user_pending_for_test()
-            .lock()
-            .unwrap()
-            .insert("ask-abort-1".to_string(), core_tx);
+        let core_rx =
+            app.register_pending_ask_user_for_test("session-ask", "ask-abort-1", Vec::new());
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<StreamEvent>();
         event_tx
             .send(StreamEvent::AskUserQuestionRequested {
                 session_id: "session-ask".into(),
+                turn_id: Some("test-turn".into()),
+                tool_use_id: "test-tool".into(),
                 request_id: "ask-abort-1".into(),
+                deadline: None,
+                questions: Vec::new(),
                 question: "Will abort cancel me?".into(),
                 options: vec![],
             })
@@ -2451,10 +2589,145 @@ mod tests {
         let _ = pump_handle.await;
         drop(event_tx);
 
-        let answer = tokio::time::timeout(Duration::from_millis(100), core_rx)
+        let outcome = tokio::time::timeout(Duration::from_millis(100), core_rx)
             .await
             .expect("core oneshot should resolve quickly after abort")
             .expect("core oneshot should not be dropped");
-        assert_eq!(answer, None, "guard should resolve with None on pump abort");
+        assert_eq!(
+            outcome,
+            orbcode_protocol::AskUserResponseOutcome::Cancelled {
+                reason: AskUserCancellationReason::Disconnect
+            },
+            "guard should resolve with disconnect on pump abort"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_user_invalid_response_is_typed_retry_and_does_not_consume_core_pending() {
+        use std::collections::BTreeMap;
+
+        use orbcode_protocol::{
+            AskUserAnswerValue, AskUserOption, AskUserQuestionSpec, AskUserResponseOutcome,
+        };
+
+        let app = test_app("ask-invalid-retry").await;
+        let (sink, messages) = TestSink::new();
+        let pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<ResponseResult>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let question = AskUserQuestionSpec {
+            id: "database".into(),
+            question: "Which database?".into(),
+            header: "Database".into(),
+            multi_select: false,
+            options: vec![AskUserOption {
+                id: "postgres".into(),
+                label: "PostgreSQL".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            allow_free_text: false,
+            allow_annotation: false,
+        };
+        let core_rx = app.register_pending_ask_user_for_test(
+            "session-ask",
+            "ask-retry-1",
+            vec![question.clone()],
+        );
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        event_tx
+            .send(StreamEvent::AskUserQuestionRequested {
+                session_id: "session-ask".into(),
+                turn_id: Some("test-turn".into()),
+                tool_use_id: "test-tool".into(),
+                request_id: "ask-retry-1".into(),
+                deadline: None,
+                questions: vec![question],
+                question: "Which database?".into(),
+                options: vec!["PostgreSQL".into()],
+            })
+            .unwrap();
+        let pump_handle = tokio::spawn(pump_events(
+            event_rx,
+            Arc::clone(&sink) as Arc<dyn ServerSink>,
+            Arc::clone(&pending),
+            app.clone(),
+            "ask-sub".into(),
+            0,
+            Duration::from_secs(5),
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let server_request_id = {
+            let messages = messages.lock().await;
+            messages
+                .iter()
+                .find_map(|message| match message {
+                    ServerMessage::Request(request)
+                        if request.method == method::SERVER_REQUEST_ASK_USER =>
+                    {
+                        Some(request.id.clone())
+                    }
+                    _ => None,
+                })
+                .expect("initial server request")
+        };
+        let response = |option_id: &str| AskUserQuestionResponse {
+            request_id: "ask-retry-1".into(),
+            outcome: Some(AskUserResponseOutcome::Answered {
+                answers: BTreeMap::from([(
+                    "database".into(),
+                    AskUserAnswerValue::Selected {
+                        option_id: option_id.into(),
+                    },
+                )]),
+                annotations: BTreeMap::new(),
+            }),
+            answer: None,
+        };
+        pending
+            .lock()
+            .await
+            .remove(&server_request_id)
+            .unwrap()
+            .send(ResponseResult::Success {
+                data: Some(serde_json::to_value(response("unknown")).unwrap()),
+            })
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(app.sessions.ask_user_pending_len_for_test(), 1);
+        let retry = {
+            let messages = messages.lock().await;
+            messages
+                .iter()
+                .rev()
+                .find_map(|message| match message {
+                    ServerMessage::Request(request)
+                        if request.method == method::SERVER_REQUEST_ASK_USER =>
+                    {
+                        Some(request.clone())
+                    }
+                    _ => None,
+                })
+                .expect("retry server request")
+        };
+        assert_eq!(retry.id, server_request_id);
+        assert_eq!(retry.params["validation_error"]["code"], "unknown_option");
+        pending
+            .lock()
+            .await
+            .remove(&server_request_id)
+            .unwrap()
+            .send(ResponseResult::Success {
+                data: Some(serde_json::to_value(response("postgres")).unwrap()),
+            })
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), core_rx)
+                .await
+                .expect("valid retry resolves")
+                .expect("core receiver"),
+            AskUserResponseOutcome::Answered { .. }
+        ));
+        drop(event_tx);
+        pump_handle.abort();
     }
 }

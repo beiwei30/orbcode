@@ -11,6 +11,7 @@ pub enum ToolUseCompletionKind {
     ExecutionFailed,
     PermissionDenied,
     Interrupted,
+    Cancelled,
     UnknownTool,
 }
 
@@ -21,6 +22,7 @@ impl ToolUseCompletionKind {
             Self::ExecutionFailed => "execution_failed",
             Self::PermissionDenied => "permission_denied",
             Self::Interrupted => "interrupted",
+            Self::Cancelled => "cancelled",
             Self::UnknownTool => "unknown_tool",
         }
     }

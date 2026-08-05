@@ -98,6 +98,21 @@ fn contract_server_request_ask_user() {
     assert!(matches!(msg, ServerMessage::Request(ref r) if r.method == "ask_user/request"));
 }
 
+#[test]
+fn contract_canonical_ask_user_request() {
+    let request: AskUserQuestionRequest =
+        assert_roundtrip("ask_user_question_request_canonical.json");
+    assert_eq!(request.canonical_questions().unwrap().len(), 2);
+}
+
+#[test]
+fn contract_canonical_ask_user_response() {
+    let response: AskUserQuestionResponse =
+        assert_roundtrip("ask_user_question_response_canonical.json");
+    assert!(response.outcome.is_some());
+    assert!(response.answer.is_none());
+}
+
 // ---------------------------------------------------------------------------
 // Initialize handshake DTOs
 // ---------------------------------------------------------------------------

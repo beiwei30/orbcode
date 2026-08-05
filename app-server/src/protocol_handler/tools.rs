@@ -16,12 +16,22 @@ impl AppServer {
         let tools = self
             .list_tools()
             .into_iter()
-            .map(|tool| ToolOverview {
-                name: tool.name.to_string(),
-                summary: tool.summary.to_string(),
-                requires_tools_permission: tool.requires_tools_permission,
-                requires_network_permission: tool.requires_network_permission,
-                provider_hidden: tool.provider_hidden,
+            .map(|tool| {
+                let unavailable_reason = matches!(
+                    tool.name,
+                    "ask-user-question" | "AskUserQuestion"
+                )
+                .then_some(
+                    "available to the provider only for turns owned by a client that declares the full interactive_questions capability".to_string(),
+                );
+                ToolOverview {
+                    name: tool.name.to_string(),
+                    summary: tool.summary.to_string(),
+                    requires_tools_permission: tool.requires_tools_permission,
+                    requires_network_permission: tool.requires_network_permission,
+                    provider_hidden: tool.provider_hidden,
+                    unavailable_reason,
+                }
             })
             .collect();
         success(ToolsListResult(tools))

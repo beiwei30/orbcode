@@ -20,8 +20,9 @@
 
 use orbcode_config::PermissionMode;
 use orbcode_protocol::{
-    CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest, ControlRequestEnvelope,
-    ControlResponse, ControlResponseEnvelope, extract_user_message_text,
+    AskUserResponseOutcome, CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest,
+    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE,
+    ServerResponseInputEnvelope, extract_user_message_text,
 };
 use serde_json::Value;
 
@@ -63,6 +64,11 @@ pub(crate) enum ControlFrame {
     SetMaxThinkingTokens {
         request_id: String,
         max_thinking_tokens: Option<u32>,
+    },
+    /// Typed response to an AskUserQuestion server request.
+    AskUserResponse {
+        request_id: String,
+        outcome: AskUserResponseOutcome,
     },
     SeedReadState {
         request_id: String,
@@ -134,11 +140,35 @@ pub(crate) fn parse_control_line(line: &str) -> ControlFrame {
             },
         },
         CONTROL_REQUEST_TYPE => parse_control_request(value),
+        SERVER_RESPONSE_TYPE => parse_server_response(value),
         CONTROL_RESPONSE_TYPE => parse_control_response(value),
         "keep_alive" | "control_cancel_request" => ControlFrame::Ignore,
         other => ControlFrame::ParseError {
             request_id: recover_request_id(&value),
             message: format!("unsupported stream-json input type `{other}`"),
+        },
+    }
+}
+
+fn parse_server_response(value: Value) -> ControlFrame {
+    let request_id = recover_request_id(&value);
+    let envelope: ServerResponseInputEnvelope = match serde_json::from_value(value) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            return ControlFrame::ParseError {
+                request_id,
+                message: format!("invalid server_response: {error}"),
+            };
+        }
+    };
+    match serde_json::from_value(envelope.response) {
+        Ok(outcome) => ControlFrame::AskUserResponse {
+            request_id: envelope.request_id,
+            outcome,
+        },
+        Err(error) => ControlFrame::ParseError {
+            request_id: Some(envelope.request_id),
+            message: format!("invalid AskUserQuestion response: {error}"),
         },
     }
 }
@@ -270,6 +300,19 @@ mod tests {
         assert_eq!(
             parse_control_line(r#"{"type":"keep_alive"}"#),
             ControlFrame::Ignore
+        );
+    }
+
+    #[test]
+    fn server_response_parses_typed_ask_user_outcome() {
+        assert_eq!(
+            parse_control_line(
+                r#"{"type":"server_response","request_id":"ask-1","response":{"outcome":"rejected"}}"#,
+            ),
+            ControlFrame::AskUserResponse {
+                request_id: "ask-1".into(),
+                outcome: AskUserResponseOutcome::Rejected,
+            }
         );
     }
 

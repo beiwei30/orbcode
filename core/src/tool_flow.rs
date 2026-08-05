@@ -198,7 +198,13 @@ pub(crate) fn tool_error_result_details(
     error: &ToolError,
 ) -> ToolErrorResultDetails {
     let metadata = tool_error_result_metadata(tool_name, error);
-    if error.is_interrupted() {
+    if error.is_cancelled() {
+        ToolErrorResultDetails {
+            content: error.to_string(),
+            metadata,
+            completion_kind: ToolUseCompletionKind::Cancelled,
+        }
+    } else if error.is_interrupted() {
         ToolErrorResultDetails {
             content: INTERRUPTED_TOOL_RESULT.to_string(),
             metadata,
