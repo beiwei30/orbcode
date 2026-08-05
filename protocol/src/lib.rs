@@ -21,9 +21,13 @@ pub use background_task_view::{
     BackgroundTaskViewStatus, WorkflowStepView, WorkflowStepViewStatus,
 };
 pub use control::{
-    CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest, ControlRequestEnvelope,
-    ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE, ServerResponseInputEnvelope,
-    extract_user_message_text,
+    AsyncCancellationOutcome, CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest,
+    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE,
+    SUPPORTED_CONTROL_SUBTYPES, SdkAsyncCancellationResponse, SdkContextCategoriesResponse,
+    SdkContextUsageResponse, SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse,
+    SdkModelChangeResponse, SdkSeedReadStateResponse, SdkSessionStateResponse,
+    SdkThinkingBudgetResponse, ServerResponseInputEnvelope, ToolPermissionResult,
+    UNSUPPORTED_CONTROL_SUBTYPES, extract_user_message_text,
 };
 pub use cost::{
     BillingBasis, BudgetState, CostBreakdown, CostSummary, ModelPricing, ModelUsage,

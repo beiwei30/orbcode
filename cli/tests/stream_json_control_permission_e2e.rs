@@ -7,7 +7,7 @@
 //! This covers the SDK use case where a client dynamically escalates
 //! permissions mid-session via the bidirectional control channel.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
@@ -89,6 +89,66 @@ impl Harness {
         let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
         (code, stdout, stderr)
     }
+
+    fn run_permission_callback(&self, duplicate: bool) -> (i32, String, String, String) {
+        let mut child = self.base_command().spawn().expect("spawn orbcode");
+        let mut stdin = child.stdin.take().expect("stdin pipe");
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout pipe"));
+        let mut stderr = child.stderr.take().expect("stderr pipe");
+        let stderr_reader = std::thread::spawn(move || {
+            let mut output = String::new();
+            stderr.read_to_string(&mut output).expect("read stderr");
+            output
+        });
+
+        writeln!(stdin, "{}", user_frame(BASH_PROMPT)).expect("write prompt");
+        stdin.flush().expect("flush prompt");
+
+        let mut captured = String::new();
+        let permission = loop {
+            let mut line = String::new();
+            assert_ne!(stdout.read_line(&mut line).expect("read stdout"), 0);
+            captured.push_str(&line);
+            let value: Value = serde_json::from_str(line.trim()).expect("stdout JSON");
+            if value["type"] == "control_request" && value["request"]["subtype"] == "can_use_tool" {
+                break value;
+            }
+        };
+
+        let request_id = permission["request_id"].as_str().expect("request id");
+        let tool_use_id = permission["request"]["tool_use_id"]
+            .as_str()
+            .expect("tool use id");
+        let response = serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": {
+                    "behavior": "allow",
+                    "toolUseID": tool_use_id,
+                }
+            }
+        })
+        .to_string();
+        writeln!(stdin, "{response}").expect("write permission response");
+        if duplicate {
+            writeln!(stdin, "{response}").expect("write duplicate permission response");
+        }
+        stdin.flush().expect("flush response");
+        drop(stdin);
+        stdout
+            .read_to_string(&mut captured)
+            .expect("read remaining stdout");
+        let status = child.wait().expect("wait orbcode");
+        let stderr = stderr_reader.join().expect("stderr reader");
+        (
+            status.code().unwrap_or(-1),
+            captured,
+            stderr,
+            request_id.to_string(),
+        )
+    }
 }
 
 fn user_frame(text: &str) -> String {
@@ -127,6 +187,89 @@ fn control_response<'a>(records: &'a [Value], request_id: &str) -> Option<&'a Va
 }
 
 const BASH_PROMPT: &str = "#tool:bash {\"command\":\"echo permission_test\"}";
+
+#[test]
+fn can_use_tool_callback_approves_real_permission_request() {
+    let harness = Harness::new();
+    let (code, stdout, stderr, request_id) = harness.run_permission_callback(false);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    let records = parse_lines(&stdout);
+    assert!(records.iter().any(|record| {
+        record["type"] == "control_request"
+            && record["request_id"] == request_id
+            && record["request"]["subtype"] == "can_use_tool"
+    }));
+    assert!(records.iter().any(|record| {
+        record["type"] == "user"
+            && record["message"]["content"]
+                .as_array()
+                .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "tool_result"))
+    }));
+}
+
+#[test]
+fn duplicate_can_use_tool_response_gets_deterministic_error() {
+    let harness = Harness::new();
+    let (code, stdout, stderr, request_id) = harness.run_permission_callback(true);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    let records = parse_lines(&stdout);
+    let error = control_response(&records, &request_id).expect("duplicate response error");
+    assert_eq!(error["response"]["subtype"], "error");
+    assert!(
+        error["response"]["error"]
+            .as_str()
+            .expect("error string")
+            .contains("duplicate or late")
+    );
+}
+
+#[test]
+fn eof_denies_and_unblocks_a_pending_can_use_tool_callback() {
+    let harness = Harness::new();
+    let mut child = harness.base_command().spawn().expect("spawn orbcode");
+    let mut stdin = child.stdin.take().expect("stdin pipe");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout pipe"));
+    let mut stderr = child.stderr.take().expect("stderr pipe");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        stderr.read_to_string(&mut output).expect("read stderr");
+        output
+    });
+    writeln!(stdin, "{}", user_frame(BASH_PROMPT)).expect("write prompt");
+    stdin.flush().expect("flush prompt");
+
+    let mut captured = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(stdout.read_line(&mut line).expect("read stdout"), 0);
+        let record: Value = serde_json::from_str(line.trim()).expect("stdout JSON");
+        captured.push_str(&line);
+        if record["type"] == "control_request" && record["request"]["subtype"] == "can_use_tool" {
+            break;
+        }
+    }
+    drop(stdin);
+    stdout
+        .read_to_string(&mut captured)
+        .expect("remaining stdout");
+    let status = child.wait().expect("wait");
+    let stderr = stderr_reader.join().expect("stderr reader");
+    assert_eq!(
+        status.code(),
+        Some(4),
+        "stderr: {stderr}\nstdout:\n{captured}"
+    );
+    let records = parse_lines(&captured);
+    let result = records.last().expect("result");
+    assert_eq!(result["type"], "result");
+    assert_eq!(result["subtype"], "error_during_execution");
+    assert!(
+        !result["permission_denials"]
+            .as_array()
+            .expect("permission denials")
+            .is_empty()
+    );
+}
 
 #[test]
 fn set_permission_mode_bypass_then_tool_succeeds() {

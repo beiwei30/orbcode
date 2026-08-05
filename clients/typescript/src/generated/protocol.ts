@@ -339,12 +339,24 @@ export interface ModelNameResult {
 export type ModelOptionsResult = ModelOptionOverview[];
 
 export type SetModelParams = {
+  session_id?: string | null;
   model?: string | null;
 };
 
 export interface SetModelResult {
   display_name: string;
 }
+
+/** Set or clear the per-session thinking-token override. */
+export type SetThinkingBudgetParams = {
+  session_id: string;
+  max_thinking_tokens?: number | null;
+};
+
+export type ThinkingBudgetResult = {
+  session_id: string;
+  max_thinking_tokens?: number | null;
+};
 
 export type ProvidersResult = {
   default_provider: string;
@@ -444,6 +456,20 @@ export interface AllowAllResult {
 }
 
 export type ToolsListResult = ToolOverview[];
+
+/** Seed one validated file identity into the shared stale-write guard. */
+export interface SeedReadStateParams {
+  session_id: string;
+  path: string;
+  mtime: number;
+}
+
+export interface SeedReadStateResult {
+  session_id: string;
+  path: string;
+  mtime: number;
+  seeded: boolean;
+}
 
 export interface ToolInvokeParams {
   name: string;
@@ -559,6 +585,18 @@ export interface BackgroundCancelResult {
   status: string;
 }
 
+/** Cancel one background task owned by a session. */
+export interface CancelAsyncTaskParams {
+  session_id: string;
+  task_id: string;
+}
+
+export interface CancelAsyncTaskResult {
+  session_id: string;
+  task_id: string;
+  outcome: AsyncCancellationResultKind;
+}
+
 export interface BackgroundLogResult {
   log: string;
 }
@@ -599,6 +637,23 @@ export interface WorkflowTaskResult {
 export interface McpServerIdParams {
   server_id: string;
 }
+
+/** Secret-free status projection for a configured MCP server.
+
+Mutation-only configuration (endpoint, arguments, environment, headers and
+auth values) is deliberately absent from this read DTO. */
+export type McpServerStatusOverview = {
+  id: string;
+  transport: string;
+  enabled: boolean;
+  status: string;
+  trust: string;
+  summary: string;
+  auth_mode: string;
+  error?: string | null;
+};
+
+export type McpStatusResult = McpServerStatusOverview[];
 
 export type McpSessionServerParams = {
   server_id: string;
@@ -812,6 +867,8 @@ export interface AskUserValidationError {
   code: AskUserValidationCode;
   message: string;
 }
+
+export type AsyncCancellationResultKind = "signalled" | "already_terminal" | "not_found";
 
 export type AuthMethod = "api_key" | "o_auth_device" | "chatgpt";
 
@@ -1126,6 +1183,7 @@ export const STABLE_METHODS = [
   "settings/model_name",
   "settings/model_options",
   "settings/set_model",
+  "settings/set_thinking_budget",
   "settings/providers",
   "settings/theme",
   "settings/set_theme",
@@ -1153,6 +1211,7 @@ export const STABLE_METHODS = [
   "usage/cost",
   "usage/stats",
   "mcp/list_servers",
+  "mcp/status",
   "mcp/server_trust",
   "mcp/set_trust",
   "mcp/list_tools",
@@ -1176,6 +1235,7 @@ export const STABLE_METHODS = [
   "tools/task_list",
   "tools/enter_plan",
   "tools/agents_with_warnings",
+  "tools/seed_read_state",
   "auth/overview",
   "auth/login",
   "auth/logout",
@@ -1204,6 +1264,7 @@ export const EXPERIMENTAL_METHODS = [
   "background/events",
   "background/list_summary",
   "background/subscribe",
+  "background/cancel_async",
   "workflow/list",
   "workflow/start",
   "workflow/start_dynamic",

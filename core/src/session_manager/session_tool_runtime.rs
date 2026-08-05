@@ -805,7 +805,7 @@ impl ToolRuntimeHost for SessionManager {
             mcp: self.mcp.clone(),
             progress: Some(progress),
             cancellation: ToolCancellationToken::from_flag(cancel_flag),
-            read_state: None,
+            read_state: Some(Arc::clone(&self.read_state)),
             session_id: Some(session_id.to_string()),
             local_shell_tasks: Some(self.local_shell_tasks().clone()),
             on_cwd_change: {

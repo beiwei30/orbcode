@@ -140,4 +140,15 @@ impl AppServer {
             Err(e) => core_error(e),
         }
     }
+
+    pub(super) async fn handle_tools_seed_read_state(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: orbcode_app_server_protocol::SeedReadStateParams = try_parse!(params);
+        match self.seed_read_state(&p.session_id, &p.path, p.mtime).await {
+            Ok(result) => success(result),
+            Err(e) => core_error(e),
+        }
+    }
 }

@@ -20,8 +20,9 @@
 
 use orbcode_config::PermissionMode;
 use orbcode_protocol::{
-    AskUserResponseOutcome, CONTROL_REQUEST_TYPE, ControlRequest, ControlRequestEnvelope,
-    SERVER_RESPONSE_TYPE, ServerResponseInputEnvelope, extract_user_message_text,
+    AskUserResponseOutcome, CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest,
+    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE,
+    ServerResponseInputEnvelope, extract_user_message_text,
 };
 use serde_json::Value;
 
@@ -30,8 +31,14 @@ use serde_json::Value;
 pub(crate) enum ControlFrame {
     /// A `user` message carrying an incremental prompt to run as a turn.
     UserPrompt(String),
+    /// Idempotent SDK control-channel initialization.
+    Initialize {
+        request_id: String,
+    },
     /// `control_request` `{"subtype":"interrupt"}` — cancel the active turn.
-    Interrupt { request_id: String },
+    Interrupt {
+        request_id: String,
+    },
     /// `control_request` `{"subtype":"set_permission_mode","mode":"…"}` with a
     /// validated mode.
     SetPermissionMode {
@@ -39,22 +46,54 @@ pub(crate) enum ControlFrame {
         mode: PermissionMode,
     },
     /// `control_request` `{"subtype":"get_session_state"}` — return session summary.
-    GetSessionState { request_id: String },
+    GetSessionState {
+        request_id: String,
+    },
     /// `control_request` `{"subtype":"get_context_usage"}` — return context usage.
-    GetContextUsage { request_id: String },
+    GetContextUsage {
+        request_id: String,
+    },
+    McpStatus {
+        request_id: String,
+    },
+    SetModel {
+        request_id: String,
+        model: Option<String>,
+    },
     /// `control_request` `{"subtype":"set_max_thinking_tokens","max_thinking_tokens":N|null}`.
     SetMaxThinkingTokens {
         request_id: String,
         max_thinking_tokens: Option<u32>,
     },
     /// Typed response to an AskUserQuestion server request.
-    ServerResponse {
+    AskUserResponse {
         request_id: String,
         outcome: AskUserResponseOutcome,
     },
+    SeedReadState {
+        request_id: String,
+        path: String,
+        mtime: u64,
+    },
+    RewindFiles {
+        request_id: String,
+    },
+    CancelAsyncMessage {
+        request_id: String,
+        message_uuid: String,
+    },
+    /// Generic host response to an earlier CLI-originated server request. The
+    /// dispatcher validates the payload against the pending request kind.
+    ServerResponse {
+        request_id: String,
+        result: Result<Value, String>,
+    },
     /// A recognized `control_request` whose subtype the CLI does not implement.
     /// The caller replies with a structured "unsupported" error.
-    Unsupported { request_id: String, subtype: String },
+    Unsupported {
+        request_id: String,
+        subtype: String,
+    },
     /// A non-actionable line (blank, `keep_alive`, `control_cancel_request`).
     /// No response is emitted.
     Ignore,
@@ -102,6 +141,7 @@ pub(crate) fn parse_control_line(line: &str) -> ControlFrame {
         },
         CONTROL_REQUEST_TYPE => parse_control_request(value),
         SERVER_RESPONSE_TYPE => parse_server_response(value),
+        CONTROL_RESPONSE_TYPE => parse_control_response(value),
         "keep_alive" | "control_cancel_request" => ControlFrame::Ignore,
         other => ControlFrame::ParseError {
             request_id: recover_request_id(&value),
@@ -122,7 +162,7 @@ fn parse_server_response(value: Value) -> ControlFrame {
         }
     };
     match serde_json::from_value(envelope.response) {
-        Ok(outcome) => ControlFrame::ServerResponse {
+        Ok(outcome) => ControlFrame::AskUserResponse {
             request_id: envelope.request_id,
             outcome,
         },
@@ -159,6 +199,7 @@ fn parse_control_request(value: Value) -> ControlFrame {
     };
 
     match envelope.request {
+        ControlRequest::Initialize => ControlFrame::Initialize { request_id },
         ControlRequest::Interrupt => ControlFrame::Interrupt { request_id },
         ControlRequest::SetPermissionMode { mode } => match PermissionMode::parse(&mode) {
             Some(mode) => ControlFrame::SetPermissionMode { request_id, mode },
@@ -169,11 +210,23 @@ fn parse_control_request(value: Value) -> ControlFrame {
         },
         ControlRequest::GetSessionState => ControlFrame::GetSessionState { request_id },
         ControlRequest::GetContextUsage => ControlFrame::GetContextUsage { request_id },
+        ControlRequest::McpStatus => ControlFrame::McpStatus { request_id },
+        ControlRequest::SetModel { model } => ControlFrame::SetModel { request_id, model },
         ControlRequest::SetMaxThinkingTokens {
             max_thinking_tokens,
         } => ControlFrame::SetMaxThinkingTokens {
             request_id,
             max_thinking_tokens,
+        },
+        ControlRequest::SeedReadState { path, mtime } => ControlFrame::SeedReadState {
+            request_id,
+            path,
+            mtime,
+        },
+        ControlRequest::RewindFiles { .. } => ControlFrame::RewindFiles { request_id },
+        ControlRequest::CancelAsyncMessage { message_uuid } => ControlFrame::CancelAsyncMessage {
+            request_id,
+            message_uuid,
         },
         ControlRequest::Other => ControlFrame::Unsupported {
             request_id,
@@ -182,6 +235,46 @@ fn parse_control_request(value: Value) -> ControlFrame {
         _ => ControlFrame::Unsupported {
             request_id,
             subtype: subtype.unwrap_or_else(|| "unknown".to_string()),
+        },
+    }
+}
+
+fn parse_control_response(value: Value) -> ControlFrame {
+    let request_id = value
+        .pointer("/response/request_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let envelope: ControlResponseEnvelope = match serde_json::from_value(value) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            return ControlFrame::ParseError {
+                request_id,
+                message: format!("invalid control_response: {error}"),
+            };
+        }
+    };
+    match envelope.response {
+        ControlResponse::Success {
+            request_id,
+            response: Some(response),
+        } => ControlFrame::ServerResponse {
+            request_id,
+            result: Ok(response),
+        },
+        ControlResponse::Success {
+            request_id,
+            response: None,
+        } => ControlFrame::ParseError {
+            request_id: Some(request_id),
+            message: "can_use_tool response is missing its decision payload".to_string(),
+        },
+        ControlResponse::Error { request_id, error } => ControlFrame::ServerResponse {
+            request_id,
+            result: Err(error),
+        },
+        _ => ControlFrame::ParseError {
+            request_id,
+            message: "unsupported control_response subtype".to_string(),
         },
     }
 }
@@ -216,7 +309,7 @@ mod tests {
             parse_control_line(
                 r#"{"type":"server_response","request_id":"ask-1","response":{"outcome":"rejected"}}"#,
             ),
-            ControlFrame::ServerResponse {
+            ControlFrame::AskUserResponse {
                 request_id: "ask-1".into(),
                 outcome: AskUserResponseOutcome::Rejected,
             }
@@ -388,6 +481,73 @@ mod tests {
             }
             other => panic!("expected ParseError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sdk_control_extensions_are_classified_to_typed_frames() {
+        let cases = [
+            (
+                r#"{"type":"control_request","request_id":"init","request":{"subtype":"initialize"}}"#,
+                ControlFrame::Initialize {
+                    request_id: "init".to_string(),
+                },
+            ),
+            (
+                r#"{"type":"control_request","request_id":"mcp","request":{"subtype":"mcp_status"}}"#,
+                ControlFrame::McpStatus {
+                    request_id: "mcp".to_string(),
+                },
+            ),
+            (
+                r#"{"type":"control_request","request_id":"model","request":{"subtype":"set_model","model":null}}"#,
+                ControlFrame::SetModel {
+                    request_id: "model".to_string(),
+                    model: None,
+                },
+            ),
+            (
+                r#"{"type":"control_request","request_id":"seed","request":{"subtype":"seed_read_state","path":"src/lib.rs","mtime":42}}"#,
+                ControlFrame::SeedReadState {
+                    request_id: "seed".to_string(),
+                    path: "src/lib.rs".to_string(),
+                    mtime: 42,
+                },
+            ),
+            (
+                r#"{"type":"control_request","request_id":"rewind","request":{"subtype":"rewind_files","user_message_id":"msg-1","dry_run":false}}"#,
+                ControlFrame::RewindFiles {
+                    request_id: "rewind".to_string(),
+                },
+            ),
+            (
+                r#"{"type":"control_request","request_id":"cancel","request":{"subtype":"cancel_async_message","message_uuid":"task-1"}}"#,
+                ControlFrame::CancelAsyncMessage {
+                    request_id: "cancel".to_string(),
+                    message_uuid: "task-1".to_string(),
+                },
+            ),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(parse_control_line(line), expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn sdk_permission_control_response_preserves_exact_correlation_and_casing() {
+        let frame = parse_control_line(
+            r#"{"type":"control_response","response":{"subtype":"success","request_id":"permission-1","response":{"behavior":"allow","updatedInput":{"path":"src/lib.rs"},"toolUseID":"tool-1"}}}"#,
+        );
+        assert_eq!(
+            frame,
+            ControlFrame::ServerResponse {
+                request_id: "permission-1".to_string(),
+                result: Ok(serde_json::json!({
+                    "behavior": "allow",
+                    "updatedInput": {"path": "src/lib.rs"},
+                    "toolUseID": "tool-1"
+                })),
+            }
+        );
     }
 
     #[test]

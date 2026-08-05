@@ -14,10 +14,7 @@ pub fn build_anthropic_request_body(request: &ProviderRequest) -> Value {
     if let Some(user_context) = anthropic_user_context_message(&request.context) {
         messages.insert(0, user_context);
     }
-    let thinking_budget = (!request.disable_thinking)
-        .then_some(request.effort)
-        .flatten()
-        .map(anthropic_thinking_budget_tokens);
+    let thinking_budget = anthropic_thinking_budget(request);
     let default_max_tokens = thinking_budget.map_or(4096, |budget| budget + 4096);
     let max_tokens = request
         .options
@@ -188,10 +185,7 @@ pub fn build_anthropic_count_tokens_request_body(request: &ProviderRequest) -> V
         messages.insert(0, user_context);
     }
     strip_search_extra_tools_fields(&mut messages);
-    let thinking_budget = (!request.disable_thinking)
-        .then_some(request.effort)
-        .flatten()
-        .map(anthropic_thinking_budget_tokens);
+    let thinking_budget = anthropic_thinking_budget(request);
 
     let mut body = json!({
         "model": request.model,
@@ -425,6 +419,17 @@ fn anthropic_thinking_budget_tokens(effort: EffortLevel) -> u64 {
         EffortLevel::Max => 16384,
         _ => 8192,
     }
+}
+
+fn anthropic_thinking_budget(request: &ProviderRequest) -> Option<u64> {
+    if request.disable_thinking {
+        return None;
+    }
+    request
+        .options
+        .max_thinking_tokens
+        .map(u64::from)
+        .or_else(|| request.effort.map(anthropic_thinking_budget_tokens))
 }
 
 fn is_tool_reference_block(value: &Value) -> bool {

@@ -20,6 +20,7 @@ pub struct RuntimeSessionState {
     theme_override: Arc<RwLock<Option<ThemeSetting>>>,
     editor_mode_override: Arc<RwLock<Option<EditorModeSetting>>>,
     effort_override: Arc<RwLock<Option<EffortLevel>>>,
+    max_thinking_tokens: Arc<RwLock<Option<u32>>>,
 }
 
 impl RuntimeSessionState {
@@ -114,6 +115,21 @@ impl RuntimeSessionState {
             Err(poisoned) => poisoned.into_inner(),
         };
         *override_guard = effort;
+    }
+
+    pub fn max_thinking_tokens(&self) -> Option<u32> {
+        match self.max_thinking_tokens.read() {
+            Ok(guard) => *guard,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+
+    pub fn set_max_thinking_tokens(&self, max_thinking_tokens: Option<u32>) {
+        let mut override_guard = match self.max_thinking_tokens.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *override_guard = max_thinking_tokens;
     }
 
     pub fn additional_directories(&self, config: &AppConfig) -> Vec<PathBuf> {

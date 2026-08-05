@@ -49,9 +49,8 @@ impl SessionManager {
         expose_network_tools: bool,
     ) -> ProviderRequest {
         let permissions = self.permission_context();
-        let resolution = self
-            .config
-            .provider_model_resolution(self.config.default_provider);
+        let config = self.effective_config();
+        let resolution = config.provider_model_resolution(config.default_provider);
         let ask_user_question = self
             .active_turns
             .interaction_context(session_id)
@@ -101,8 +100,8 @@ impl SessionManager {
             effort: self.runtime_effort_override(),
             options: ProviderRequestOptions::default(),
         };
-        self.config
-            .configure_provider_request(self.config.default_provider, &mut request);
+        request.options.max_thinking_tokens = self.max_thinking_tokens();
+        config.configure_provider_request(config.default_provider, &mut request);
         request
     }
 

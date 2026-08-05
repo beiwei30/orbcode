@@ -853,15 +853,6 @@ pub fn control_response_success(request_id: &str) -> Value {
     .expect("ControlResponseEnvelope serialization is infallible")
 }
 
-/// Build a successful `control_response` with an attached data payload.
-/// Delegates to [`orbcode_protocol::ControlResponseEnvelope::success_with_data`].
-pub fn control_response_success_with_data(request_id: &str, data: Value) -> Value {
-    serde_json::to_value(
-        orbcode_protocol::ControlResponseEnvelope::success_with_data(request_id, data),
-    )
-    .expect("ControlResponseEnvelope serialization is infallible")
-}
-
 /// Build an error `control_response` envelope for an SDK control request.
 /// Delegates to [`orbcode_protocol::ControlResponseEnvelope::error`].
 pub fn control_response_error(request_id: &str, error: &str) -> Value {
@@ -1756,17 +1747,6 @@ mod tests {
         assert_eq!(response["response"]["subtype"], "error");
         assert_eq!(response["response"]["request_id"], "req-2");
         assert_eq!(response["response"]["error"], "unsupported control request");
-    }
-
-    #[test]
-    fn control_response_success_with_data_carries_payload() {
-        let data = serde_json::json!({"model": "claude-test", "tokens": 42});
-        let response = control_response_success_with_data("req-3", data);
-        assert_eq!(response["type"], "control_response");
-        assert_eq!(response["response"]["subtype"], "success");
-        assert_eq!(response["response"]["request_id"], "req-3");
-        assert_eq!(response["response"]["response"]["model"], "claude-test");
-        assert_eq!(response["response"]["response"]["tokens"], 42);
     }
 
     #[test]
