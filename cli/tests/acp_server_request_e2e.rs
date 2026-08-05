@@ -3198,7 +3198,7 @@ async fn acp_ask_user_option_selected_via_request_permission() {
         json!("end_turn")
     );
     assert!(
-        agent_text.contains("answered: blue"),
+        agent_text.contains("\"Pick a color\" = \"blue\""),
         "AskUser selected option should reach the completed prompt text: {agent_text:?}"
     );
 
@@ -3221,11 +3221,11 @@ async fn acp_ask_user_cancelled_via_request_permission() {
 
     assert_eq!(
         serde_json::to_value(parsed.stop_reason).expect("stop reason JSON"),
-        json!("end_turn")
+        json!("cancelled")
     );
     assert!(
-        agent_text.contains("cancelled"),
-        "AskUser cancelled outcome should reach the completed prompt text: {agent_text:?}"
+        agent_text.is_empty(),
+        "cancelled AskUser must not be reported as a successful answer: {agent_text:?}"
     );
 
     proc.close().await;
@@ -3296,11 +3296,11 @@ async fn acp_ask_user_free_text_is_cancelled_without_acp_request_permission() {
         .expect("valid ACP prompt response");
     assert_eq!(
         serde_json::to_value(parsed.stop_reason).expect("stop reason JSON"),
-        json!("end_turn")
+        json!("cancelled")
     );
     assert!(
-        agent_text.contains("cancelled"),
-        "free-text AskUser should be answered as cancelled: {agent_text:?}"
+        agent_text.is_empty(),
+        "unsupported free-text AskUser must cancel without placeholder success: {agent_text:?}"
     );
 
     proc.close().await;
@@ -3392,7 +3392,7 @@ async fn acp_cancelled_ask_user_does_not_block_later_ask_user() {
         json!("end_turn")
     );
     assert!(
-        agent_text.contains("answered: blue"),
+        agent_text.contains("\"Pick a color\" = \"blue\""),
         "later AskUser should complete after prior cancel: {agent_text:?}"
     );
 
@@ -3440,7 +3440,7 @@ async fn acp_ask_user_routes_to_second_active_session() {
         json!("end_turn")
     );
     assert!(
-        agent_text.contains("answered: blue"),
+        agent_text.contains("\"Pick a color\" = \"blue\""),
         "second session AskUser should complete independently: {agent_text:?}"
     );
 

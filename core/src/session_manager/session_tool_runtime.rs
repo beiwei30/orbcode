@@ -21,6 +21,7 @@ use super::{LiveToolProgressReporter, SessionManager};
 use crate::{
     CoreError,
     hooks::PreToolPhaseOutcome,
+    interaction_runtime::InteractionRuntime,
     permission_state::PermissionDecision,
     permissions::PermissionContext,
     tool_flow::{
@@ -824,14 +825,15 @@ impl ToolRuntimeHost for SessionManager {
         self.skill_definitions_visible_to_session(session_id).await
     }
 
-    fn ask_user_pending(
+    fn ask_user_pending(&self) -> InteractionRuntime {
+        self.interaction_runtime.clone()
+    }
+
+    async fn active_interaction_context(
         &self,
-    ) -> Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>,
-        >,
-    > {
-        self.ask_user_pending.clone()
+        session_id: &str,
+    ) -> Option<(Uuid, crate::TurnInteractionContext)> {
+        self.active_turns.interaction_context(session_id).await
     }
 
     async fn tool_success_result_details(

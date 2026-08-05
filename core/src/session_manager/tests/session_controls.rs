@@ -115,6 +115,7 @@ async fn active_turn_rejects_session_control_changes_without_mutation() {
             &session.session_id,
             turn_id,
             Arc::new(AtomicBool::new(false)),
+            crate::TurnInteractionContext::default(),
         )
         .await
         .expect("mark active");

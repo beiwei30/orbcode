@@ -2,6 +2,7 @@ mod app_values;
 mod background_task_view;
 mod control;
 mod cost;
+mod interaction;
 mod overview;
 mod permission;
 mod provider;
@@ -21,16 +22,25 @@ pub use background_task_view::{
 };
 pub use control::{
     AsyncCancellationOutcome, CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest,
-    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SUPPORTED_CONTROL_SUBTYPES,
-    SdkAsyncCancellationResponse, SdkContextCategoriesResponse, SdkContextUsageResponse,
-    SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse, SdkModelChangeResponse,
-    SdkSeedReadStateResponse, SdkSessionStateResponse, SdkThinkingBudgetResponse,
-    ToolPermissionResult, UNSUPPORTED_CONTROL_SUBTYPES, extract_user_message_text,
+    ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE,
+    SUPPORTED_CONTROL_SUBTYPES, SdkAsyncCancellationResponse, SdkContextCategoriesResponse,
+    SdkContextUsageResponse, SdkInitializeResponse, SdkMcpServerStatus, SdkMcpStatusResponse,
+    SdkModelChangeResponse, SdkSeedReadStateResponse, SdkSessionStateResponse,
+    SdkThinkingBudgetResponse, ServerResponseInputEnvelope, ToolPermissionResult,
+    UNSUPPORTED_CONTROL_SUBTYPES, extract_user_message_text,
 };
 pub use cost::{
     BillingBasis, BudgetState, CostBreakdown, CostSummary, ModelPricing, ModelUsage,
     PRICING_ANTHROPIC_HAIKU, PRICING_ANTHROPIC_OPUS, PRICING_ANTHROPIC_SONNET,
     PRICING_OPENAI_COMPATIBLE, accumulate_cost, over_budget, pricing_for_model,
+};
+pub use interaction::{
+    ASK_USER_MAX_ANNOTATION_BYTES, ASK_USER_MAX_DESCRIPTION_BYTES, ASK_USER_MAX_HEADER_CHARS,
+    ASK_USER_MAX_ID_BYTES, ASK_USER_MAX_LABEL_BYTES, ASK_USER_MAX_OPTIONS,
+    ASK_USER_MAX_PREVIEW_BYTES, ASK_USER_MAX_QUESTION_BYTES, ASK_USER_MAX_QUESTIONS,
+    ASK_USER_MAX_REQUEST_BYTES, AskUserAnswerValue, AskUserCancellationReason, AskUserOption,
+    AskUserQuestionSpec, AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError,
+    validate_ask_user_outcome, validate_ask_user_questions,
 };
 pub use overview::{
     ContextCategoryBreakdown, ContextDiagnosticCategory, ContextDiagnosticSection,

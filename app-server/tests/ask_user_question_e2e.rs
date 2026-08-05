@@ -19,7 +19,12 @@ use serde_json::json;
 fn ask_user_request_wire_format_with_options() {
     let req = AskUserQuestionRequest {
         session_id: "session-ask".into(),
+        turn_id: None,
+        tool_use_id: String::new(),
         request_id: "ask-e2e-1".into(),
+        deadline: None,
+        validation_error: None,
+        questions: Vec::new(),
         question: "Which branch to deploy?".into(),
         options: vec!["main".into(), "staging".into(), "canary".into()],
     };
@@ -39,7 +44,12 @@ fn ask_user_request_wire_format_with_options() {
 fn ask_user_request_wire_format_no_options() {
     let req = AskUserQuestionRequest {
         session_id: "session-ask".into(),
+        turn_id: None,
+        tool_use_id: String::new(),
         request_id: "ask-e2e-2".into(),
+        deadline: None,
+        validation_error: None,
+        questions: Vec::new(),
         question: "Enter the deployment target".into(),
         options: vec![],
     };
@@ -62,6 +72,7 @@ fn ask_user_request_wire_format_no_options() {
 fn ask_user_response_with_answer_wire_format() {
     let resp = AskUserQuestionResponse {
         request_id: "ask-e2e-1".into(),
+        outcome: None,
         answer: Some("staging".into()),
     };
 
@@ -77,6 +88,7 @@ fn ask_user_response_with_answer_wire_format() {
 fn ask_user_response_cancelled_wire_format() {
     let resp = AskUserQuestionResponse {
         request_id: "ask-e2e-3".into(),
+        outcome: None,
         answer: None,
     };
 
@@ -147,7 +159,12 @@ fn ask_user_request_as_server_request_params() {
 
     let req = AskUserQuestionRequest {
         session_id: "session-ask".into(),
+        turn_id: None,
+        tool_use_id: String::new(),
         request_id: "ask-envelope-1".into(),
+        deadline: None,
+        validation_error: None,
+        questions: Vec::new(),
         question: "Confirm deployment?".into(),
         options: vec!["yes".into(), "no".into()],
     };
@@ -252,7 +269,11 @@ async fn pump_emits_server_request_for_ask_user_question() {
     event_tx
         .send(StreamEvent::AskUserQuestionRequested {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-pump-1".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec!["red".into(), "blue".into()],
         })
@@ -320,7 +341,11 @@ async fn pump_resolves_ask_user_answer_via_response() {
     event_tx
         .send(StreamEvent::AskUserQuestionRequested {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-resolve-1".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec!["red".into(), "blue".into()],
         })
@@ -403,7 +428,11 @@ async fn pump_ask_user_timeout_resolves_none() {
     event_tx
         .send(StreamEvent::AskUserQuestionRequested {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-timeout-1".into(),
+            deadline: None,
+            questions: Vec::new(),
             question: "Pick a color".into(),
             options: vec![],
         })

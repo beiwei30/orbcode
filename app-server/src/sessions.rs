@@ -4,7 +4,7 @@ use orbcode_app_server_protocol::{
 };
 use orbcode_core::{
     CompactDecision, CompactSessionResult, CoreError, CostOverview, PermissionDecision,
-    ProviderRequestDebugSnapshot, StatsOverview, UsageOverview,
+    ProviderRequestDebugSnapshot, StatsOverview, TurnInteractionContext, UsageOverview,
 };
 use orbcode_protocol::{
     EffortLevel, SessionRecord, SessionSummary, StreamEvent, TranscriptMessage, TurnContext,
@@ -252,6 +252,17 @@ impl AppServer {
         self.sessions.submit_turn(session_id, prompt).await
     }
 
+    pub async fn submit_turn_with_interaction(
+        &self,
+        session_id: &str,
+        prompt: impl Into<String>,
+        interaction: TurnInteractionContext,
+    ) -> Result<mpsc::UnboundedReceiver<StreamEvent>, CoreError> {
+        self.sessions
+            .submit_turn_with_interaction(session_id, prompt, interaction)
+            .await
+    }
+
     pub async fn steer_turn(
         &self,
         session_id: &str,
@@ -282,23 +293,46 @@ impl AppServer {
             .await
     }
 
-    pub fn resolve_ask_user_question(&self, request_id: &str, answer: Option<String>) {
-        self.sessions.resolve_ask_user_question(request_id, answer);
-    }
-
-    pub fn cancel_pending_ask_user(&self, request_ids: &[String]) {
-        self.sessions.cancel_pending_ask_user(request_ids);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn ask_user_pending_for_test(
+    pub fn resolve_ask_user_question(
         &self,
-    ) -> std::sync::Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>,
-        >,
-    > {
-        self.sessions.ask_user_pending_for_test()
+        session_id: &str,
+        request_id: &str,
+        outcome: orbcode_protocol::AskUserResponseOutcome,
+    ) -> Result<(), orbcode_core::InteractionResolveError> {
+        self.sessions
+            .resolve_ask_user_question(session_id, request_id, outcome)
+    }
+
+    pub fn cancel_pending_ask_user(
+        &self,
+        request_ids: &[String],
+        reason: orbcode_protocol::AskUserCancellationReason,
+    ) {
+        self.sessions.cancel_pending_ask_user(request_ids, reason);
+    }
+
+    pub fn cancel_pending_ask_user_for_owner(
+        &self,
+        owner_id: &str,
+        reason: orbcode_protocol::AskUserCancellationReason,
+    ) {
+        self.sessions
+            .cancel_pending_ask_user_for_owner(owner_id, reason);
+    }
+
+    pub async fn disconnect_interaction_owner(&self, owner_id: &str) -> Vec<String> {
+        self.sessions.disconnect_interaction_owner(owner_id).await
+    }
+
+    #[doc(hidden)]
+    pub fn register_pending_ask_user_for_test(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        questions: Vec<orbcode_protocol::AskUserQuestionSpec>,
+    ) -> tokio::sync::oneshot::Receiver<orbcode_protocol::AskUserResponseOutcome> {
+        self.sessions
+            .register_pending_ask_user_for_test(session_id, request_id, questions)
     }
 }
 

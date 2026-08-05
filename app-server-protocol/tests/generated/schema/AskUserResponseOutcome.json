@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskUserResponseOutcome",
+  "description": "Canonical response lifecycle for an interactive question request.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AskUserAnswerValue"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "type": "string",
+          "const": "answered"
+        }
+      },
+      "required": [
+        "outcome",
+        "answers"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "const": "rejected"
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "const": "clarify"
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "const": "finish_plan_interview"
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/AskUserCancellationReason"
+        },
+        "outcome": {
+          "type": "string",
+          "const": "cancelled"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason"
+      ]
+    }
+  ],
+  "$defs": {
+    "AskUserAnswerValue": {
+      "description": "A typed answer to one canonical question.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "option_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "selected"
+            }
+          },
+          "required": [
+            "kind",
+            "option_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "option_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "selected_many"
+            }
+          },
+          "required": [
+            "kind",
+            "option_ids"
+          ]
+        }
+      ]
+    },
+    "AskUserCancellationReason": {
+      "description": "Why a pending interactive question was cancelled.",
+      "type": "string",
+      "enum": [
+        "interrupt",
+        "disconnect",
+        "timeout",
+        "client_closed",
+        "delivery_failed",
+        "session_closed",
+        "shutdown"
+      ]
+    }
+  }
+}

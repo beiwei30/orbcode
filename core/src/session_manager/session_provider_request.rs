@@ -3,6 +3,7 @@ use orbcode_model_provider::{
     CountTokensCacheKey, ProviderRequest, ProviderRequestOptions, provider_for,
 };
 use orbcode_protocol::{ProviderId, TranscriptMessage, TurnContext, token_count_with_estimation};
+use orbcode_tools::InteractionToolVisibility;
 
 use super::SessionManager;
 use crate::{
@@ -50,13 +51,19 @@ impl SessionManager {
         let config = self.effective_config_for_session(session_id);
         let permissions = self.permission_context_for_session(session_id);
         let resolution = config.provider_model_resolution(config.default_provider);
+        let ask_user_question = self
+            .active_turns
+            .interaction_context(session_id)
+            .await
+            .is_some_and(|(_, interaction)| interaction.capabilities.fully_supported());
         let tools = self
             .tools
-            .provider_definitions_with_mcp_for_session(
+            .provider_definitions_with_mcp_for_session_and_interactions(
                 expose_tools,
                 expose_network_tools,
                 &self.mcp,
                 session_id,
+                InteractionToolVisibility { ask_user_question },
             )
             .await
             .into_iter()

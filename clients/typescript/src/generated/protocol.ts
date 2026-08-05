@@ -66,10 +66,11 @@ export interface InitializeResult {
 }
 
 /** Capabilities declared by the client during the handshake. */
-export interface ClientCapabilities {
+export type ClientCapabilities = {
   streaming?: boolean;
   experimental_methods?: boolean;
-}
+  interactive_questions?: InteractiveQuestionsCapability | null;
+};
 
 /** Capabilities advertised by the server. */
 export interface ServerCapabilities {
@@ -173,30 +174,69 @@ export interface McpTrustResponseParams {
 }
 
 /** Server-initiated request asking the connected client to prompt the user
-with a question and relay the answer back.
+with one or more questions and relay a typed outcome back.
 
 Sent via [`method::SERVER_REQUEST_ASK_USER`](crate::method::SERVER_REQUEST_ASK_USER).
 
-The full tool-level integration is wired: the `AskUserQuestion` tool
-pauses execution via `ToolContext::ask_user_tx`, the event pump in
-`MessageProcessor::pump_events` sends this as a server-request, and the
-client's response is routed back to the tool via
-`AppServer::resolve_ask_user_question`. Cancellation (disconnect,
-timeout, turn cancel) resolves with `None`. */
-export interface AskUserQuestionRequest {
+`question` and `options` are retained for protocol-1.0 clients. Canonical
+clients should use `questions`; servers normalize either representation at
+the boundary and validate the result before registering pending state. */
+export type AskUserQuestionRequest = {
   session_id?: string;
+  turn_id?: string | null;
+  tool_use_id?: string;
   request_id: string;
-  question: string;
+  deadline?: string | null;
+  validation_error?: AskUserValidationError | null;
+  questions?: AskUserQuestionSpec[];
+  question?: string;
   options?: string[];
-}
+};
 
 /** Client's response to an [`AskUserQuestionRequest`]. */
 export type AskUserQuestionResponse = {
   request_id: string;
+  outcome?: AskUserResponseOutcome | null;
   answer?: string | null;
 };
 
-export interface EmptyParams Record<string, unknown>
+/** Canonical model-visible specification for one interactive question. */
+export interface AskUserQuestionSpec {
+  id: string;
+  question: string;
+  header: string;
+  multi_select?: boolean;
+  options?: AskUserOption[];
+  allow_free_text?: boolean;
+  allow_annotation?: boolean;
+}
+
+/** Canonical response lifecycle for an interactive question request. */
+export type AskUserResponseOutcome = {
+  answers: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  outcome: "answered";
+} | {
+  outcome: "rejected";
+} | {
+  outcome: "clarify";
+} | {
+  outcome: "finish_plan_interview";
+} | {
+  reason: AskUserCancellationReason;
+  outcome: "cancelled";
+};
+
+export interface InteractiveQuestionsCapability {
+  single_select?: boolean;
+  multi_select?: boolean;
+  free_text?: boolean;
+  previews?: boolean;
+  annotations?: boolean;
+  special_outcomes?: boolean;
+}
+
+export type EmptyParams = Record<string, unknown>;
 
 /** Successful method result whose response envelope intentionally has no data payload.
 
@@ -796,6 +836,38 @@ export interface AgentSummary {
 
 export type AgentWarningKind = "missing_field" | "duplicate_name";
 
+/** A typed answer to one canonical question. */
+export type AskUserAnswerValue = {
+  text: string;
+  kind: "text";
+} | {
+  option_id: string;
+  kind: "selected";
+} | {
+  option_ids: string[];
+  kind: "selected_many";
+};
+
+/** Why a pending interactive question was cancelled. */
+export type AskUserCancellationReason = "interrupt" | "disconnect" | "timeout" | "client_closed" | "delivery_failed" | "session_closed" | "shutdown";
+
+/** One selectable answer presented for an interactive question. */
+export type AskUserOption = {
+  id: string;
+  label: string;
+  description?: string;
+  preview?: string | null;
+};
+
+/** Stable machine-readable category for request or response validation errors. */
+export type AskUserValidationCode = "question_count" | "empty_id" | "duplicate_id" | "empty_question" | "header_too_long" | "option_count" | "empty_label" | "duplicate_label" | "field_too_large" | "request_too_large" | "missing_answer" | "unknown_question" | "unknown_option" | "answer_kind" | "free_text_disabled" | "annotation_disabled" | "malformed_response" | "request_id_mismatch";
+
+/** Validation failure safe to return to a client or model as structured data. */
+export interface AskUserValidationError {
+  code: AskUserValidationCode;
+  message: string;
+}
+
 export type AsyncCancellationResultKind = "signalled" | "already_terminal" | "not_found";
 
 export type AuthMethod = "api_key" | "o_auth_device" | "chatgpt";
@@ -1072,13 +1144,14 @@ export interface TaskOverview {
   status: string;
 }
 
-export interface ToolOverview {
+export type ToolOverview = {
   name: string;
   summary: string;
   requires_tools_permission: boolean;
   requires_network_permission: boolean;
   provider_hidden: boolean;
-}
+  unavailable_reason?: string | null;
+};
 
 // Method constants
 export const STABLE_METHODS = [

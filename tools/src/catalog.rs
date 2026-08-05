@@ -7,7 +7,10 @@ use orbcode_mcp::{McpRegistry, McpResourceSummary};
 use orbcode_protocol::ProviderToolDefinition;
 
 use crate::payload::{parse_payload, string_field, usize_field_keys};
-use crate::{ToolContext, ToolError, ToolOutcome, ToolRegistry, ToolSpec, ToolStatus};
+use crate::{
+    InteractionToolVisibility, ToolContext, ToolError, ToolOutcome, ToolRegistry, ToolSpec,
+    ToolStatus,
+};
 
 impl ToolRegistry {
     pub fn foundation() -> Self {
@@ -60,7 +63,7 @@ impl ToolRegistry {
                 ),
                 hidden_tool(
                     "ask-user-question",
-                    "Render a question payload for a later interactive approval step.",
+                    "Collect typed answers from an interactive client during a model turn.",
                     false,
                     false,
                 ),
@@ -219,9 +222,26 @@ impl ToolRegistry {
     }
 
     pub fn visible_specs(&self, allow_tools: bool, allow_network: bool) -> Vec<&ToolSpec> {
+        self.visible_specs_for_interactions(
+            allow_tools,
+            allow_network,
+            InteractionToolVisibility::default(),
+        )
+    }
+
+    pub fn visible_specs_for_interactions(
+        &self,
+        allow_tools: bool,
+        allow_network: bool,
+        interactions: InteractionToolVisibility,
+    ) -> Vec<&ToolSpec> {
         self.planned
             .iter()
-            .filter(|spec| !spec.provider_hidden)
+            .filter(|spec| {
+                !spec.provider_hidden
+                    || (canonical_tool_name(spec.name) == "ask-user-question"
+                        && interactions.ask_user_question)
+            })
             .filter(|spec| !spec.requires_tools_permission || allow_tools)
             .filter(|spec| !spec.requires_network_permission || allow_network)
             .collect()
@@ -232,7 +252,20 @@ impl ToolRegistry {
         allow_tools: bool,
         allow_network: bool,
     ) -> Vec<ProviderToolDefinition> {
-        self.visible_specs(allow_tools, allow_network)
+        self.provider_definitions_for_interactions(
+            allow_tools,
+            allow_network,
+            InteractionToolVisibility::default(),
+        )
+    }
+
+    pub fn provider_definitions_for_interactions(
+        &self,
+        allow_tools: bool,
+        allow_network: bool,
+        interactions: InteractionToolVisibility,
+    ) -> Vec<ProviderToolDefinition> {
+        self.visible_specs_for_interactions(allow_tools, allow_network, interactions)
             .into_iter()
             .map(|spec| ProviderToolDefinition {
                 name: provider_facing_tool_name(spec.name).to_string(),
@@ -310,8 +343,14 @@ impl ToolRegistry {
         allow_network: bool,
         mcp: &McpRegistry,
     ) -> Vec<ProviderToolDefinition> {
-        self.provider_definitions_with_mcp_visible_to(allow_tools, allow_network, mcp, None)
-            .await
+        self.provider_definitions_with_mcp_visible_to(
+            allow_tools,
+            allow_network,
+            mcp,
+            None,
+            InteractionToolVisibility::default(),
+        )
+        .await
     }
 
     pub async fn provider_definitions_with_mcp_for_session(
@@ -326,6 +365,25 @@ impl ToolRegistry {
             allow_network,
             mcp,
             Some(session_id),
+            InteractionToolVisibility::default(),
+        )
+        .await
+    }
+
+    pub async fn provider_definitions_with_mcp_for_session_and_interactions(
+        &self,
+        allow_tools: bool,
+        allow_network: bool,
+        mcp: &McpRegistry,
+        session_id: &str,
+        interactions: InteractionToolVisibility,
+    ) -> Vec<ProviderToolDefinition> {
+        self.provider_definitions_with_mcp_visible_to(
+            allow_tools,
+            allow_network,
+            mcp,
+            Some(session_id),
+            interactions,
         )
         .await
     }
@@ -336,8 +394,10 @@ impl ToolRegistry {
         allow_network: bool,
         mcp: &McpRegistry,
         session_id: Option<&str>,
+        interactions: InteractionToolVisibility,
     ) -> Vec<ProviderToolDefinition> {
-        let mut defs = self.provider_definitions(allow_tools, allow_network);
+        let mut defs =
+            self.provider_definitions_for_interactions(allow_tools, allow_network, interactions);
         if !allow_tools {
             return defs;
         }
@@ -973,13 +1033,41 @@ pub(crate) fn tool_input_schema(name: &str) -> Value {
         "ask-user-question" => json!({
             "type": "object",
             "properties": {
-                "question": { "type": "string" },
-                "options": {
+                "questions": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+                            "question": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                            "header": { "type": "string", "maxLength": 12 },
+                            "multi_select": { "type": "boolean", "default": false },
+                            "options": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+                                        "label": { "type": "string", "minLength": 1, "maxLength": 256 },
+                                        "description": { "type": "string", "maxLength": 1024 },
+                                        "preview": { "type": "string", "maxLength": 16384 }
+                                    },
+                                    "required": ["id", "label", "description"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "allow_free_text": { "type": "boolean", "default": true },
+                            "allow_annotation": { "type": "boolean", "default": false }
+                        },
+                        "required": ["id", "question", "header", "multi_select", "options"],
+                        "additionalProperties": false
+                    }
                 }
             },
-            "required": ["question"],
+            "required": ["questions"],
             "additionalProperties": false,
         }),
         "todo-write" => json!({
@@ -1511,7 +1599,7 @@ mod tests {
 
         assert!(
             !provider_names.contains("AskUserQuestion"),
-            "ask-user-question should not appear in provider definitions"
+            "ask-user-question should not appear without an interactive capability context"
         );
 
         for spec in registry.planned() {

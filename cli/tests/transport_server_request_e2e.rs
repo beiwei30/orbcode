@@ -120,6 +120,218 @@ fn initialize_msg() -> Value {
     })
 }
 
+fn initialize_interactive_msg() -> Value {
+    let mut message = initialize_msg();
+    message["params"]["capabilities"] = json!({
+        "streaming": true,
+        "experimental_methods": true,
+        "interactive_questions": {
+            "single_select": true,
+            "multi_select": true,
+            "free_text": true,
+            "previews": true,
+            "annotations": true,
+            "special_outcomes": true
+        }
+    });
+    message
+}
+
+const ASK_USER_SCENARIO: &str = "tool_use&key=AskUserQuestion&input=%7B%22question%22%3A%22Pick%3F%22%2C%22options%22%3A%5B%22yes%22%5D%7D";
+
+#[tokio::test]
+async fn stdio_ask_user_capability_negotiates_typed_roundtrip() {
+    let mut proc = ServeProcess::spawn_with_mock(ASK_USER_SCENARIO).await;
+    proc.send(&initialize_interactive_msg()).await;
+    let _init = proc.recv().await.expect("init response");
+    proc.send(&json!({
+        "type": "request", "id": "bs-ask", "method": "session/bootstrap"
+    }))
+    .await;
+    let bootstrap = proc.recv().await.expect("bootstrap response");
+    let session_id = bootstrap["result"]["data"]["session"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+    proc.send(&json!({
+        "type": "request", "id": "turn-ask", "method": "turn/submit",
+        "params": {"session_id": session_id, "prompt": "ask"}
+    }))
+    .await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let request = loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let message = proc
+            .recv_timeout(remaining)
+            .await
+            .expect("ask_user/request");
+        if message["type"] == "request" && message["method"] == "ask_user/request" {
+            break message;
+        }
+    };
+    assert_eq!(request["params"]["questions"][0]["id"], "question-1");
+    let request_id = request["params"]["request_id"].clone();
+    proc.send(&json!({
+        "type": "response",
+        "id": request["id"],
+        "result": {
+            "status": "success",
+            "data": {
+                "request_id": request_id,
+                "outcome": {
+                    "outcome": "answered",
+                    "answers": {
+                        "question-1": {"kind": "selected", "option_id": "option-1"}
+                    },
+                    "annotations": {}
+                }
+            }
+        }
+    }))
+    .await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut saw_success = false;
+    while tokio::time::Instant::now() < deadline {
+        let Some(message) = proc
+            .recv_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
+            .await
+        else {
+            break;
+        };
+        if message["type"] == "notification"
+            && message["method"] == "stream/event"
+            && message["params"]["event"]["event"] == "tool_use_completed"
+            && message["params"]["event"]["kind"] == "success"
+        {
+            saw_success = true;
+            break;
+        }
+    }
+    assert!(saw_success, "typed answer should resume the tool");
+    let mut child = proc.close().await;
+    let _ = tokio::time::timeout(Duration::from_secs(10), child.wait()).await;
+}
+
+#[tokio::test]
+async fn websocket_ask_user_capability_negotiates_typed_roundtrip() {
+    use orbcode_app_server_client::{
+        AppClient, AskUserAnswerValue, AskUserQuestionRequest, AskUserResponseOutcome,
+    };
+    use orbcode_protocol::{StreamEvent, ToolUseCompletionKind};
+    use std::collections::BTreeMap;
+
+    let home = tempfile::tempdir().expect("home");
+    let cwd = tempfile::tempdir().expect("cwd");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("address");
+    drop(listener);
+    let mut child = Command::new(ORBCODE_BIN)
+        .arg("serve")
+        .arg("--websocket")
+        .arg(addr.to_string())
+        .arg("--auth-token")
+        .arg("ask-token")
+        .current_dir(cwd.path())
+        .env("ORBCODE_HOME", home.path())
+        .env("HOME", home.path())
+        .env(
+            "ANTHROPIC_BASE_URL",
+            format!("mock://anthropic?scenario={ASK_USER_SCENARIO}"),
+        )
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .env("RUST_LOG", "warn")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn websocket server");
+    let endpoint = format!("ws://{addr}");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let client = loop {
+        match AppClient::connect_websocket_interactive(&endpoint, "ask-token").await {
+            Ok(client) => break client,
+            Err(error) if tokio::time::Instant::now() < deadline => {
+                let _ = error;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => {
+                child.kill().await.ok();
+                panic!("connect interactive websocket client: {error}");
+            }
+        }
+    };
+    let bootstrap = client.bootstrap(None).await.expect("bootstrap");
+    let session_id = bootstrap.session.session_id.clone();
+    let mut requests = client
+        .take_server_request_receiver()
+        .await
+        .expect("server request receiver");
+    let mut stream = client
+        .submit_turn_stream(&session_id, "ask")
+        .await
+        .expect("submit interactive turn");
+    let envelope = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let request = requests.recv().await.expect("server request");
+            if request.method == "ask_user/request" {
+                return request;
+            }
+        }
+    })
+    .await
+    .expect("AskUser request timeout");
+    let request: AskUserQuestionRequest =
+        serde_json::from_value(envelope.params).expect("canonical request");
+    assert_eq!(request.questions[0].id, "question-1");
+    assert!(
+        client
+            .respond_to_ask_user_question_outcome(
+                &request.request_id,
+                AskUserResponseOutcome::Answered {
+                    answers: BTreeMap::from([(
+                        "question-1".into(),
+                        AskUserAnswerValue::Selected {
+                            option_id: "option-1".into(),
+                        },
+                    )]),
+                    annotations: BTreeMap::new(),
+                },
+            )
+            .await
+    );
+    let completed = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = stream.recv().await {
+            if let StreamEvent::ToolUseCompleted {
+                tool_name, kind, ..
+            } = event
+                && tool_name == "AskUserQuestion"
+            {
+                return kind;
+            }
+        }
+        panic!("stream closed before tool completion");
+    })
+    .await
+    .expect("tool completion timeout");
+    assert_eq!(completed, ToolUseCompletionKind::Success);
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = stream.recv().await {
+            if matches!(event, StreamEvent::TurnFinished { .. }) {
+                return;
+            }
+        }
+        panic!("first turn closed before finishing");
+    })
+    .await
+    .expect("first turn finish timeout");
+
+    drop(client);
+    child.kill().await.ok();
+}
+
 // ---------------------------------------------------------------------------
 // 1. stdio: permission server-request round-trip
 // ---------------------------------------------------------------------------

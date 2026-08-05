@@ -201,7 +201,10 @@ impl TuiState {
 
     pub(crate) fn request_status_height_for_layout(&mut self, width: usize) -> u16 {
         let cwd = self.cwd.clone();
-        if matches!(self.overlay, Some(OverlayState::PermissionRequest(_))) {
+        if matches!(
+            self.overlay,
+            Some(OverlayState::PermissionRequest(_) | OverlayState::AskUserQuestion(_))
+        ) {
             return 0;
         }
         if let Some(panel) = overlay_request_panel(self.overlay.as_mut(), &cwd, width) {
@@ -226,7 +229,8 @@ impl TuiState {
                 | OverlayState::MemoryPicker(_)
                 | OverlayState::PermissionPicker(_)
                 | OverlayState::RewindPicker(_)
-                | OverlayState::PermissionRequest(_),
+                | OverlayState::PermissionRequest(_)
+                | OverlayState::AskUserQuestion(_),
             ) => unreachable!("overlay request panel should be handled before fallback"),
             None if !self.request_in_flight => {
                 let standalone_panel = self.request_status_lines_for_width(width).len();

@@ -24,6 +24,57 @@ pub struct ClientCapabilities {
     pub streaming: bool,
     #[serde(default)]
     pub experimental_methods: bool,
+    /// Interactive question behaviors this connection can complete. Missing
+    /// means the capability is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive_questions: Option<InteractiveQuestionsCapability>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct InteractiveQuestionsCapability {
+    #[serde(default)]
+    pub single_select: bool,
+    #[serde(default)]
+    pub multi_select: bool,
+    #[serde(default)]
+    pub free_text: bool,
+    #[serde(default)]
+    pub previews: bool,
+    #[serde(default)]
+    pub annotations: bool,
+    #[serde(default)]
+    pub special_outcomes: bool,
+}
+
+impl InteractiveQuestionsCapability {
+    pub fn full() -> Self {
+        Self {
+            single_select: true,
+            multi_select: true,
+            free_text: true,
+            previews: true,
+            annotations: true,
+            special_outcomes: true,
+        }
+    }
+
+    pub fn fully_supported(&self) -> bool {
+        self.single_select
+            && self.multi_select
+            && self.free_text
+            && self.previews
+            && self.annotations
+            && self.special_outcomes
+    }
+
+    /// ACP's stable `session/request_permission` mapping: one option may be
+    /// selected, but rich canonical interactions remain unsupported.
+    pub fn option_only() -> Self {
+        Self {
+            single_select: true,
+            ..Self::default()
+        }
+    }
 }
 
 /// Result returned by the server for the `initialize` request.
@@ -83,6 +134,7 @@ mod tests {
         let params: InitializeParams = serde_json::from_value(value).unwrap();
         assert!(!params.capabilities.streaming);
         assert!(!params.capabilities.experimental_methods);
+        assert!(params.capabilities.interactive_questions.is_none());
     }
 
     #[test]
@@ -90,6 +142,7 @@ mod tests {
         let caps = ClientCapabilities::default();
         assert!(!caps.streaming);
         assert!(!caps.experimental_methods);
+        assert!(caps.interactive_questions.is_none());
     }
 
     #[test]
@@ -108,6 +161,17 @@ mod tests {
         let value = json!({"streaming": true});
         let caps: ClientCapabilities = serde_json::from_value(value).unwrap();
         assert!(!caps.experimental_methods);
+    }
+
+    #[test]
+    fn interactive_questions_requires_explicit_complete_capability() {
+        let full = InteractiveQuestionsCapability::full();
+        assert!(full.fully_supported());
+        let partial: InteractiveQuestionsCapability = serde_json::from_value(json!({
+            "single_select": true
+        }))
+        .unwrap();
+        assert!(!partial.fully_supported());
     }
 
     #[test]

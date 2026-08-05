@@ -587,6 +587,16 @@ async fn tools_list_returns_foundation_tools() {
                     "each tool should have a name"
                 );
             }
+            let ask_user = tools
+                .iter()
+                .find(|tool| tool["name"] == "ask-user-question")
+                .expect("AskUserQuestion diagnostic entry");
+            assert_eq!(
+                ask_user["unavailable_reason"].as_str(),
+                Some(
+                    "available to the provider only for turns owned by a client that declares the full interactive_questions capability"
+                )
+            );
         }
         other => panic!("expected tools/list success, got: {other:?}"),
     }

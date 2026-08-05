@@ -81,9 +81,14 @@ fn headless_stream_json_and_acp_have_no_raw_protocol_requests() {
 #[test]
 fn acp_accepts_a_preconstructed_app_client() {
     let source = cli_source("acp_sdk/mod.rs");
+    let main = cli_source("main.rs");
     assert!(
         source.contains("run_acp_adapter(client: Arc<AppClient>)"),
         "ACP must receive the canonical client instead of constructing or retaining AppServer"
+    );
+    assert!(
+        main.contains("Command::Acp => AppClient::new_option_only(app_server.clone()).await"),
+        "the CLI composition root must declare ACP's option-only interaction capability"
     );
     assert!(
         !source.contains("AppClient::new(app_server)"),

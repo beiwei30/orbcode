@@ -95,16 +95,25 @@ async fn main() -> Result<()> {
     let command = cli.command.unwrap_or(Command::Tui);
 
     if let Command::Remote { endpoint, token } = command {
-        let remote_client = Arc::new(connect_remote_client(&endpoint, &token).await?);
+        let remote_client = Arc::new(connect_remote_client(&endpoint, &token, true).await?);
         orbcode_tui::run_tui(remote_client, None).await?;
         return Ok(());
     }
 
     let app_server = AppServer::new(cwd, overrides).await?;
+    let interactive_client = matches!(
+        &command,
+        Command::Tui | Command::Resume { .. } | Command::Fork { tui: true, .. }
+    ) || (print_mode
+        && matches!(input_format, CliInputFormat::StreamJson)
+        && matches!(output_format, CliOutputFormat::StreamJson));
     let client = Arc::new(
-        AppClient::new(app_server.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
+        match &command {
+            Command::Acp => AppClient::new_option_only(app_server.clone()).await,
+            _ if interactive_client => AppClient::new_interactive(app_server.clone()).await,
+            _ => AppClient::new(app_server.clone()).await,
+        }
+        .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
     );
 
     if print_mode {
@@ -340,23 +349,35 @@ fn print_serve_connection_info(value: serde_json::Value) {
     let _ = stdout.flush();
 }
 
-async fn connect_remote_client(endpoint: &str, token: &str) -> Result<AppClient> {
+async fn connect_remote_client(
+    endpoint: &str,
+    token: &str,
+    interactive: bool,
+) -> Result<AppClient> {
     if is_websocket_endpoint(endpoint) {
-        AppClient::connect_websocket(endpoint, token)
-            .await
-            .map_err(|e| anyhow::anyhow!("remote websocket connect: {e}"))
+        let client = if interactive {
+            AppClient::connect_websocket_interactive(endpoint, token).await
+        } else {
+            AppClient::connect_websocket(endpoint, token).await
+        };
+        client.map_err(|e| anyhow::anyhow!("remote websocket connect: {e}"))
     } else {
         #[cfg(not(unix))]
         {
-            let _ = token;
-            return Err(anyhow::anyhow!(
+            let _ = (token, interactive);
+            Err(anyhow::anyhow!(
                 "Unix socket transport is not supported on this platform"
-            ));
+            ))
         }
         #[cfg(unix)]
-        AppClient::connect_socket(std::path::Path::new(endpoint), token)
-            .await
-            .map_err(|e| anyhow::anyhow!("remote socket connect: {e}"))
+        {
+            let client = if interactive {
+                AppClient::connect_socket_interactive(std::path::Path::new(endpoint), token).await
+            } else {
+                AppClient::connect_socket(std::path::Path::new(endpoint), token).await
+            };
+            client.map_err(|e| anyhow::anyhow!("remote socket connect: {e}"))
+        }
     }
 }
 

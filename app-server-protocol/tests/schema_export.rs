@@ -349,3 +349,24 @@ fn schema_ask_user_question_response() {
         "AskUserQuestionResponse",
     );
 }
+
+#[test]
+fn schema_ask_user_question_spec() {
+    assert_schema_matches::<orbcode_app_server_protocol::AskUserQuestionSpec>(
+        "AskUserQuestionSpec",
+    );
+}
+
+#[test]
+fn schema_ask_user_response_outcome() {
+    assert_schema_matches::<orbcode_app_server_protocol::AskUserResponseOutcome>(
+        "AskUserResponseOutcome",
+    );
+}
+
+#[test]
+fn schema_interactive_questions_capability() {
+    assert_schema_matches::<orbcode_app_server_protocol::InteractiveQuestionsCapability>(
+        "InteractiveQuestionsCapability",
+    );
+}

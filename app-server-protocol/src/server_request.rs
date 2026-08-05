@@ -1,6 +1,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use orbcode_protocol::{
+    AskUserAnswerValue, AskUserCancellationReason, AskUserOption, AskUserQuestionSpec,
+    AskUserResponseOutcome, AskUserValidationError, validate_ask_user_outcome,
+    validate_ask_user_questions,
+};
+
 // ---------------------------------------------------------------------------
 // Permission decision (serializable wire type)
 // ---------------------------------------------------------------------------
@@ -56,30 +62,57 @@ pub struct McpTrustResponseParams {
 // ---------------------------------------------------------------------------
 
 /// Server-initiated request asking the connected client to prompt the user
-/// with a question and relay the answer back.
+/// with one or more questions and relay a typed outcome back.
 ///
 /// Sent via [`method::SERVER_REQUEST_ASK_USER`](crate::method::SERVER_REQUEST_ASK_USER).
 ///
-/// The full tool-level integration is wired: the `AskUserQuestion` tool
-/// pauses execution via `ToolContext::ask_user_tx`, the event pump in
-/// `MessageProcessor::pump_events` sends this as a server-request, and the
-/// client's response is routed back to the tool via
-/// `AppServer::resolve_ask_user_question`. Cancellation (disconnect,
-/// timeout, turn cancel) resolves with `None`.
+/// `question` and `options` are retained for protocol-1.0 clients. Canonical
+/// clients should use `questions`; servers normalize either representation at
+/// the boundary and validate the result before registering pending state.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct AskUserQuestionRequest {
     /// Session that owns the active turn for this question. Older clients may
     /// omit this field; servers should then fall back to their legacy routing.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub session_id: String,
-    /// Unique identifier for this question, used to correlate the response.
+    /// Turn that owns this interaction, when the transport has a stable id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Provider tool-use id that caused the interaction.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tool_use_id: String,
+    /// Unique identifier used to correlate the response.
     pub request_id: String,
-    /// The question text to present to the user.
+    /// Optional absolute RFC3339 deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
+    /// Validation error from a prior response attempt. When present, the same
+    /// server-request id remains pending and the client may retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_error: Option<AskUserValidationError>,
+    /// Canonical list of one to four questions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<AskUserQuestionSpec>,
+    /// Legacy protocol-1.0 question text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub question: String,
-    /// Optional list of choices. When provided, the client should present
-    /// these as selectable options rather than a free-text input.
+    /// Legacy protocol-1.0 option labels.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
+}
+
+impl AskUserQuestionRequest {
+    /// Return the canonical question list, normalizing a legacy one-question
+    /// payload when necessary.
+    pub fn canonical_questions(&self) -> Result<Vec<AskUserQuestionSpec>, AskUserValidationError> {
+        let questions = if self.questions.is_empty() {
+            vec![legacy_question_spec(&self.question, &self.options)]
+        } else {
+            self.questions.clone()
+        };
+        validate_ask_user_questions(&questions)?;
+        Ok(questions)
+    }
 }
 
 /// Client's response to an [`AskUserQuestionRequest`].
@@ -87,9 +120,79 @@ pub struct AskUserQuestionRequest {
 pub struct AskUserQuestionResponse {
     /// The `request_id` from the original [`AskUserQuestionRequest`].
     pub request_id: String,
-    /// The user's answer. `None` if the user dismissed or cancelled the
-    /// prompt without providing an answer.
+    /// Canonical typed response. New clients should always populate this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<AskUserResponseOutcome>,
+    /// Legacy protocol-1.0 answer. A missing or null value normalizes to a
+    /// client-closed cancellation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+}
+
+impl AskUserQuestionResponse {
+    /// Normalize a canonical or legacy response and validate it against the
+    /// original request without consuming pending state.
+    pub fn canonical_outcome(
+        &self,
+        request: &AskUserQuestionRequest,
+    ) -> Result<AskUserResponseOutcome, AskUserValidationError> {
+        let questions = request.canonical_questions()?;
+        let outcome = match &self.outcome {
+            Some(outcome) => outcome.clone(),
+            None => legacy_response_outcome(&questions, self.answer.as_deref()),
+        };
+        validate_ask_user_outcome(&questions, &outcome)?;
+        Ok(outcome)
+    }
+}
+
+fn legacy_question_spec(question: &str, options: &[String]) -> AskUserQuestionSpec {
+    AskUserQuestionSpec {
+        id: "question-1".to_string(),
+        question: question.to_string(),
+        header: "Question".to_string(),
+        multi_select: false,
+        options: options
+            .iter()
+            .enumerate()
+            .map(|(index, label)| AskUserOption {
+                id: format!("option-{}", index + 1),
+                label: label.clone(),
+                description: String::new(),
+                preview: None,
+            })
+            .collect(),
+        allow_free_text: true,
+        allow_annotation: false,
+    }
+}
+
+fn legacy_response_outcome(
+    questions: &[AskUserQuestionSpec],
+    answer: Option<&str>,
+) -> AskUserResponseOutcome {
+    let Some(answer) = answer else {
+        return AskUserResponseOutcome::Cancelled {
+            reason: AskUserCancellationReason::ClientClosed,
+        };
+    };
+    let question = &questions[0];
+    let value = question
+        .options
+        .iter()
+        .find(|option| option.id == answer || option.label == answer)
+        .map_or_else(
+            || AskUserAnswerValue::Text {
+                text: answer.to_string(),
+            },
+            |option| AskUserAnswerValue::Selected {
+                option_id: option.id.clone(),
+            },
+        );
+    AskUserResponseOutcome::Answered {
+        answers: std::collections::BTreeMap::from([(question.id.clone(), value)]),
+        annotations: std::collections::BTreeMap::new(),
+    }
 }
 
 #[cfg(test)]
@@ -240,7 +343,12 @@ mod tests {
     fn ask_user_question_request_roundtrip() {
         let req = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-1".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "What is the target branch?".into(),
             options: vec!["main".into(), "develop".into()],
         };
@@ -253,7 +361,12 @@ mod tests {
     fn ask_user_question_request_no_options_roundtrip() {
         let req = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-2".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "Enter your name".into(),
             options: vec![],
         };
@@ -266,7 +379,12 @@ mod tests {
     fn ask_user_question_request_options_skipped_when_empty() {
         let req = AskUserQuestionRequest {
             session_id: "session-ask".into(),
+            turn_id: None,
+            tool_use_id: String::new(),
             request_id: "ask-3".into(),
+            deadline: None,
+            validation_error: None,
+            questions: Vec::new(),
             question: "Confirm?".into(),
             options: vec![],
         };
@@ -297,6 +415,7 @@ mod tests {
     fn ask_user_question_response_with_answer_roundtrip() {
         let resp = AskUserQuestionResponse {
             request_id: "ask-1".into(),
+            outcome: None,
             answer: Some("main".into()),
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -308,6 +427,7 @@ mod tests {
     fn ask_user_question_response_cancelled_roundtrip() {
         let resp = AskUserQuestionResponse {
             request_id: "ask-1".into(),
+            outcome: None,
             answer: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -323,5 +443,83 @@ mod tests {
         });
         let resp: AskUserQuestionResponse = serde_json::from_value(value).unwrap();
         assert_eq!(resp.answer, None);
+    }
+
+    #[test]
+    fn canonical_request_and_answer_roundtrip_and_validate() {
+        let question = AskUserQuestionSpec {
+            id: "database".into(),
+            question: "Which database?".into(),
+            header: "Database".into(),
+            multi_select: false,
+            options: vec![AskUserOption {
+                id: "postgres".into(),
+                label: "PostgreSQL".into(),
+                description: "Relational".into(),
+                preview: Some("CREATE TABLE users (...)".into()),
+            }],
+            allow_free_text: true,
+            allow_annotation: true,
+        };
+        let request = AskUserQuestionRequest {
+            session_id: "session-ask".into(),
+            turn_id: Some("turn-1".into()),
+            tool_use_id: "tool-1".into(),
+            request_id: "ask-canonical".into(),
+            deadline: Some("2026-08-05T12:00:00Z".into()),
+            validation_error: None,
+            questions: vec![question],
+            question: String::new(),
+            options: Vec::new(),
+        };
+        let response = AskUserQuestionResponse {
+            request_id: request.request_id.clone(),
+            outcome: Some(AskUserResponseOutcome::Answered {
+                answers: std::collections::BTreeMap::from([(
+                    "database".into(),
+                    AskUserAnswerValue::Selected {
+                        option_id: "postgres".into(),
+                    },
+                )]),
+                annotations: std::collections::BTreeMap::from([(
+                    "database".into(),
+                    "Use the current stable release".into(),
+                )]),
+            }),
+            answer: None,
+        };
+        let wire = serde_json::to_value(&response).unwrap();
+        let decoded: AskUserQuestionResponse = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            decoded.canonical_outcome(&request).unwrap(),
+            response.outcome.unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_request_and_answer_normalize_to_option_id() {
+        let request: AskUserQuestionRequest = serde_json::from_value(json!({
+            "request_id": "ask-legacy",
+            "question": "Which database?",
+            "options": ["PostgreSQL", "SQLite"]
+        }))
+        .unwrap();
+        let response: AskUserQuestionResponse = serde_json::from_value(json!({
+            "request_id": "ask-legacy",
+            "answer": "SQLite"
+        }))
+        .unwrap();
+        assert_eq!(
+            response.canonical_outcome(&request).unwrap(),
+            AskUserResponseOutcome::Answered {
+                answers: std::collections::BTreeMap::from([(
+                    "question-1".into(),
+                    AskUserAnswerValue::Selected {
+                        option_id: "option-2".into()
+                    }
+                )]),
+                annotations: std::collections::BTreeMap::new(),
+            }
+        );
     }
 }

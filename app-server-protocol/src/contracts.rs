@@ -401,6 +401,7 @@ pub struct ToolOverview {
     pub requires_tools_permission: bool,
     pub requires_network_permission: bool,
     pub provider_hidden: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

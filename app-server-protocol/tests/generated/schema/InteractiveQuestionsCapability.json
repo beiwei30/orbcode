@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InteractiveQuestionsCapability",
+  "type": "object",
+  "properties": {
+    "single_select": {
+      "type": "boolean",
+      "default": false
+    },
+    "multi_select": {
+      "type": "boolean",
+      "default": false
+    },
+    "free_text": {
+      "type": "boolean",
+      "default": false
+    },
+    "previews": {
+      "type": "boolean",
+      "default": false
+    },
+    "annotations": {
+      "type": "boolean",
+      "default": false
+    },
+    "special_outcomes": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

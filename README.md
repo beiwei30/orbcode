@@ -175,7 +175,7 @@ list with its permission requirements.
 | Skills and discovery | Beta | `Skill`, `ToolSearch` |
 | Code intelligence | Experimental | `LSP` — heuristic queries over the workspace, not a real language-server client. |
 | Workflows | Experimental | `Workflow` — starts a generated dynamic workflow as a durable background task. |
-| Interactive questions | Experimental | `AskUserQuestion` — hidden from the provider; renders a payload for a later approval step. |
+| Interactive questions | Experimental | `AskUserQuestion` — capability-gated per active turn. The local/remote TUI and opted-in duplex stream-json support 1–4 single/multi-select questions, Other text, notes, previews, and typed special/cancellation outcomes. Ordinary print/background turns keep it hidden; ACP declares only its stable option-only mapping, so it never enables the canonical provider schema. See [interactive questions](docs/interactive-questions.md). |
 | Deferred | Deferred | `PowerShell`, `Cron*`, `Monitor`, `Sleep`, `Browser`, `RemoteTrigger`, `Teams`, `Vault`, `ReviewArtifact`, `SyntheticOutput`, `Marketplace`, `PushNotification`, `ScheduleWakeup`, `EnterWorktree`, `ExitWorktree`. A registry invariant test keeps these out of both the catalog and provider requests until they are closed-loop. |
 
 ### Permissions and sandboxing
