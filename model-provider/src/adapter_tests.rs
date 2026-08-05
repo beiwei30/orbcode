@@ -520,6 +520,19 @@ fn anthropic_request_body_maps_effort_to_thinking_budget() {
 }
 
 #[test]
+fn anthropic_request_body_prefers_explicit_thinking_budget() {
+    let mut request = provider_test_request("stub://anthropic".to_string());
+    request.effort = Some(EffortLevel::Low);
+    request.options.max_thinking_tokens = Some(12_345);
+
+    let body = build_anthropic_request_body(&request);
+
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["thinking"]["budget_tokens"], 12_345);
+    assert_eq!(body["max_tokens"], 16_441);
+}
+
+#[test]
 fn anthropic_request_body_disable_thinking_overrides_effort() {
     let mut request = provider_test_request("stub://anthropic".to_string());
     request.disable_thinking = true;

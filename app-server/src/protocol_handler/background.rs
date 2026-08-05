@@ -72,4 +72,15 @@ impl AppServer {
             Err(e) => core_error(e),
         }
     }
+
+    pub(super) async fn handle_background_cancel_async(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: orbcode_app_server_protocol::CancelAsyncTaskParams = try_parse!(params);
+        match self.cancel_async_task(&p.session_id, &p.task_id).await {
+            Ok(result) => success(result),
+            Err(e) => core_error(e),
+        }
+    }
 }

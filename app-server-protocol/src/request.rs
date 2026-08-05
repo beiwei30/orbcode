@@ -22,3 +22,25 @@ pub struct BootstrapParams {
     #[serde(default)]
     pub read_only: bool,
 }
+
+/// Set or clear the per-session thinking-token override.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SetThinkingBudgetParams {
+    pub session_id: String,
+    pub max_thinking_tokens: Option<u32>,
+}
+
+/// Seed one validated file identity into the shared stale-write guard.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SeedReadStateParams {
+    pub session_id: String,
+    pub path: String,
+    pub mtime: u64,
+}
+
+/// Cancel one background task owned by a session.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct CancelAsyncTaskParams {
+    pub session_id: String,
+    pub task_id: String,
+}

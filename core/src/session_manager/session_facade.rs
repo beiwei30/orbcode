@@ -8,6 +8,8 @@ use orbcode_config::{
 };
 use orbcode_model_provider::{ProviderDescriptor, supported_providers};
 use orbcode_protocol::EffortLevel;
+use orbcode_tools::FileReadState;
+use std::sync::Arc;
 
 use super::{SessionControlOverrides, SessionManager};
 use crate::{
@@ -31,7 +33,9 @@ impl SessionManager {
         let Some(controls) = self.session_controls_read().get(session_id).cloned() else {
             return config;
         };
-        config.apply_runtime_model_override(controls.model.as_deref());
+        if controls.model_overridden {
+            config.apply_runtime_model_override(controls.model.as_deref());
+        }
         config.permission_mode = Some(controls.permission_mode);
         if let Some(allow_tools) = controls.permission_mode.default_allow_tools() {
             config.allow_tools = allow_tools;
@@ -60,7 +64,9 @@ impl SessionManager {
             .entry(session.session_id.clone())
             .or_insert(SessionControlOverrides {
                 permission_mode,
+                permission_mode_overridden: false,
                 model,
+                model_overridden: false,
                 effort,
             });
     }
@@ -90,8 +96,15 @@ impl SessionManager {
             .cloned()
             .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))?;
         let mut config = self.effective_config();
-        config.apply_runtime_model_override(controls.model.as_deref());
-        Ok(config.model_options_for_setting(controls.model.as_deref()))
+        if controls.model_overridden {
+            config.apply_runtime_model_override(controls.model.as_deref());
+        }
+        let current_model = if controls.model_overridden {
+            controls.model
+        } else {
+            config.provider_model_setting()
+        };
+        Ok(config.model_options_for_setting(current_model.as_deref()))
     }
 
     pub fn session_effort_options(&self, session_id: &str) -> Result<Vec<EffortLevel>, CoreError> {
@@ -144,10 +157,12 @@ impl SessionManager {
             )));
         }
         self.ensure_session_controls_mutable(session_id).await?;
-        self.session_controls_write()
+        let mut controls = self.session_controls_write();
+        let controls = controls
             .get_mut(session_id)
-            .expect("session controls validated before mutation")
-            .permission_mode = mode;
+            .expect("session controls validated before mutation");
+        controls.permission_mode = mode;
+        controls.permission_mode_overridden = true;
         Ok(())
     }
 
@@ -171,10 +186,14 @@ impl SessionManager {
                 model.as_deref().unwrap_or("default")
             )));
         }
-        self.session_controls_write()
-            .get_mut(session_id)
-            .expect("session controls validated before mutation")
-            .model = model;
+        {
+            let mut controls = self.session_controls_write();
+            let controls = controls
+                .get_mut(session_id)
+                .expect("session controls validated before mutation");
+            controls.model = model;
+            controls.model_overridden = true;
+        }
 
         let available_effort = self.session_effort_options(session_id)?;
         let mut controls = self.session_controls_write();
@@ -299,6 +318,19 @@ impl SessionManager {
         self.runtime_state.set_effort_override(effort);
     }
 
+    pub fn max_thinking_tokens(&self) -> Option<u32> {
+        self.runtime_state.max_thinking_tokens()
+    }
+
+    pub fn set_max_thinking_tokens(&self, max_thinking_tokens: Option<u32>) {
+        self.runtime_state
+            .set_max_thinking_tokens(max_thinking_tokens);
+    }
+
+    pub fn read_state(&self) -> Arc<FileReadState> {
+        Arc::clone(&self.read_state)
+    }
+
     pub async fn set_effort_override_for_session(
         &self,
         session_id: &str,
@@ -364,7 +396,11 @@ impl SessionManager {
         let mut permissions = self
             .permission_runtime
             .permission_context(&config, self.additional_directories());
-        if self.session_controls_read().contains_key(session_id) {
+        if self
+            .session_controls_read()
+            .get(session_id)
+            .is_some_and(|controls| controls.permission_mode_overridden)
+        {
             // A session-scoped mode must not inherit another client's
             // process-global allow-all switch.
             permissions.allow_tools = config.allow_tools;

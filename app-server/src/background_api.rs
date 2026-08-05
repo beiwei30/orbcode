@@ -1,10 +1,14 @@
 use chrono::{DateTime, Utc};
+use orbcode_app_server_protocol::{AsyncCancellationResultKind, CancelAsyncTaskResult};
 use orbcode_core::CoreError;
 use orbcode_protocol::{
     BackgroundTaskProgressEvent, BackgroundTaskView, BackgroundTaskViewKind, StreamEvent,
     WorkflowStepView, WorkflowStepViewStatus,
 };
-use orbcode_tools::{read_background_task_record, subscribe_progress_stream, task_record_to_view};
+use orbcode_tools::{
+    BackgroundTaskKind, cancel_background_task, read_background_task_record,
+    subscribe_progress_stream, task_record_to_view,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -36,6 +40,81 @@ fn drain_broadcast_backlog(rx: &mut tokio::sync::broadcast::Receiver<StreamEvent
 }
 
 impl AppServer {
+    /// Cancel one SDK async message without conflating missing and terminal jobs.
+    pub async fn cancel_async_task(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<CancelAsyncTaskResult, CoreError> {
+        self.ensure_active_session(session_id)?;
+        let home_dir = &self.sessions.config().home_dir;
+        if let Some(record) = read_background_task_record(home_dir, task_id).await? {
+            if record.session_id != session_id && !self.allow_all() {
+                return Err(CoreError::PermissionDenied(format!(
+                    "cannot stop background task {task_id}: it belongs to session {} \
+                     (current session is {session_id})",
+                    record.session_id,
+                )));
+            }
+            if !record.status.is_active() {
+                return Ok(async_cancel_result(
+                    session_id,
+                    task_id,
+                    AsyncCancellationResultKind::AlreadyTerminal,
+                ));
+            }
+            match record.task_kind {
+                BackgroundTaskKind::BackgroundJob => {
+                    self.cancel_background_job_for_session(task_id, Some(session_id))
+                        .await?;
+                }
+                BackgroundTaskKind::LocalAgent | BackgroundTaskKind::Workflow => {
+                    if !cancel_background_task(task_id) {
+                        return Err(CoreError::Config(format!(
+                            "background task {task_id} has no live cancellation listener"
+                        )));
+                    }
+                }
+            }
+            return Ok(async_cancel_result(
+                session_id,
+                task_id,
+                AsyncCancellationResultKind::Signalled,
+            ));
+        }
+
+        let local_shell_tasks = self.sessions.local_shell_tasks();
+        if tokio::fs::try_exists(local_shell_tasks.record_path_for(task_id)).await? {
+            let record = local_shell_tasks.load(task_id).await?;
+            if record.session_id != session_id && !self.allow_all() {
+                return Err(CoreError::PermissionDenied(format!(
+                    "cannot stop local shell task {task_id}: it belongs to session {} \
+                     (current session is {session_id})",
+                    record.session_id,
+                )));
+            }
+            if record.status.is_terminal() {
+                return Ok(async_cancel_result(
+                    session_id,
+                    task_id,
+                    AsyncCancellationResultKind::AlreadyTerminal,
+                ));
+            }
+            local_shell_tasks.request_cancel(task_id).await?;
+            return Ok(async_cancel_result(
+                session_id,
+                task_id,
+                AsyncCancellationResultKind::Signalled,
+            ));
+        }
+
+        Ok(async_cancel_result(
+            session_id,
+            task_id,
+            AsyncCancellationResultKind::NotFound,
+        ))
+    }
+
     pub async fn create_background_job(
         &self,
         session_id: &str,
@@ -390,6 +469,18 @@ impl AppServer {
     }
 }
 
+fn async_cancel_result(
+    session_id: &str,
+    task_id: &str,
+    outcome: AsyncCancellationResultKind,
+) -> CancelAsyncTaskResult {
+    CancelAsyncTaskResult {
+        session_id: session_id.to_string(),
+        task_id: task_id.to_string(),
+        outcome,
+    }
+}
+
 async fn read_log_tail(path: &str) -> Option<Vec<String>> {
     let contents = tokio::fs::read_to_string(path).await.ok()?;
     Some(
@@ -599,11 +690,17 @@ async fn attach_workflow_progress_events(home_dir: &Path, views: &mut [Backgroun
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::{Arc, atomic::AtomicBool};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use orbcode_app_server_protocol::AsyncCancellationResultKind;
     use orbcode_config::AppConfigOverrides;
     use orbcode_core::CoreError;
     use orbcode_protocol::StreamEvent;
+    use orbcode_tools::{
+        BackgroundTaskRecord, CreateLocalShellTask, register_background_task_cancel_flag,
+        unregister_background_task_cancel_flag, write_background_task_record,
+    };
 
     use orbcode_protocol::BackgroundTaskViewStatus;
 
@@ -772,6 +869,123 @@ mod tests {
             .await
             .expect("second cancel should be no-op");
         assert_eq!(second_cancel.status, BackgroundJobStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn sdk_async_cancel_distinguishes_terminal_and_signalled_local_shell_work() {
+        let home = test_path("sdk-cancel-home");
+        let cwd = test_path("sdk-cancel-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let app = AppServer::new(
+            cwd.clone(),
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+        let session_id = app
+            .bootstrap(None)
+            .await
+            .expect("bootstrap")
+            .session
+            .session_id;
+
+        let job = app
+            .create_background_job(&session_id, "already done")
+            .await
+            .expect("create job");
+        app.mark_background_cancelled(&job.job_id, Some("test terminal".to_string()))
+            .await
+            .expect("mark cancelled");
+        let terminal = app
+            .cancel_async_task(&session_id, &job.job_id)
+            .await
+            .expect("terminal outcome");
+        assert_eq!(
+            terminal.outcome,
+            AsyncCancellationResultKind::AlreadyTerminal
+        );
+        app.complete_background_job(&job.job_id)
+            .await
+            .expect_err("late completion must not revive cancelled work");
+        assert_eq!(
+            app.load_background_job(&job.job_id)
+                .await
+                .expect("reload cancelled job")
+                .status,
+            BackgroundJobStatus::Cancelled
+        );
+
+        let shell = app
+            .sessions
+            .local_shell_tasks()
+            .create(CreateLocalShellTask {
+                session_id: session_id.clone(),
+                command: "sleep 10".to_string(),
+                cwd: cwd.clone(),
+                label: None,
+            })
+            .await
+            .expect("create local shell task");
+        let signalled = app
+            .cancel_async_task(&session_id, &shell.task_id)
+            .await
+            .expect("signal local shell task");
+        assert_eq!(signalled.outcome, AsyncCancellationResultKind::Signalled);
+        assert!(
+            app.sessions
+                .local_shell_tasks()
+                .is_cancel_requested(&shell.task_id)
+        );
+
+        let task_records = [
+            BackgroundTaskRecord::new_local_agent(
+                "owned-agent".to_string(),
+                session_id.clone(),
+                "child-session".to_string(),
+                "tool-use".to_string(),
+                "general".to_string(),
+                "agent work".to_string(),
+                cwd.display().to_string(),
+                None,
+                None,
+                app.sessions
+                    .config()
+                    .home_dir
+                    .join("background/logs/owned-agent.log")
+                    .display()
+                    .to_string(),
+            ),
+            BackgroundTaskRecord::new_workflow(
+                "owned-workflow".to_string(),
+                session_id.clone(),
+                "workflow work".to_string(),
+                cwd.display().to_string(),
+                app.sessions
+                    .config()
+                    .home_dir
+                    .join("background/logs/owned-workflow.log")
+                    .display()
+                    .to_string(),
+            ),
+        ];
+        for record in task_records {
+            write_background_task_record(&app.sessions.config().home_dir, &record)
+                .await
+                .expect("write unified task record");
+            let flag = Arc::new(AtomicBool::new(false));
+            register_background_task_cancel_flag(&record.job_id, flag.clone());
+            let outcome = app
+                .cancel_async_task(&session_id, &record.job_id)
+                .await
+                .expect("signal unified task");
+            assert_eq!(outcome.outcome, AsyncCancellationResultKind::Signalled);
+            assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
+            unregister_background_task_cancel_flag(&record.job_id);
+        }
     }
 
     #[tokio::test]

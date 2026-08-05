@@ -5,8 +5,8 @@ use orbcode_app_server_protocol::{
     OutputStyleOptionOverview, OutputStyleOptionsResult, OutputStyleParams, OutputStyleResult,
     PathResult, ProviderResolutionOverview, ProvidersResult, ResponseResult,
     SandboxExcludedCommandParams, SandboxExcludedCommandResult, SandboxSettingsUpdate,
-    SessionIdParams, SetModelParams, SetModelResult, SettingKeyParams, SettingLockedResult,
-    StringPathParams, ThemeParams, ThemeResult,
+    SessionIdParams, SetModelParams, SetModelResult, SetThinkingBudgetParams, SettingKeyParams,
+    SettingLockedResult, StringPathParams, ThemeParams, ThemeResult,
 };
 use orbcode_config::ThemeSetting;
 use serde_json::Value;
@@ -40,8 +40,28 @@ impl AppServer {
 
     pub(super) async fn handle_settings_set_model(&self, params: Option<Value>) -> ResponseResult {
         let p: SetModelParams = try_parse!(params);
-        match self.set_model_override(p.model).await {
-            Ok(display_name) => success(SetModelResult { display_name }),
+        match p.session_id {
+            Some(session_id) => match self.set_session_model_override(&session_id, p.model).await {
+                Ok(result) => success(result),
+                Err(e) => core_error(e),
+            },
+            None => match self.set_model_override(p.model).await {
+                Ok(display_name) => success(SetModelResult { display_name }),
+                Err(e) => core_error(e),
+            },
+        }
+    }
+
+    pub(super) async fn handle_settings_set_thinking_budget(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: SetThinkingBudgetParams = try_parse!(params);
+        match self
+            .set_max_thinking_tokens(&p.session_id, p.max_thinking_tokens)
+            .await
+        {
+            Ok(result) => success(result),
             Err(e) => core_error(e),
         }
     }

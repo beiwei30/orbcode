@@ -138,6 +138,60 @@ async fn active_turn_rejects_session_control_changes_without_mutation() {
 }
 
 #[tokio::test]
+async fn explicit_session_mode_overrides_global_allow_all() {
+    let manager = test_manager().await;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    manager.set_allow_all(true);
+    assert!(
+        manager
+            .permission_context_for_session(&session.session_id)
+            .allow_tools,
+        "an untouched session must honor the global SDK permission control"
+    );
+
+    manager
+        .set_session_permission_mode(&session.session_id, PermissionMode::Plan)
+        .await
+        .expect("set explicit session mode");
+    assert!(
+        !manager
+            .permission_context_for_session(&session.session_id)
+            .allow_tools,
+        "an explicit session mode must remain isolated from global allow-all"
+    );
+}
+
+#[tokio::test]
+async fn explicit_session_model_overrides_global_model_control() {
+    let manager = test_manager().await;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    manager.set_runtime_model_override(Some("haiku".to_string()));
+    assert_eq!(
+        manager
+            .effective_config_for_session(&session.session_id)
+            .provider_model_setting()
+            .as_deref(),
+        Some("haiku"),
+        "an untouched session must honor the global SDK model control"
+    );
+
+    manager
+        .set_session_model(&session.session_id, Some("sonnet".to_string()))
+        .await
+        .expect("set explicit session model");
+    assert_eq!(
+        manager
+            .effective_config_for_session(&session.session_id)
+            .provider_model_setting()
+            .as_deref(),
+        Some("sonnet"),
+        "an explicit session model must remain isolated from global controls"
+    );
+}
+
+#[tokio::test]
 async fn stale_session_control_mutation_is_typed_and_side_effect_free() {
     let manager = test_manager().await;
     let error = manager

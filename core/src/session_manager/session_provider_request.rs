@@ -95,6 +95,7 @@ impl SessionManager {
                 .unwrap_or_else(|_| self.runtime_effort_override()),
             options: ProviderRequestOptions::default(),
         };
+        request.options.max_thinking_tokens = self.max_thinking_tokens();
         config.configure_provider_request(config.default_provider, &mut request);
         request
     }

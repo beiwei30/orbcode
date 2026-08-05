@@ -382,6 +382,18 @@
     "sensitive_fields": []
   },
   {
+    "method": "settings/set_thinking_budget",
+    "stability": "stable",
+    "params": "SetThinkingBudgetParams",
+    "result": "ThinkingBudgetResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
     "method": "settings/providers",
     "stability": "stable",
     "params": "EmptyParams",
@@ -710,6 +722,18 @@
     "sensitive_fields": []
   },
   {
+    "method": "mcp/status",
+    "stability": "stable",
+    "params": "EmptyParams",
+    "result": "McpStatusResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
     "method": "mcp/server_trust",
     "stability": "stable",
     "params": "McpServerIdParams",
@@ -942,6 +966,18 @@
       "app-server-client/src/lib.rs",
       "cli/src/commands/mod.rs",
       "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "tools/seed_read_state",
+    "stability": "stable",
+    "params": "SeedReadStateParams",
+    "result": "SeedReadStateResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs"
     ],
     "opaque_fields": [],
     "sensitive_fields": []
@@ -1372,6 +1408,18 @@
       "app-server-client/src/lib.rs",
       "cli/src",
       "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "background/cancel_async",
+    "stability": "experimental",
+    "params": "CancelAsyncTaskParams",
+    "result": "CancelAsyncTaskResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/headless.rs"
     ],
     "opaque_fields": [],
     "sensitive_fields": []

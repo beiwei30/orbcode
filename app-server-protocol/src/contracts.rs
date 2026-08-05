@@ -242,6 +242,8 @@ impl_list_result!(ModelOptionsResult, ModelOptionOverview);
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SetModelParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub model: Option<String>,
 }
 

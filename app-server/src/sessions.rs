@@ -72,6 +72,7 @@ impl AppServer {
             context,
             usage,
             report,
+            max_thinking_tokens: self.sessions.max_thinking_tokens(),
         })
     }
 
@@ -197,6 +198,7 @@ impl AppServer {
         previous_session_id: &str,
     ) -> Result<BootstrapState, CoreError> {
         let session = self.sessions.clear_session(previous_session_id).await?;
+        self.set_active_session_id(&session.session_id);
         let event = StreamEvent::SessionStarted {
             summary: session.summary(),
         };
@@ -238,6 +240,7 @@ impl AppServer {
             .rewind_session(session_id, keep_messages)
             .await?;
         let (session, bootstrap_event) = self.sessions.start_or_resume(Some(session_id)).await?;
+        self.set_active_session_id(&session.session_id);
         self.bootstrap_state(session, bootstrap_event, false).await
     }
 

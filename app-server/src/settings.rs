@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
+use orbcode_app_server_protocol::{ModelChangeResult, ThinkingBudgetResult};
 use orbcode_config::{
     EditorModeSetting, ModelOption, OutputStyleOption, ProviderModelResolution,
     ResolvedKeybindings, SandboxLocalSettings, SandboxSettingsUpdate, ThemeSetting,
     add_sandbox_excluded_command, load_keybindings, load_output_style_setting,
-    load_sandbox_local_settings, output_style_options, update_output_style_setting,
-    update_sandbox_settings,
+    load_sandbox_local_settings, model_capabilities, output_style_options,
+    update_output_style_setting, update_sandbox_settings,
 };
 use orbcode_core::{CoreError, ProviderDescriptor};
 use orbcode_protocol::{EffortLevel, ProviderId};
@@ -223,12 +224,104 @@ impl AppServer {
 
     pub async fn set_model_override(&self, model: Option<String>) -> Result<String, CoreError> {
         self.ensure_setting_mutable("model")?;
-        let model = model.and_then(|model| {
-            let trimmed = model.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        });
+        let model = self.validate_model_override(model)?;
         self.sessions.set_model_override(model).await?;
         Ok(self.sessions.model_display_name())
+    }
+
+    fn validate_model_override(&self, model: Option<String>) -> Result<Option<String>, CoreError> {
+        let Some(model) = model else {
+            return Ok(None);
+        };
+        let trimmed = model.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+            return Ok(None);
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err(CoreError::Config(
+                "model name must not contain control characters".to_string(),
+            ));
+        }
+        let config = self.sessions.effective_config();
+        if !config.default_provider.is_active() {
+            return Err(CoreError::Config(format!(
+                "provider '{}' cannot serve model requests",
+                config.default_provider
+            )));
+        }
+        if !config.policy.model_allowed(trimmed) {
+            return Err(CoreError::PermissionDenied(format!(
+                "model `{trimmed}` is not allowed by managed policy"
+            )));
+        }
+        let resolved = config.resolve_model_setting(config.default_provider, Some(trimmed));
+        if resolved.trim().is_empty() {
+            return Err(CoreError::Config(format!(
+                "model `{trimmed}` resolved to an empty provider model"
+            )));
+        }
+        Ok(Some(trimmed.to_string()))
+    }
+
+    /// Change the model through the same validated resolver used by the TUI,
+    /// returning the effective state observed by the next provider request.
+    pub async fn set_session_model_override(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<ModelChangeResult, CoreError> {
+        self.ensure_active_session(session_id)?;
+        self.set_model_override(model).await?;
+        let config = self.sessions.effective_config();
+        let resolution = config.provider_model_resolution(config.default_provider);
+        Ok(ModelChangeResult {
+            provider: config.default_provider,
+            model: resolution.request_model,
+            display_name: resolution.display_name,
+        })
+    }
+
+    /// Set or clear a numeric thinking budget for subsequent provider requests.
+    /// A request already being streamed owns an immutable ProviderRequest and is
+    /// therefore unaffected.
+    pub async fn set_max_thinking_tokens(
+        &self,
+        session_id: &str,
+        max_thinking_tokens: Option<u32>,
+    ) -> Result<ThinkingBudgetResult, CoreError> {
+        self.ensure_active_session(session_id)?;
+        if let Some(value) = max_thinking_tokens {
+            let config = self.sessions.effective_config();
+            if config.default_provider != ProviderId::Anthropic {
+                return Err(CoreError::Config(format!(
+                    "provider '{}' does not support a numeric thinking-token budget",
+                    config.default_provider
+                )));
+            }
+            let resolution = config.provider_model_resolution(config.default_provider);
+            let capabilities =
+                model_capabilities(&resolution.request_model, config.default_provider);
+            if !capabilities.supports_thinking {
+                return Err(CoreError::Config(format!(
+                    "model '{}' does not support extended thinking",
+                    resolution.request_model
+                )));
+            }
+            let max = capabilities
+                .max_output_tokens_upper_limit
+                .saturating_sub(4_096);
+            if !(1_024..=max).contains(&value) {
+                return Err(CoreError::Config(format!(
+                    "max_thinking_tokens must be between 1024 and {max} for model '{}'",
+                    resolution.request_model
+                )));
+            }
+        }
+        self.sessions.set_max_thinking_tokens(max_thinking_tokens);
+        Ok(ThinkingBudgetResult {
+            session_id: session_id.to_string(),
+            max_thinking_tokens: self.sessions.max_thinking_tokens(),
+        })
     }
 
     pub fn editor_mode_setting(&self) -> EditorModeSetting {

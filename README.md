@@ -143,7 +143,7 @@ the throwaway-home and tracing patterns.
 | --- | --- | --- |
 | Interactive TUI | Beta | ratatui chat UI, 46 slash commands, model/permission/sandbox/session/rewind/memory pickers, diff view, transcript pager, themes, vim keybindings. |
 | Headless prompt (`-p/--print`, `prompt`) | Stable | `--output-format text\|json\|stream-json`. |
-| `stream-json` duplex (`--input-format stream-json`) | Beta | NDJSON in and out. Control requests handled: `interrupt`, `set_permission_mode`, `get_session_state`; anything else gets a structured "unsupported" response. |
+| `stream-json` duplex (`--input-format stream-json`) | Beta | NDJSON in and out with correlated SDK controls; see the [control matrix](#stream-json-controls). |
 | Background jobs | Stable | `prompt --bg` plus `ps`, `logs`, `attach`, `kill`. |
 | Direct tool invocation (`orbcode tool`) | Beta | Runs one tool outside a turn; useful for debugging. |
 | ACP adapter (`orbcode acp`) | Experimental | Agent Client Protocol v1 over stdio; verified with Zed 1.13.2 on macOS 26.6 for startup, prompt/streaming, history restoration, model/thought controls, permission rejection, tool titles, and clean shutdown. See the [support matrix](docs/acp-support.md) and [Zed smoke guide](docs/acp-zed-smoke.md). |
@@ -346,6 +346,30 @@ printf '%s\n' \
   '{"type":"control_request","request_id":"1","request":{"subtype":"set_permission_mode","mode":"acceptEdits"}}' \
   | orbcode -p --verbose --input-format stream-json --output-format stream-json
 ```
+
+### Stream-json controls
+
+All host requests use `control_request` / `control_response` correlation. A real
+tool permission prompt travels in the other direction as `can_use_tool`; the
+host answers it with a `control_response` permission decision.
+
+| Subtype | Direction | Behavior |
+| --- | --- | --- |
+| `initialize` | Host → CLI | Idempotent session, model, tool, MCP, and capability snapshot. |
+| `interrupt` | Host → CLI | Immediately interrupts the active turn; idle calls are safe. |
+| `can_use_tool` | CLI → host | Resolves the existing permission server-request exactly once. |
+| `set_permission_mode` | Host → CLI | Applies to the next tool permission decision. |
+| `get_session_state` | Host → CLI | Returns authoritative typed session state. |
+| `get_context_usage` | Host → CLI | Returns the canonical context-usage breakdown. |
+| `mcp_status` | Host → CLI | Returns status-only MCP data with secrets omitted. |
+| `set_model` | Host → CLI | Sets or clears the model for the next provider request. |
+| `set_max_thinking_tokens` | Host → CLI | Sets or clears the validated Anthropic thinking budget for the next provider request. |
+| `seed_read_state` | Host → CLI | Seeds validated file identity into the normal stale-write guard. |
+| `cancel_async_message` | Host → CLI | Signals the single owned prompt job, local agent, workflow run, or local shell task named by `message_uuid`; returns `signalled`, `already_terminal`, or `not_found`. |
+| `rewind_files` | Host → CLI | Recognized but unsupported: transcript rewind is not file restoration. |
+
+Unknown future subtypes receive a correlated structured error. On EOF, any
+pending `can_use_tool` request is denied so the turn cannot remain blocked.
 
 Sandboxed edits scoped to two directories:
 
@@ -698,8 +722,9 @@ server. Neither substitutes for the other.
   `--agents`, `--system-prompt` (only `--append-system-prompt`).
 - **Hook coverage is partial** — see the hooks row in
   [Configuration and extensions](#configuration-and-extensions).
-- **The `stream-json` control union is a subset** — unsupported subtypes get a
-  structured error instead of being silently dropped.
+- **The `stream-json` control union is explicit** — the supported matrix is
+  documented above; unknown subtypes and `rewind_files` get a structured error
+  instead of being silently dropped.
 - **Feature lag.** New TypeScript-only features can take a while to land; the
   maturity tables above are the current honest picture.
 

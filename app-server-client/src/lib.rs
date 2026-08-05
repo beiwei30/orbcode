@@ -61,6 +61,16 @@ struct StreamRoute {
     close_on_terminal_background_task: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct PermissionModeValue {
+    mode: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ToolNameValue {
+    name: String,
+}
+
 #[derive(Default)]
 struct PendingServerRequests {
     permissions: HashMap<String, String>,
@@ -594,6 +604,16 @@ impl AppClient {
         .await
     }
 
+    /// Respond through the client-request fallback using the core decision type.
+    pub async fn respond_to_permission_request_decision(
+        &self,
+        request_id: &str,
+        decision: PermissionDecision,
+    ) -> Result<SentResult, ClientError> {
+        self.respond_to_permission_request(request_id, permission_decision_to_wire(decision))
+            .await
+    }
+
     /// Respond to a server-initiated request (e.g. a permission prompt
     /// received as a server-request rather than via the fallback
     /// `permission/respond` method).
@@ -603,6 +623,23 @@ impl AppClient {
         result: ResponseResult,
     ) -> Result<(), ClientError> {
         self.transport.respond_to_server_request(id, result).await
+    }
+
+    /// Reject a server-initiated request that this client surface cannot serve.
+    pub async fn reject_server_request(
+        &self,
+        id: String,
+        message: impl Into<String>,
+    ) -> Result<(), ClientError> {
+        self.respond_to_server_request(
+            id,
+            ResponseResult::Error(orbcode_app_server_protocol::ProtocolError {
+                code: orbcode_app_server_protocol::ErrorCode::InvalidRequest,
+                message: message.into(),
+                data: None,
+            }),
+        )
+        .await
     }
 
     // =========================================================================
@@ -616,6 +653,18 @@ impl AppClient {
 
     /// Full context overview including token usage and diagnostics.
     pub async fn context_overview(&self, session_id: &str) -> Result<ContextOverview, ClientError> {
+        self.request_typed(
+            method::CONTEXT_OVERVIEW,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
+    /// Full context overview without caller-side JSON field extraction.
+    pub async fn context_overview_typed(
+        &self,
+        session_id: &str,
+    ) -> Result<ContextOverview, ClientError> {
         self.request_typed(
             method::CONTEXT_OVERVIEW,
             Some(json!({ "session_id": session_id })),
@@ -641,6 +690,14 @@ impl AppClient {
         .await
     }
 
+    pub async fn cost_overview_typed(&self, session_id: &str) -> Result<CostOverview, ClientError> {
+        self.request_typed(
+            method::USAGE_COST,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
     /// Aggregate statistics across all sessions.
     pub async fn stats_overview(&self) -> Result<StatsOverview, ClientError> {
         self.request_typed(method::USAGE_STATS, None).await
@@ -655,9 +712,18 @@ impl AppClient {
         self.request_typed(method::PERMISSION_OVERVIEW, None).await
     }
 
+    pub async fn permission_overview_typed(&self) -> Result<PermissionOverview, ClientError> {
+        self.request_typed(method::PERMISSION_OVERVIEW, None).await
+    }
+
     /// Current permission mode.
     pub async fn permission_mode(&self) -> Result<PermissionModeResult, ClientError> {
         self.request_typed(method::PERMISSION_MODE, None).await
+    }
+
+    pub async fn permission_mode_name(&self) -> Result<String, ClientError> {
+        let value: PermissionModeValue = self.request_typed(method::PERMISSION_MODE, None).await?;
+        Ok(value.mode)
     }
 
     /// Set the runtime permission mode.
@@ -796,7 +862,42 @@ impl AppClient {
     ) -> Result<SetModelResult, ClientError> {
         self.request_typed(
             method::SETTINGS_SET_MODEL,
-            Some(serde_json::to_value(SetModelParams { model })?),
+            Some(serde_json::to_value(SetModelParams {
+                session_id: None,
+                model,
+            })?),
+        )
+        .await
+    }
+
+    /// Set or clear the validated model override for a loaded session.
+    pub async fn set_session_model_override(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<ModelChangeResult, ClientError> {
+        self.request_typed(
+            method::SETTINGS_SET_MODEL,
+            Some(serde_json::to_value(SetModelParams {
+                session_id: Some(session_id.to_string()),
+                model,
+            })?),
+        )
+        .await
+    }
+
+    /// Set or clear the numeric thinking budget used by subsequent requests.
+    pub async fn set_max_thinking_tokens(
+        &self,
+        session_id: &str,
+        max_thinking_tokens: Option<u32>,
+    ) -> Result<ThinkingBudgetResult, ClientError> {
+        self.request_typed(
+            method::SETTINGS_SET_THINKING_BUDGET,
+            Some(json!({
+                "session_id": session_id,
+                "max_thinking_tokens": max_thinking_tokens,
+            })),
         )
         .await
     }
@@ -895,6 +996,25 @@ impl AppClient {
         self.request_typed(method::TOOLS_LIST, None).await
     }
 
+    pub async fn list_tool_names(&self) -> Result<Vec<String>, ClientError> {
+        let values: Vec<ToolNameValue> = self.request_typed(method::TOOLS_LIST, None).await?;
+        Ok(values.into_iter().map(|value| value.name).collect())
+    }
+
+    /// Seed one file into the same stale-write state used by Read/Edit/Write.
+    pub async fn seed_read_state(
+        &self,
+        session_id: &str,
+        path: &str,
+        mtime: u64,
+    ) -> Result<SeedReadStateResult, ClientError> {
+        self.request_typed(
+            method::TOOLS_SEED_READ_STATE,
+            Some(json!({ "session_id": session_id, "path": path, "mtime": mtime })),
+        )
+        .await
+    }
+
     /// Load skill definitions from the workspace.
     pub async fn skill_definitions(&self) -> Result<SkillDefinitionsResult, ClientError> {
         self.request_typed(
@@ -965,6 +1085,11 @@ impl AppClient {
     /// List all configured MCP servers.
     pub async fn list_mcp_servers(&self) -> Result<McpListServersResult, ClientError> {
         self.request_typed("mcp/list_servers", None).await
+    }
+
+    /// Return the secret-free MCP status projection used by SDK controls.
+    pub async fn mcp_status(&self) -> Result<McpStatusResult, ClientError> {
+        self.request_typed(method::MCP_STATUS, None).await
     }
 
     /// Get the trust level for a specific MCP server.
@@ -1308,6 +1433,18 @@ impl AppClient {
         .await
     }
 
+    /// Full typed status overview for a session.
+    pub async fn status_overview_typed(
+        &self,
+        session_id: &str,
+    ) -> Result<StatusOverview, ClientError> {
+        self.request_typed(
+            method::DIAGNOSTICS_STATUS,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
     /// Memory file overview (user + project memories).
     pub async fn memory_overview(&self) -> Result<MemoryOverview, ClientError> {
         self.request_typed(method::DIAGNOSTICS_MEMORY, None).await
@@ -1576,6 +1713,13 @@ impl AppClient {
             .await
     }
 
+    pub async fn last_provider_request_snapshot_typed(
+        &self,
+    ) -> Result<ProviderRequestDebugSnapshot, ClientError> {
+        self.request_typed(method::DIAGNOSTICS_LAST_REQUEST, None)
+            .await
+    }
+
     /// Get pre-user instructions preview for a session.
     pub async fn pre_user_instructions_preview(
         &self,
@@ -1609,6 +1753,19 @@ impl AppClient {
     ) -> Result<BackgroundTaskListResult, ClientError> {
         self.request_typed(method::BACKGROUND_LIST_SUMMARY, None)
             .await
+    }
+
+    /// Cancel one async message with explicit signalled/terminal/missing outcome.
+    pub async fn cancel_async_task(
+        &self,
+        session_id: &str,
+        task_id: &str,
+    ) -> Result<CancelAsyncTaskResult, ClientError> {
+        self.request_typed(
+            method::BACKGROUND_CANCEL_ASYNC,
+            Some(json!({ "session_id": session_id, "task_id": task_id })),
+        )
+        .await
     }
 
     // =========================================================================
@@ -1667,6 +1824,17 @@ impl AppClient {
         )
         .await
         .is_ok()
+    }
+
+    /// Snapshot the currently unanswered permission request IDs.
+    pub async fn pending_permission_request_ids(&self) -> Vec<String> {
+        self.pending_server_requests
+            .lock()
+            .await
+            .permissions
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Respond to an MCP trust server-request.
@@ -3430,5 +3598,92 @@ mod tests {
             }
             other => panic!("expected Protocol(SessionNotFound), got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn model_and_thinking_controls_change_the_next_provider_request() {
+        let (client, session_id) = client_with_mock("sdk-model-thinking", "hello").await;
+        let model = "claude-haiku-4-5-20251001";
+        let changed = client
+            .set_session_model_override(&session_id, Some(model.to_string()))
+            .await
+            .expect("set model");
+        assert_eq!(changed.model, model);
+        let thinking = client
+            .set_max_thinking_tokens(&session_id, Some(4096))
+            .await
+            .expect("set thinking");
+        assert_eq!(thinking.max_thinking_tokens, Some(4096));
+
+        let mut stream = client
+            .submit_turn_stream(&session_id, "first request".to_string())
+            .await
+            .expect("submit first");
+        while let Some(event) = stream.recv().await {
+            if event.is_terminal() {
+                break;
+            }
+        }
+        let snapshot = client
+            .last_provider_request_snapshot_typed()
+            .await
+            .expect("debug snapshot");
+        assert_eq!(snapshot.model, model);
+        let body: serde_json::Value =
+            serde_json::from_str(&snapshot.body_json).expect("provider request body JSON");
+        assert_eq!(body["thinking"]["budget_tokens"], 4096);
+
+        client
+            .set_max_thinking_tokens(&session_id, None)
+            .await
+            .expect("clear thinking");
+        let mut stream = client
+            .submit_turn_stream(&session_id, "second request".to_string())
+            .await
+            .expect("submit second");
+        while let Some(event) = stream.recv().await {
+            if event.is_terminal() {
+                break;
+            }
+        }
+        let cleared = client
+            .last_provider_request_snapshot_typed()
+            .await
+            .expect("cleared snapshot");
+        assert_eq!(cleared.model, model);
+        let cleared_body: serde_json::Value =
+            serde_json::from_str(&cleared.body_json).expect("cleared provider request body JSON");
+        assert_ne!(cleared_body["thinking"]["budget_tokens"], 4096);
+        assert_eq!(
+            client
+                .status_overview_typed(&session_id)
+                .await
+                .expect("status")
+                .max_thinking_tokens,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_thinking_control_does_not_partially_mutate_state() {
+        let (client, session_id) = client_with_mock("sdk-thinking-invalid", "hello").await;
+        client
+            .set_max_thinking_tokens(&session_id, Some(4096))
+            .await
+            .expect("set valid budget");
+        assert!(
+            client
+                .set_max_thinking_tokens(&session_id, Some(1))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            client
+                .status_overview_typed(&session_id)
+                .await
+                .expect("status")
+                .max_thinking_tokens,
+            Some(4096)
+        );
     }
 }
