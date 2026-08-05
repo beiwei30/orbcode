@@ -11,6 +11,7 @@
 //! backward-compatible. Mapping this raw schema onto the protocol-level
 //! `TranscriptMessage`/`TranscriptBlock` types lives in `transcript.rs`.
 
+use orbcode_protocol::TranscriptJsonField;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -53,12 +54,22 @@ pub struct TranscriptRecord {
     pub cwd: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
-    #[serde(rename = "gitBranch", default)]
-    pub git_branch: Option<String>,
+    #[serde(
+        rename = "promptId",
+        default,
+        deserialize_with = "deserialize_transcript_json_field"
+    )]
+    pub prompt_id: TranscriptJsonField,
+    #[serde(
+        rename = "gitBranch",
+        default,
+        deserialize_with = "deserialize_transcript_json_field"
+    )]
+    pub git_branch: TranscriptJsonField,
     #[serde(rename = "requestId", default)]
     pub request_id: Option<String>,
-    #[serde(default)]
-    pub provider: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_transcript_json_field")]
+    pub provider: TranscriptJsonField,
     #[serde(rename = "billingBasis", default)]
     pub billing_basis: Option<String>,
     #[serde(default)]
@@ -235,8 +246,8 @@ pub struct RawToolUseBlock {
 pub struct RawToolResultBlock {
     #[serde(rename = "tool_use_id", alias = "toolUseId", default)]
     pub tool_use_id: Option<String>,
-    #[serde(default)]
-    pub content: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_transcript_json_field")]
+    pub content: TranscriptJsonField,
     #[serde(rename = "is_error", alias = "isError", default)]
     pub is_error: Option<bool>,
 }
@@ -267,6 +278,15 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::<Value>::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_transcript_json_field<'de, D>(
+    deserializer: D,
+) -> Result<TranscriptJsonField, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(TranscriptJsonField::from_present_value)
 }
 
 #[cfg(test)]
@@ -304,12 +324,107 @@ mod tests {
         assert_eq!(record.timestamp.as_deref(), Some("2026-01-01T00:00:00Z"));
         assert_eq!(record.cwd.as_deref(), Some("/repo"));
         assert_eq!(record.version.as_deref(), Some("1.2.3"));
-        assert_eq!(record.git_branch.as_deref(), Some("main"));
+        assert_eq!(record.git_branch.as_str(), Some("main"));
         assert_eq!(record.request_id.as_deref(), Some("req_abc"));
-        assert_eq!(record.provider.as_deref(), Some("anthropic"));
+        assert_eq!(record.provider.as_str(), Some("anthropic"));
         let message = record.message.as_ref().expect("message present");
         assert_eq!(message.model.as_deref(), Some("claude-opus-4-7"));
         assert_eq!(message.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn target_fields_and_tool_result_content_preserve_absent_null_and_value() {
+        let absent = TranscriptRecord::from_value(&json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1"}]
+            }
+        }))
+        .expect("absent fields decode");
+        assert_eq!(absent.prompt_id, TranscriptJsonField::Absent);
+        assert_eq!(absent.git_branch, TranscriptJsonField::Absent);
+        assert_eq!(absent.provider, TranscriptJsonField::Absent);
+        let absent_blocks = raw_content_blocks(
+            absent
+                .message
+                .as_ref()
+                .and_then(|message| message.content.as_ref())
+                .expect("content"),
+        );
+        assert!(matches!(
+            absent_blocks.as_slice(),
+            [RawContentBlock::ToolResult(RawToolResultBlock {
+                content: TranscriptJsonField::Absent,
+                ..
+            })]
+        ));
+
+        let null = TranscriptRecord::from_value(&json!({
+            "type": "user",
+            "promptId": null,
+            "gitBranch": null,
+            "provider": null,
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": null}]
+            }
+        }))
+        .expect("null fields decode");
+        assert_eq!(null.prompt_id, TranscriptJsonField::Null);
+        assert_eq!(null.git_branch, TranscriptJsonField::Null);
+        assert_eq!(null.provider, TranscriptJsonField::Null);
+        let null_blocks = raw_content_blocks(
+            null.message
+                .as_ref()
+                .and_then(|message| message.content.as_ref())
+                .expect("content"),
+        );
+        assert!(matches!(
+            null_blocks.as_slice(),
+            [RawContentBlock::ToolResult(RawToolResultBlock {
+                content: TranscriptJsonField::Null,
+                ..
+            })]
+        ));
+
+        let value = TranscriptRecord::from_value(&json!({
+            "type": "user",
+            "promptId": {"future": 1},
+            "gitBranch": ["future", "shape"],
+            "provider": "future-provider",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": [{"type": "text", "text": "ok"}]}]
+            }
+        }))
+        .expect("value fields decode");
+        assert_eq!(
+            value.prompt_id,
+            TranscriptJsonField::Value(json!({"future": 1}))
+        );
+        assert_eq!(
+            value.git_branch,
+            TranscriptJsonField::Value(json!(["future", "shape"]))
+        );
+        assert_eq!(
+            value.provider,
+            TranscriptJsonField::Value(json!("future-provider"))
+        );
+        let value_blocks = raw_content_blocks(
+            value
+                .message
+                .as_ref()
+                .and_then(|message| message.content.as_ref())
+                .expect("content"),
+        );
+        assert!(matches!(
+            value_blocks.as_slice(),
+            [RawContentBlock::ToolResult(RawToolResultBlock {
+                content: TranscriptJsonField::Value(Value::Array(items)),
+                ..
+            })] if items.len() == 1
+        ));
     }
 
     /// Transcripts written before the cc-rs -> orbcode rename carry

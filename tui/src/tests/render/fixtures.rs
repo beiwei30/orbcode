@@ -88,7 +88,7 @@ fn expanded_agent_card_renders_prompt_and_response_sections() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "## Summary\nThe CLI flow has two entry points.".to_string(),
+                    content: "## Summary\nThe CLI flow has two entry points.".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"status\":\"completed\",\"totalToolUseCount\":2,\"totalTokens\":18,\"totalDurationMs\":9200,\"content\":[{\"type\":\"text\",\"text\":\"## Summary\\nThe CLI flow has two entry points.\"}]}".to_string()),
                 }],
@@ -144,7 +144,7 @@ fn final_answer_keeps_prior_tool_steps_scrollable_in_virtual_timeline() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "bash-1".to_string(),
-            content: "total 60\n-rw-r--r-- Cargo.toml".to_string(),
+            content: "total 60\n-rw-r--r-- Cargo.toml".to_string().into(),
             is_error: false,
             metadata: Some(
                 "{\"status\":\"completed\",\"summary\":\"Listed workspace files.\"}".to_string(),

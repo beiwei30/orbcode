@@ -23,7 +23,8 @@ use orbcode_protocol::{
     SessionRecord, StreamEvent, TokenUsage, ToolUseCompletionKind, TranscriptMessage,
 };
 use orbcode_session_store::{
-    agent_tool_result_progress_record, initial_agent_progress_record, tool_result_message,
+    SessionWriteHints, agent_tool_result_progress_record, initial_agent_progress_record,
+    tool_result_message,
 };
 use orbcode_tools::read_background_task_record;
 use orbcode_tools::{
@@ -351,7 +352,7 @@ impl SessionManager {
     /// permissions) must not abort `run_agent_session_loop` after the model
     /// has already produced valid output. On failure we log and continue —
     /// the next snapshot (or the final one) will retry the full write.
-    async fn persist_child_agent_transcript_snapshot(
+    pub(super) async fn persist_child_agent_transcript_snapshot(
         &self,
         child_session_id: &str,
         agent: &AgentToolInput,
@@ -364,6 +365,7 @@ impl SessionManager {
         }
 
         let config = self.effective_config();
+        let context = self.context_preview().await;
         let mut session = SessionRecord::new();
         session.session_id = child_session_id.to_string();
         let title = agent.description.trim();
@@ -375,6 +377,7 @@ impl SessionManager {
             .first()
             .map_or_else(Utc::now, |message| message.created_at);
         session.cwd = Some(config.cwd.display().to_string());
+        session.git_branch = context.git_branch.clone();
         session.provider = Some(self.config.default_provider);
         session.model = Some(
             agent_definition
@@ -399,6 +402,15 @@ impl SessionManager {
             &transcript_path,
             &config.cwd,
         );
+        self.transcript_store
+            .record_session_hints(
+                child_session_id,
+                SessionWriteHints {
+                    git_branch: context.git_branch,
+                    provider: Some(config.default_provider),
+                },
+            )
+            .await;
         if let Err(error) = self.transcript_store.persist_full_session(&session).await {
             eprintln!(
                 "background agent {child_session_id}: failed to persist transcript snapshot: {error}"

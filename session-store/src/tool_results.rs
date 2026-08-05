@@ -184,7 +184,7 @@ impl ToolResultStore {
                     continue;
                 };
                 if let Some(replacement) = replacements.get(tool_use_id) {
-                    *content = replacement.clone();
+                    content.replace_text(replacement.clone());
                 }
             }
         }
@@ -228,7 +228,10 @@ fn collect_tool_result_budget_groups(
                     else {
                         continue;
                     };
-                    if content.trim().is_empty() || content.starts_with(PERSISTED_OUTPUT_TAG) {
+                    let persisted_content = content.provider_string();
+                    if persisted_content.trim().is_empty()
+                        || persisted_content.starts_with(PERSISTED_OUTPUT_TAG)
+                    {
                         continue;
                     }
                     if tool_names
@@ -237,12 +240,13 @@ fn collect_tool_result_budget_groups(
                     {
                         continue;
                     }
+                    let size = persisted_content.chars().count();
                     current.push(ToolResultBudgetCandidate {
                         message_index,
                         block_index,
                         tool_use_id: tool_use_id.clone(),
-                        content: content.clone(),
-                        size: content.chars().count(),
+                        content: persisted_content,
+                        size,
                     });
                 }
             }
@@ -265,7 +269,9 @@ fn collect_tool_result_budget_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbcode_protocol::{MessageRole, TranscriptBlock, TranscriptMessage};
+    use orbcode_protocol::{
+        MessageRole, ToolResultContent, TranscriptBlock, TranscriptJsonField, TranscriptMessage,
+    };
 
     #[test]
     fn persisted_tool_result_preview_message_retains_trailing_bash_truncation_note() {
@@ -336,7 +342,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{index}"),
-                    content: "x".repeat(45_000),
+                    content: "x".repeat(45_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -369,6 +375,66 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn apply_budget_replacements_preserves_loaded_structured_content() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ToolResultStore::new(temp.path().to_path_buf());
+        let session_id = "structured-tool-result-session";
+        let original = serde_json::json!([
+            {"type": "text", "text": "visible text"},
+            {
+                "type": "structured",
+                "payload": "x".repeat(MAX_TOOL_RESULTS_PER_MESSAGE_CHARS)
+            }
+        ]);
+        let mut messages = vec![
+            TranscriptMessage::from_blocks(
+                MessageRole::Assistant,
+                vec![TranscriptBlock::ToolUse {
+                    id: "tool-structured".to_string(),
+                    name: "web-fetch".to_string(),
+                    input: "{}".to_string(),
+                }],
+            ),
+            TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-structured".to_string(),
+                    content: ToolResultContent::from_loaded(TranscriptJsonField::Value(
+                        original.clone(),
+                    )),
+                    is_error: false,
+                    metadata: None,
+                }],
+            ),
+        ];
+
+        store
+            .apply_budget_replacements(session_id, &mut messages)
+            .await
+            .expect("apply budget");
+
+        let persisted = tokio::fs::read_to_string(
+            temp.path()
+                .join(session_id)
+                .join("tool-results")
+                .join("tool-structured.txt"),
+        )
+        .await
+        .expect("read persisted structured result");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&persisted)
+                .expect("parse persisted structured result"),
+            original
+        );
+
+        let [TranscriptBlock::ToolResult { content, .. }] = messages[1].blocks.as_slice() else {
+            panic!("expected one tool result");
+        };
+        assert!(content.starts_with(PERSISTED_OUTPUT_TAG));
+        assert!(content.loaded_field().is_none());
+    }
+
     #[test]
     fn regression_budget_group_boundaries_align_with_assistant_messages() {
         let assistant_1 = TranscriptMessage::from_blocks(
@@ -387,7 +453,7 @@ mod tests {
                     MessageRole::User,
                     vec![TranscriptBlock::ToolResult {
                         tool_use_id: format!("tool-a-{i}"),
-                        content: "r".repeat(10_000),
+                        content: "r".repeat(10_000).into(),
                         is_error: false,
                         metadata: None,
                     }],
@@ -411,7 +477,7 @@ mod tests {
                     MessageRole::User,
                     vec![TranscriptBlock::ToolResult {
                         tool_use_id: format!("tool-b-{i}"),
-                        content: "s".repeat(10_000),
+                        content: "s".repeat(10_000).into(),
                         is_error: false,
                         metadata: None,
                     }],
@@ -454,7 +520,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{i}"),
-                    content: "x".repeat(45_000),
+                    content: "x".repeat(45_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -548,7 +614,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: format!("tool-{i}"),
-                    content: "z".repeat(RESULT_CHARS),
+                    content: "z".repeat(RESULT_CHARS).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -603,7 +669,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-tool".to_string(),
-                    content: "r".repeat(190_000),
+                    content: "r".repeat(190_000).into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -612,7 +678,7 @@ mod tests {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-tool".to_string(),
-                    content: "b".repeat(20_000),
+                    content: "b".repeat(20_000).into(),
                     is_error: false,
                     metadata: None,
                 }],

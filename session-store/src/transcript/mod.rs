@@ -167,7 +167,7 @@ fn build_session_record(session_id: String, parsed_lines: Vec<Value>) -> Option<
                 {
                     session.cwd = Some(cwd.to_string());
                 }
-                if let Some(branch) = record.git_branch.as_deref()
+                if let Some(branch) = record.git_branch.as_str()
                     && !branch.is_empty()
                 {
                     session.git_branch = Some(branch.to_string());
@@ -180,7 +180,7 @@ fn build_session_record(session_id: String, parsed_lines: Vec<Value>) -> Option<
                 {
                     session.model = Some(model.to_string());
                 }
-                if let Some(provider) = record.provider.as_deref().and_then(ProviderId::parse) {
+                if let Some(provider) = record.provider.as_str().and_then(ProviderId::parse) {
                     session.provider = Some(provider);
                 }
                 session.push_message(message);

@@ -1,7 +1,9 @@
 use orbcode_protocol::{
     MessageRole, SessionRecord, StreamEvent, ToolUseCompletionKind, TranscriptMessage,
 };
-use orbcode_session_store::{acp_load_replay_blockers, normalize_tool_progress_record};
+use orbcode_session_store::{
+    SessionWriteHints, acp_load_replay_blockers, normalize_tool_progress_record,
+};
 // Plugin boundary: tool progress records are arbitrary JSON defined by individual tools.
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -157,7 +159,12 @@ impl SessionManager {
         note: Option<String>,
     ) -> Result<SessionRecord, CoreError> {
         let source = self.load_session(session_id).await?;
+        let config = self.effective_config();
+        let context = self.context_preview().await;
         let mut fork = SessionRecord::new();
+        fork.cwd = Some(config.cwd.display().to_string());
+        fork.git_branch = context.git_branch.clone();
+        fork.provider = Some(config.default_provider);
         fork.title = Some(title.unwrap_or_else(|| {
             source.title.clone().map_or_else(
                 || format!("Fork of {}", session_id.chars().take(8).collect::<String>()),
@@ -180,6 +187,15 @@ impl SessionManager {
             fork.push_message(TranscriptMessage::new(MessageRole::System, note));
         }
 
+        self.transcript_store
+            .record_session_hints(
+                &fork.session_id,
+                SessionWriteHints {
+                    git_branch: context.git_branch,
+                    provider: Some(config.default_provider),
+                },
+            )
+            .await;
         self.transcript_store.persist_full_session(&fork).await?;
         Ok(fork)
     }

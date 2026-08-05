@@ -20,7 +20,8 @@ fn completed_bash_card_previews_stdout_lines_instead_of_metadata_summary() {
                 content: "/Users/user/github/sample-workspace-main/crates/render-fixtures\n\
 total 60\n\
 drwxr-xr-x 16 user staff 512 Apr 22 14:40 ."
-                    .to_string(),
+                    .to_string()
+                    .into(),
                 is_error: false,
                 metadata: Some(
                     "{\"status\":\"completed\",\"summary\":\"Listed orbcode workspace files.\"}"
@@ -81,7 +82,8 @@ fn completed_bash_card_renders_cwd_reset_warning_as_dim_follow_up_line() {
                 tool_use_id: "bash-1".to_string(),
                 content: "/Users/user/github/sample-workspace-main\n\
 Shell cwd was reset to /Users/user/github/sample-workspace-main/crates/render-fixtures"
-                    .to_string(),
+                    .to_string()
+                    .into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -119,7 +121,7 @@ fn completed_bash_card_uses_inline_expand_hint_for_truncated_output() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-1".to_string(),
-                    content: "a\nb\nc\nd\ne".to_string(),
+                    content: "a\nb\nc\nd\ne".to_string().into(),
                     is_error: false,
                     metadata: None,
                 }],
@@ -176,7 +178,7 @@ fn expanded_completed_bash_card_omits_progress_and_uses_connector_first_only() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-1".to_string(),
-                    content: "src/main.tsx\nsrc/tools/TaskGetTool/TaskGetTool.ts\nsrc/tools/TaskGetTool/prompt.ts".to_string(),
+                    content: "src/main.tsx\nsrc/tools/TaskGetTool/TaskGetTool.ts\nsrc/tools/TaskGetTool/prompt.ts".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -226,7 +228,7 @@ fn expanded_bash_card_renders_runtime_metadata() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-1".to_string(),
-                content: "ok".to_string(),
+                content: "ok".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -289,7 +291,7 @@ fn expanded_bash_card_renders_git_workspace_impact() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-1".to_string(),
-                content: "Switched to a new branch 'feature-x'".to_string(),
+                content: "Switched to a new branch 'feature-x'".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -375,7 +377,7 @@ fn completed_large_bash_card_keeps_truncation_diagnostic_and_bounded_output() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-large".to_string(),
-                content,
+                content: content.into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -447,7 +449,7 @@ fn failed_bash_card_keeps_expand_hint_on_last_tree_child() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-err-1".to_string(),
-                    content: "tool execution failed: command `bad command` exited with 2\nBash command failed...".to_string(),
+                    content: "tool execution failed: command `bad command` exited with 2\nBash command failed...".to_string().into(),
                     is_error: true,
                     metadata: None,
                 }],
@@ -493,7 +495,7 @@ fn failed_bash_card_dedupes_single_line_permission_denial() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-denied-1".to_string(),
-                    content: "permission denied for tool `Bash` by PreToolUse hook: PreToolUse hook failed with exit status: 1: hook crashed from local settings".to_string(),
+                    content: "permission denied for tool `Bash` by PreToolUse hook: PreToolUse hook failed with exit status: 1: hook crashed from local settings".to_string().into(),
                     is_error: true,
                     metadata: None,
                 }],
@@ -544,7 +546,7 @@ fn failed_bash_card_truncates_all_collapsed_body_lines_to_width() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "bash-wide-err-1".to_string(),
-                    content: "first line is intentionally much too long for this narrow transcript width\nsecond line is also intentionally much too long and carries the expand hint".to_string(),
+                    content: "first line is intentionally much too long for this narrow transcript width\nsecond line is also intentionally much too long and carries the expand hint".to_string().into(),
                     is_error: true,
                     metadata: None,
                 }],
@@ -628,7 +630,7 @@ fn completed_read_card_uses_line_count_without_duplicate_path_details() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-1".to_string(),
-                    content: "line 1\nline 2\nline 3".to_string(),
+                    content: "line 1\nline 2\nline 3".to_string().into(),
                     is_error: false,
                     metadata: Some("{\"summary\":\"Read /Users/user/github/sample-workspace-main/crates/render-fixtures/README.md.\"}".to_string()),
                 }],
@@ -685,7 +687,7 @@ fn completed_read_card_uses_metadata_for_empty_output_line_count() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-empty".to_string(),
-                content: "Read /tmp/orbcode-line-offset-ui/no-final-newline.txt.".to_string(),
+                content: "Read /tmp/orbcode-line-offset-ui/no-final-newline.txt.".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -738,7 +740,7 @@ fn expanded_completed_read_card_renders_progress_in_body_tree() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "read-1".to_string(),
-                    content: "line 1\nline 2\nline 3".to_string(),
+                    content: "line 1\nline 2\nline 3".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -789,7 +791,7 @@ fn expanded_failed_read_card_renders_details_and_progress_in_body_tree() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "read-large".to_string(),
-                content: format!("{failure}\norbcode/tui/src/lib.rs\n{failure}"),
+                content: format!("{failure}\norbcode/tui/src/lib.rs\n{failure}").into(),
                 is_error: true,
                 metadata: Some(metadata),
             }],
@@ -912,7 +914,7 @@ fn expanded_agent_card_hides_empty_progress_transcript_section() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "done".to_string(),
+                    content: "done".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -984,7 +986,9 @@ fn expanded_non_agent_tool_card_hides_raw_tool_progress_snapshots() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "bash-tool".to_string(),
-                content: "/Users/user/github/sample-repo-tui-render".to_string(),
+                content: "/Users/user/github/sample-repo-tui-render"
+                    .to_string()
+                    .into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -1037,7 +1041,7 @@ fn collapsed_completed_agent_card_hides_preview_lines_but_keeps_expand_hint() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "done".to_string(),
+                    content: "done".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -1122,7 +1126,7 @@ fn collapsed_completed_agent_card_keeps_recent_progress_steps_visible() {
                 MessageRole::User,
                 vec![TranscriptBlock::ToolResult {
                     tool_use_id: "agent-tool".to_string(),
-                    content: "done".to_string(),
+                    content: "done".to_string().into(),
                     is_error: false,
                     metadata: Some(metadata),
                 }],
@@ -1524,7 +1528,8 @@ fn task_list_tool_card_omits_full_output_when_collapsed() {
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "task-list-1".to_string(),
                 content: "#1 [pending] Design API\n#2 [pending] Implement (alice) [blocked by #1]"
-                    .to_string(),
+                    .to_string()
+                    .into(),
                 is_error: false,
                 metadata: Some(
                     "{\"status\":\"completed\",\"summary\":\"Listed 2 task(s).\"}".to_string(),
@@ -1579,7 +1584,7 @@ fn task_list_tool_card_shows_full_output_when_expanded() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "task-list-2".to_string(),
-                content: "#1 [pending] Design API".to_string(),
+                content: "#1 [pending] Design API".to_string().into(),
                 is_error: false,
                 metadata: Some(
                     "{\"status\":\"completed\",\"summary\":\"Listed 1 task(s).\"}".to_string(),
@@ -1627,7 +1632,7 @@ fn collapsed_edit_card_shows_filename_and_change_summary() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "edit-1".to_string(),
-                content: "Successfully edited file.".to_string(),
+                content: "Successfully edited file.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1677,7 +1682,7 @@ fn collapsed_edit_card_uses_metadata_diff_context_and_line_numbers() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "edit-meta".to_string(),
-                content: "replaced the first occurrence".to_string(),
+                content: "replaced the first occurrence".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata),
             }],
@@ -1733,7 +1738,7 @@ fn expanded_edit_card_shows_diff_preview() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "edit-1".to_string(),
-                content: "Successfully edited file.".to_string(),
+                content: "Successfully edited file.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1771,7 +1776,7 @@ fn expanded_edit_card_shows_duration_from_metadata() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "edit-dur".to_string(),
-                content: "Successfully edited file.".to_string(),
+                content: "Successfully edited file.".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata.to_string()),
             }],
@@ -1803,7 +1808,7 @@ fn expanded_edit_card_diff_lines_have_color() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "edit-color".to_string(),
-                content: "Successfully edited file.".to_string(),
+                content: "Successfully edited file.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1870,7 +1875,7 @@ fn collapsed_grep_card_shows_match_count() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "grep-1".to_string(),
-                content: "src/main.rs:10:    // TODO: fix this\nsrc/main.rs:20:    // TODO: refactor\nsrc/lib.rs:5:    // TODO: add tests\nsrc/lib.rs:30:    // TODO: optimize\nsrc/utils.rs:8:    // TODO: clean up".to_string(),
+                content: "src/main.rs:10:    // TODO: fix this\nsrc/main.rs:20:    // TODO: refactor\nsrc/lib.rs:5:    // TODO: add tests\nsrc/lib.rs:30:    // TODO: optimize\nsrc/utils.rs:8:    // TODO: clean up".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1920,7 +1925,7 @@ fn expanded_grep_card_shows_match_previews() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "grep-2".to_string(),
-                content: content.to_string(),
+                content: content.to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -1969,7 +1974,7 @@ fn collapsed_glob_card_shows_file_count() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "glob-1".to_string(),
-                content: "/Users/user/project/src/main.rs\n/Users/user/project/src/lib.rs\n/Users/user/project/src/utils.rs".to_string(),
+                content: "/Users/user/project/src/main.rs\n/Users/user/project/src/lib.rs\n/Users/user/project/src/utils.rs".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -2015,7 +2020,7 @@ fn expanded_glob_card_shows_file_previews_with_relative_paths() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "glob-2".to_string(),
-                content: content.to_string(),
+                content: content.to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -2064,7 +2069,7 @@ fn collapsed_mcp_card_shows_server_tool_title() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "mcp-1".to_string(),
-                content: "Found 3 results for auth.".to_string(),
+                content: "Found 3 results for auth.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -2096,7 +2101,7 @@ fn collapsed_mcp_provider_tool_shows_server_colon_tool() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "mcp-prov-1".to_string(),
-                content: "Found 3 results.".to_string(),
+                content: "Found 3 results.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -2129,7 +2134,7 @@ fn expanded_mcp_card_shows_duration_and_error() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "mcp-dur".to_string(),
-                content: "Query returned 42 rows.".to_string(),
+                content: "Query returned 42 rows.".to_string().into(),
                 is_error: false,
                 metadata: Some(metadata.to_string()),
             }],
@@ -2165,7 +2170,7 @@ fn expanded_mcp_card_shows_error_status() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "mcp-err".to_string(),
-                content: "Connection refused: server not running".to_string(),
+                content: "Connection refused: server not running".to_string().into(),
                 is_error: true,
                 metadata: Some(r#"{"durationMs":50}"#.to_string()),
             }],
@@ -2202,7 +2207,7 @@ fn collapsed_write_card_shows_filename_and_line_count() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "write-1".to_string(),
-                content: "Successfully wrote to new_file.rs.".to_string(),
+                content: "Successfully wrote to new_file.rs.".to_string().into(),
                 is_error: false,
                 metadata: None,
             }],
@@ -2240,7 +2245,7 @@ fn expanded_grep_card_shows_duration_from_metadata() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "grep-dur".to_string(),
-                content: "src/main.rs:10:    // TODO: fix".to_string(),
+                content: "src/main.rs:10:    // TODO: fix".to_string().into(),
                 is_error: false,
                 metadata: Some(r#"{"durationMs":85}"#.to_string()),
             }],

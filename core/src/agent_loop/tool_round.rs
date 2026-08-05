@@ -518,7 +518,7 @@ mod tests {
             },
             TranscriptBlock::ToolResult {
                 tool_use_id: "tool-first".to_string(),
-                content: "first".to_string(),
+                content: "first".into(),
                 is_error: false,
                 metadata: None,
             },

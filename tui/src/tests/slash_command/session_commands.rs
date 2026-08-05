@@ -365,7 +365,7 @@ async fn files_slash_command_lists_referenced_files_and_directories() {
         MessageRole::User,
         vec![TranscriptBlock::ToolResult {
             tool_use_id: "read-1".to_string(),
-            content: "fn main() {}\n".to_string(),
+            content: "fn main() {}\n".to_string().into(),
             is_error: false,
             metadata: None,
         }],

@@ -396,7 +396,7 @@ impl TuiState {
             })
             .map(|activity| TranscriptBlock::ToolResult {
                 tool_use_id: activity.tool_use_id.clone(),
-                content: INTERRUPTED_TOOL_RESULT.to_string(),
+                content: INTERRUPTED_TOOL_RESULT.into(),
                 is_error: true,
                 metadata: None,
             })

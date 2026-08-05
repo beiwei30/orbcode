@@ -448,7 +448,7 @@ mod compaction_guard_tests {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "t1".to_string(),
-                content: "output".to_string(),
+                content: "output".into(),
                 is_error: false,
                 metadata: None,
             }],

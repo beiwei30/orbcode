@@ -902,7 +902,7 @@ fn turn_finished_status_includes_agent_tool_result_tokens() {
             MessageRole::User,
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "agent-tool".to_string(),
-                content: "agent result".to_string(),
+                content: "agent result".to_string().into(),
                 is_error: false,
                 metadata: Some(serde_json::json!({"totalTokens": 900}).to_string()),
             }],

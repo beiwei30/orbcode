@@ -29,7 +29,8 @@ pub use provider::{EffortLevel, ProviderId, ProviderToolDefinition, SandboxMode}
 pub use session::{
     AdditionalDirectoryInfo, MemorySource, MemorySourceKind, MemorySourceStatus,
     MessageCostAttribution, MessageRole, SessionId, SessionRecord, SessionStatus, SessionSummary,
-    TranscriptBlock, TranscriptMessage, TurnContext, WorktreeState, blocks_have_renderable_content,
+    ToolResultContent, TranscriptBlock, TranscriptJsonField, TranscriptLineProvenance,
+    TranscriptMessage, TurnContext, WorktreeState, blocks_have_renderable_content,
     unique_display_titles, visible_content_from_blocks,
 };
 pub use stream::{

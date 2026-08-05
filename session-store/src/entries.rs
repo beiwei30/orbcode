@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use orbcode_protocol::{MessageRole, TranscriptBlock, TranscriptMessage};
+use orbcode_protocol::{
+    MessageRole, TranscriptBlock, TranscriptJsonField, TranscriptLineProvenance, TranscriptMessage,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -53,6 +55,7 @@ pub fn transcript_entries(
             if let Some(metadata) = tool_result_metadata {
                 entry["toolUseResult"] = metadata;
             }
+            apply_loaded_provenance(&mut entry, message.transcript_provenance.as_ref());
             entries.push(entry);
             entries
         }
@@ -97,25 +100,56 @@ pub fn transcript_entries(
                     .to_string(),
                 );
             }
+            apply_loaded_provenance(&mut entry, message.transcript_provenance.as_ref());
             vec![entry]
         }
-        MessageRole::System => vec![json!({
-            "parentUuid": parent_uuid,
-            "isSidechain": false,
-            "type": "system",
-            "message": {
-                "role": "system",
-                "content": message.content,
-            },
-            "uuid": message.id,
-            "timestamp": timestamp,
-            "userType": "external",
-            "entrypoint": TRANSCRIPT_ENTRYPOINT,
-            "cwd": cwd.display().to_string(),
-            "sessionId": session_id,
-            "version": TRANSCRIPT_VERSION,
-        })],
+        MessageRole::System => {
+            let mut entry = json!({
+                "parentUuid": parent_uuid,
+                "isSidechain": false,
+                "type": "system",
+                "message": {
+                    "role": "system",
+                    "content": message.content,
+                },
+                "uuid": message.id,
+                "timestamp": timestamp,
+                "userType": "external",
+                "entrypoint": TRANSCRIPT_ENTRYPOINT,
+                "cwd": cwd.display().to_string(),
+                "sessionId": session_id,
+                "version": TRANSCRIPT_VERSION,
+            });
+            apply_loaded_provenance(&mut entry, message.transcript_provenance.as_ref());
+            vec![entry]
+        }
         _ => Vec::new(),
+    }
+}
+
+fn apply_loaded_provenance(entry: &mut Value, provenance: Option<&TranscriptLineProvenance>) {
+    let Some(provenance) = provenance else {
+        return;
+    };
+    apply_json_field(entry, "promptId", &provenance.prompt_id);
+    apply_json_field(entry, "gitBranch", &provenance.git_branch);
+    apply_json_field(entry, "provider", &provenance.provider);
+}
+
+fn apply_json_field(entry: &mut Value, key: &str, field: &TranscriptJsonField) {
+    let Some(object) = entry.as_object_mut() else {
+        return;
+    };
+    match field {
+        TranscriptJsonField::Absent => {
+            object.remove(key);
+        }
+        TranscriptJsonField::Null => {
+            object.insert(key.to_string(), Value::Null);
+        }
+        TranscriptJsonField::Value(value) => {
+            object.insert(key.to_string(), value.clone());
+        }
     }
 }
 
@@ -254,12 +288,15 @@ fn serialize_blocks(blocks: &[TranscriptBlock]) -> Vec<Value> {
                 content,
                 is_error,
                 ..
-            } => json!({
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": content,
-                "is_error": is_error,
-            }),
+            } => {
+                let mut value = json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "is_error": is_error,
+                });
+                apply_json_field(&mut value, "content", &content.transcript_field());
+                value
+            }
             _ => json!({
                 "type": "unknown",
             }),
@@ -288,6 +325,7 @@ mod tests {
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             is_synthetic: false,
             cost_attribution: None,
+            transcript_provenance: None,
         }
     }
 
@@ -299,7 +337,7 @@ mod tests {
             "",
             vec![TranscriptBlock::ToolResult {
                 tool_use_id: "tool-1".to_string(),
-                content: "done".to_string(),
+                content: "done".into(),
                 is_error: false,
                 metadata: Some(
                     json!({
@@ -371,6 +409,68 @@ mod tests {
     }
 
     #[test]
+    fn loaded_provenance_reemits_absent_null_and_future_values() {
+        let mut msg = message(MessageRole::User, "loaded-user", "hello", Vec::new());
+        msg.transcript_provenance = Some(TranscriptLineProvenance {
+            prompt_id: TranscriptJsonField::Value(json!({"future": "prompt-shape"})),
+            git_branch: TranscriptJsonField::Null,
+            provider: TranscriptJsonField::Value(json!("future-provider-v9")),
+        });
+
+        let entry = transcript_entries(Path::new("/tmp/p"), "m", "s", &msg, None)
+            .pop()
+            .expect("user entry");
+        assert_eq!(entry["promptId"], json!({"future": "prompt-shape"}));
+        assert_eq!(entry["gitBranch"], Value::Null);
+        assert_eq!(entry["provider"], "future-provider-v9");
+
+        msg.transcript_provenance = Some(TranscriptLineProvenance::default());
+        let absent = transcript_entries(Path::new("/tmp/p"), "m", "s", &msg, None)
+            .pop()
+            .expect("user entry");
+        assert!(absent.get("promptId").is_none());
+        assert!(absent.get("gitBranch").is_none());
+        assert!(absent.get("provider").is_none());
+    }
+
+    #[test]
+    fn loaded_tool_result_content_reemits_absent_null_array_and_object() {
+        let states = [
+            TranscriptJsonField::Absent,
+            TranscriptJsonField::Null,
+            TranscriptJsonField::Value(json!([
+                {"type": "text", "text": "ok"},
+                {"type": "image", "source": {"data": "AA=="}}
+            ])),
+            TranscriptJsonField::Value(json!({"structured": true})),
+        ];
+
+        for state in states {
+            let expected = state.clone();
+            let msg = message(
+                MessageRole::User,
+                "loaded-tool-result",
+                "",
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-1".to_string(),
+                    content: orbcode_protocol::ToolResultContent::from_loaded(state),
+                    is_error: false,
+                    metadata: None,
+                }],
+            );
+            let entry = transcript_entries(Path::new("/tmp/p"), "m", "s", &msg, None)
+                .pop()
+                .expect("user entry");
+            let block = &entry["message"]["content"][0];
+            match expected {
+                TranscriptJsonField::Absent => assert!(block.get("content").is_none()),
+                TranscriptJsonField::Null => assert_eq!(block["content"], Value::Null),
+                TranscriptJsonField::Value(value) => assert_eq!(block["content"], value),
+            }
+        }
+    }
+
+    #[test]
     fn second_tool_result_metadata_is_not_dropped_when_first_is_none() {
         // `[ToolResult{meta:None}, ToolResult{meta:Some}]` (parallel tools) must
         // keep the second block's toolUseResult rather than early-returning None.
@@ -381,13 +481,13 @@ mod tests {
             vec![
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-a".to_string(),
-                    content: "a".to_string(),
+                    content: "a".into(),
                     is_error: false,
                     metadata: None,
                 },
                 TranscriptBlock::ToolResult {
                     tool_use_id: "tool-b".to_string(),
-                    content: "b".to_string(),
+                    content: "b".into(),
                     is_error: false,
                     metadata: Some(json!({ "status": "completed" }).to_string()),
                 },
