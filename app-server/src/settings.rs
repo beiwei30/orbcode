@@ -325,6 +325,7 @@ impl AppServer {
             Ok(mut file) => {
                 use tokio::io::AsyncWriteExt;
                 file.write_all(KEYBINDINGS_TEMPLATE.as_bytes()).await?;
+                file.flush().await?;
                 Ok(KeybindingsFile {
                     path,
                     created: true,
