@@ -366,18 +366,20 @@ async fn connect_remote_client(
     } else {
         #[cfg(not(unix))]
         {
-            let _ = token;
-            return Err(anyhow::anyhow!(
+            let _ = (token, interactive);
+            Err(anyhow::anyhow!(
                 "Unix socket transport is not supported on this platform"
-            ));
+            ))
         }
         #[cfg(unix)]
-        let client = if interactive {
-            AppClient::connect_socket_interactive(std::path::Path::new(endpoint), token).await
-        } else {
-            AppClient::connect_socket(std::path::Path::new(endpoint), token).await
-        };
-        client.map_err(|e| anyhow::anyhow!("remote socket connect: {e}"))
+        {
+            let client = if interactive {
+                AppClient::connect_socket_interactive(std::path::Path::new(endpoint), token).await
+            } else {
+                AppClient::connect_socket(std::path::Path::new(endpoint), token).await
+            };
+            client.map_err(|e| anyhow::anyhow!("remote socket connect: {e}"))
+        }
     }
 }
 
