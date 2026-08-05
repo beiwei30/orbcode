@@ -31,6 +31,162 @@ fn set_openai_server_env(manager: &mut SessionManager, base_url: String) {
 }
 
 #[tokio::test]
+async fn provider_interrupted_error_surfaces_as_turn_cancellation_without_fallback_or_error() {
+    let mut manager = test_manager_with_overrides(AppConfigOverrides {
+        fallback_provider: Some(ProviderId::OpenAi),
+        max_retries: Some(3),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=interrupted".to_string(),
+    );
+    manager.config.settings.env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        "mock://openai?scenario=fatal".to_string(),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn(&session.session_id, "interrupt at provider boundary")
+        .await
+        .expect("submit turn");
+
+    let mut cancellation = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::TurnCancelled { kind, partial, .. } => {
+                cancellation = Some((kind, partial));
+                break;
+            }
+            StreamEvent::Error {
+                message,
+                suggestion,
+                ..
+            } => panic!(
+                "provider interruption must not surface as an error: {message}; {suggestion:?}"
+            ),
+            StreamEvent::AssistantMessageStarted {
+                provider: ProviderId::OpenAi,
+                ..
+            } => panic!("provider interruption must not trigger fallback"),
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        cancellation,
+        Some((TurnCancellationKind::BeforeResponse, None))
+    );
+}
+
+#[tokio::test]
+async fn provider_interrupted_after_text_preserves_partial_and_cancels() {
+    let mut manager = test_manager().await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=interrupt_after_text".to_string(),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn(&session.session_id, "interrupt after partial text")
+        .await
+        .expect("submit turn");
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::TurnCancelled { kind, partial, .. } => {
+                assert_eq!(kind, TurnCancellationKind::AssistantStreaming);
+                assert!(
+                    partial
+                        .expect("partial assistant message")
+                        .content
+                        .contains("partial text before provider interruption")
+                );
+                return;
+            }
+            StreamEvent::Error {
+                message,
+                suggestion,
+                ..
+            } => panic!("interruption surfaced as error: {message}; {suggestion:?}"),
+            _ => {}
+        }
+    }
+    panic!("stream ended without cancellation");
+}
+
+#[tokio::test]
+async fn fallback_interruption_stays_cancellation() {
+    let mut manager = test_manager_with_overrides(AppConfigOverrides {
+        fallback_provider: Some(ProviderId::OpenAi),
+        max_retries: Some(0),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=retryable".to_string(),
+    );
+    manager.config.settings.env.insert(
+        "OPENAI_BASE_URL".to_string(),
+        "mock://openai?scenario=interrupted".to_string(),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let mut rx = manager
+        .submit_turn(&session.session_id, "interrupt during fallback")
+        .await
+        .expect("submit turn");
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::TurnCancelled { .. } => return,
+            StreamEvent::Error {
+                message,
+                suggestion,
+                ..
+            } => panic!("fallback interruption surfaced as error: {message}; {suggestion:?}"),
+            _ => {}
+        }
+    }
+    panic!("stream ended without cancellation");
+}
+
+#[tokio::test]
+async fn cancellation_during_retry_backoff_stays_cancellation() {
+    let mut manager = test_manager_with_overrides(AppConfigOverrides {
+        max_retries: Some(3),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=ratelimit".to_string(),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    let mut rx = manager
+        .submit_turn(&session_id, "interrupt retry backoff")
+        .await
+        .expect("submit turn");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(manager.interrupt_turn(&session_id).await);
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::TurnCancelled { .. } => return,
+            StreamEvent::Error {
+                message,
+                suggestion,
+                ..
+            } => panic!("backoff interruption surfaced as error: {message}; {suggestion:?}"),
+            _ => {}
+        }
+    }
+    panic!("stream ended without cancellation");
+}
+
+#[tokio::test]
 async fn falls_back_when_primary_provider_retries_out() {
     let mut manager = test_manager().await;
     // Drive the primary failure from provider config (a `mock://` base URL),

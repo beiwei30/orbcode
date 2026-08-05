@@ -287,7 +287,7 @@ EOF
         local text="$1"
         local end_regex="$2"
         awk -v end_regex="${end_regex}" '
-            /apply\./ { seen = 1; blanks = 0; next }
+            /apply\.|Allow-all mode enabled\./ { seen = 1; blanks = 0; next }
             seen && $0 ~ end_regex { print blanks; found = 1; exit }
             seen && $0 ~ /^[[:space:]]*$/ { blanks++; next }
             END { if (!found) print -1 }
@@ -348,7 +348,7 @@ EOF
     for _ in {1..120}; do
         allow_capture="$(tmux -L "${server_name}" capture-pane -p -J -S - -t "${target}" 2>/dev/null || true)"
         idle_gap="$(count_blank_gap "${allow_capture}" '^─')"
-        if grep -q 'apply\.' <<<"${allow_capture}" &&
+        if grep -Eq 'apply\.|Allow-all mode enabled\.' <<<"${allow_capture}" &&
             [[ "${idle_gap}" -ge 0 ]]; then
             saw_allow=1
             break

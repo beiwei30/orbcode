@@ -1821,6 +1821,74 @@ fn vt100_terminal_wrap_policy_counts_soft_wrapped_rows() {
 }
 
 #[test]
+fn vt100_soft_wrap_history_insert_preserves_following_committed_row() {
+    let backend = VT100Backend::new(12, 8);
+    let mut terminal = Terminal::with_options(backend).expect("create terminal");
+    terminal.set_viewport_area(Rect::new(0, 4, 12, 4));
+    let mut state = normal_state("typed input", 11);
+    terminal
+        .draw(|frame| state.draw(frame))
+        .expect("draw initial viewport");
+
+    let history_lines = vec![
+        StyledLine::from("x".repeat(13)),
+        StyledLine::from("COMMITTED"),
+    ];
+    insert_history_lines_with_wrap_policy(
+        &mut terminal,
+        &history_lines,
+        12,
+        HistoryLineWrapPolicy::Terminal,
+        false,
+    )
+    .expect("terminal-wrap insert");
+
+    let screen = terminal.backend_mut().screen_lines();
+    assert!(
+        screen.iter().any(|line| line.contains("COMMITTED")),
+        "soft-wrap cleanup must not erase the following committed row\n{screen:#?}"
+    );
+}
+
+#[test]
+fn vt100_terminal_wrap_handles_exact_wide_combining_and_styled_boundaries() {
+    let cases = vec![
+        (StyledLine::from("x".repeat(12)), 1_u16, "exact width"),
+        (StyledLine::from("x".repeat(13)), 2_u16, "width plus one"),
+        (StyledLine::from("x".repeat(31)), 3_u16, "multiple wraps"),
+        (StyledLine::from("界".repeat(7)), 2_u16, "wide glyphs"),
+        (
+            StyledLine::from("e\u{301}".repeat(12)),
+            1_u16,
+            "combining marks",
+        ),
+        (
+            StyledLine::from(vec![
+                Span::styled("styled-", Style::default().fg(Color::Red)),
+                Span::styled("boundary", Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            2_u16,
+            "ANSI style transition",
+        ),
+    ];
+
+    for (line, expected_rows, label) in cases {
+        let backend = VT100Backend::new(12, 8);
+        let mut terminal = Terminal::with_options(backend).expect("create terminal");
+        terminal.set_viewport_area(Rect::new(0, 4, 12, 4));
+        insert_history_lines_with_wrap_policy(
+            &mut terminal,
+            &[line],
+            12,
+            HistoryLineWrapPolicy::Terminal,
+            false,
+        )
+        .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(terminal.visible_history_rows(), expected_rows, "{label}");
+    }
+}
+
+#[test]
 fn vt100_clear_after_position_clears_live_rows_and_next_draw_restores_them() {
     let backend = VT100Backend::new(40, 10);
     let mut terminal = Terminal::with_options(backend).expect("create terminal");
