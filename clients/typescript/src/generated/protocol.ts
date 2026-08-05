@@ -236,7 +236,7 @@ export interface InteractiveQuestionsCapability {
   special_outcomes?: boolean;
 }
 
-export interface EmptyParams Record<string, unknown>
+export type EmptyParams = Record<string, unknown>;
 
 /** Successful method result whose response envelope intentionally has no data payload.
 

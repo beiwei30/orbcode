@@ -86,6 +86,7 @@ impl TuiState {
             Some(OverlayState::AskUserQuestion(state)) => {
                 16_u8.hash(&mut hasher);
                 state.question_index.hash(&mut hasher);
+                state.focused_row().hash(&mut hasher);
                 state.panel_scroll.hash(&mut hasher);
                 state.validation_error.hash(&mut hasher);
             }

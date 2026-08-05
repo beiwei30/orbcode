@@ -127,6 +127,10 @@ impl AskUserQuestionOverlayState {
         rows[self.focused_row.min(rows.len().saturating_sub(1))]
     }
 
+    pub(crate) fn focused_row(&self) -> usize {
+        self.focused_row
+    }
+
     pub(crate) fn move_focus(&mut self, delta: isize) {
         let len = self.rows().len();
         self.focused_row = if delta < 0 {
