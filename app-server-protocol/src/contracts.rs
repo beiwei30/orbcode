@@ -89,14 +89,14 @@ impl SetSessionModelParams {
         }
     }
 
-    pub fn selection(&self) -> crate::RuntimeModelOverride {
-        if self.inherit {
-            crate::RuntimeModelOverride::Inherit
-        } else {
-            self.model.clone().map_or(
+    pub fn selection(&self) -> Result<crate::RuntimeModelOverride, &'static str> {
+        match (self.inherit, &self.model) {
+            (true, Some(_)) => Err("`inherit` cannot be true when `model` is non-null"),
+            (true, None) => Ok(crate::RuntimeModelOverride::Inherit),
+            (false, model) => Ok(model.clone().map_or(
                 crate::RuntimeModelOverride::Default,
                 crate::RuntimeModelOverride::Model,
-            )
+            )),
         }
     }
 }

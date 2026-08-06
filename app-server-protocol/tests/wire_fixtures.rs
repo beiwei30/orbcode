@@ -74,20 +74,34 @@ fn model_override_and_permission_mutation_intents_are_typed() {
     );
     assert_eq!(
         selected.selection(),
-        RuntimeModelOverride::Model("sonnet".to_string())
+        Ok(RuntimeModelOverride::Model("sonnet".to_string()))
     );
     let provider_default = SetSessionModelParams::select("session-1", None);
     assert_eq!(
         serde_json::to_value(&provider_default).expect("serialize provider default"),
         json!({"session_id": "session-1", "model": null})
     );
-    assert_eq!(provider_default.selection(), RuntimeModelOverride::Default);
+    assert_eq!(
+        provider_default.selection(),
+        Ok(RuntimeModelOverride::Default)
+    );
     let inherited = SetSessionModelParams::inherit("session-1");
     assert_eq!(
         serde_json::to_value(&inherited).expect("serialize inherit"),
         json!({"session_id": "session-1", "model": null, "inherit": true})
     );
-    assert_eq!(inherited.selection(), RuntimeModelOverride::Inherit);
+    assert_eq!(inherited.selection(), Ok(RuntimeModelOverride::Inherit));
+
+    let contradictory: SetSessionModelParams = serde_json::from_value(json!({
+        "session_id": "session-1",
+        "model": "sonnet",
+        "inherit": true,
+    }))
+    .expect("deserialize contradictory session model intent");
+    assert_eq!(
+        contradictory.selection(),
+        Err("`inherit` cannot be true when `model` is non-null")
+    );
 
     let settings = PermissionRuleParams {
         kind: PermissionRuleKind::Allow,
