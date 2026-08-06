@@ -173,7 +173,7 @@ impl SessionManager {
             )
         }));
         if let Some(mut goal) = source.goal.clone() {
-            let now = Utc::now();
+            let now = super::datetime_from_millis(Utc::now().timestamp_millis());
             goal.goal_id = uuid::Uuid::new_v4().to_string();
             goal.revision = 1;
             goal.session_id = fork.session_id.clone();

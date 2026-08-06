@@ -530,11 +530,11 @@ fn goal_transcript_entry(goal: &SessionGoal, cwd: &Path) -> Value {
             "tokenBudget": goal.token_budget,
             "tokensUsed": goal.tokens_used,
             "elapsedSeconds": goal.elapsed_seconds,
-        "createdAt": goal.created_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-        "updatedAt": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+            "createdAt": goal.created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "updatedAt": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "stopReason": goal.stop_reason,
             "lastGoalTurnId": goal.last_goal_turn_id,
-        "timestamp": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+            "timestamp": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         }),
     )
 }
@@ -1301,6 +1301,18 @@ mod tests {
             .append_goal_snapshot(&goal)
             .await
             .expect("append snapshot");
+        let snapshot: Value = serde_json::from_str(
+            tokio::fs::read_to_string(temp.path().join("session-1.jsonl"))
+                .await
+                .expect("read snapshot")
+                .lines()
+                .next()
+                .expect("snapshot line"),
+        )
+        .expect("parse snapshot");
+        for field in ["createdAt", "updatedAt", "timestamp"] {
+            assert_eq!(snapshot[field], "2026-08-05T10:00:00.000Z");
+        }
         store
             .append_goal_turn_start("session-1", "goal-1", 1, "turn-1")
             .await

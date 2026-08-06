@@ -813,6 +813,56 @@ async fn goal_tools_are_capability_scoped_and_persist_before_success() {
 }
 
 #[tokio::test]
+async fn update_goal_tool_reports_identity_mismatch_when_revision_matches() {
+    let manager = test_manager().await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id;
+    let current = manager
+        .set_goal(create_request(
+            &session_id,
+            "report the current identity",
+            None,
+        ))
+        .await
+        .expect("create goal");
+
+    let completion = manager
+        .invoke_persistent_goal_tool_and_buffer_result(
+            &session_id,
+            "mismatched-goal-id",
+            "update_goal",
+            &serde_json::json!({
+                "goal_id": "replaced-goal-id",
+                "expected_revision": current.revision,
+                "status": "complete"
+            })
+            .to_string(),
+        )
+        .await;
+
+    assert!(completion.result.is_error);
+    let output: serde_json::Value =
+        serde_json::from_str(&completion.result.content).expect("structured goal error");
+    assert_eq!(output["error"]["code"], "goal_identity_mismatch");
+    assert_eq!(
+        output["error"]["message"],
+        format!(
+            "expected goal id replaced-goal-id, but current goal id is {}",
+            current.goal_id
+        )
+    );
+    let unchanged = manager
+        .get_goal(&session_id)
+        .await
+        .expect("load unchanged goal")
+        .expect("goal remains");
+    assert_eq!(unchanged.goal_id, current.goal_id);
+    assert_eq!(unchanged.revision, current.revision);
+    assert_eq!(unchanged.objective, current.objective);
+    assert_eq!(unchanged.status, current.status);
+}
+
+#[tokio::test]
 async fn budgeted_goal_completion_tool_returns_final_usage() {
     let manager = test_manager().await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");

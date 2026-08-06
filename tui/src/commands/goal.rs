@@ -381,7 +381,7 @@ fn split_first(value: &str) -> (&str, &str) {
 
 fn goal_usage() -> anyhow::Error {
     anyhow::anyhow!(
-        "usage: /goal [show|create [--budget N] <objective>|edit [--budget N|--no-budget] <objective>|pause|resume|clear|budget N|none]"
+        "usage: /goal [show|create [--budget N] <objective>|edit [--budget N|--no-budget] <objective>|pause|resume|clear|budget <N|none>]"
     )
 }
 
@@ -418,7 +418,8 @@ mod tests {
             parse_goal_action("budget none").unwrap(),
             GoalAction::Budget(None)
         );
-        assert!(parse_goal_action("budget 0").is_err());
+        let budget_error = parse_goal_action("budget 0").unwrap_err().to_string();
+        assert!(budget_error.contains("budget <N|none>"));
         assert!(parse_goal_action("pause now").is_err());
     }
 }

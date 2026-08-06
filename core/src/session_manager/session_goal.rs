@@ -39,6 +39,8 @@ pub enum GoalError {
     Missing,
     #[error("expected goal revision {expected}, but current revision is {actual}")]
     StaleRevision { expected: u64, actual: u64 },
+    #[error("expected goal id {expected}, but current goal id is {actual}")]
+    GoalIdentityMismatch { expected: String, actual: String },
     #[error("objective must not be empty")]
     EmptyObjective,
     #[error("token budget must be a positive integer")]
@@ -196,7 +198,7 @@ impl SessionManager {
         {
             goal.status = SessionGoalStatus::BudgetLimited;
             goal.revision = goal.revision.saturating_add(1);
-            goal.updated_at = chrono::Utc::now();
+            goal.updated_at = goal_now();
             goal.stop_reason = Some("persistent goal token budget reached".to_string());
             self.transcript_store.append_goal_snapshot(&goal).await?;
             return Ok(GoalContinuationOutcome::NotStarted {
@@ -213,7 +215,7 @@ impl SessionManager {
             .map_err(GoalError::Core)?;
 
         goal.revision = goal.revision.saturating_add(1);
-        goal.updated_at = chrono::Utc::now();
+        goal.updated_at = goal_now();
         goal.stop_reason = None;
         goal.last_goal_turn_id = Some(turn_id.to_string());
         if let Err(error) = self
@@ -437,7 +439,7 @@ impl SessionManager {
             .saturating_add(u64::from(get_token_count_from_usage(usage)));
         goal.elapsed_seconds = goal.elapsed_seconds.saturating_add(elapsed_seconds);
         goal.revision = goal.revision.saturating_add(1);
-        goal.updated_at = chrono::Utc::now();
+        goal.updated_at = goal_now();
         goal.last_goal_turn_id = Some(turn_id.to_string());
         apply_terminal_status(&mut goal, terminal_kind);
         if goal
@@ -527,7 +529,7 @@ fn create_goal_from_request(request: &GoalSetRequest) -> Result<SessionGoal, Goa
         });
     }
     let token_budget = validated_budget(request.token_budget)?;
-    let now = chrono::Utc::now();
+    let now = goal_now();
     Ok(SessionGoal {
         goal_id: Uuid::new_v4().to_string(),
         revision: 1,
@@ -612,8 +614,13 @@ fn mutate_goal_from_request(
         goal.stop_reason = Some("persistent goal token budget reached".to_string());
     }
     goal.revision = goal.revision.saturating_add(1);
-    goal.updated_at = chrono::Utc::now();
+    goal.updated_at = goal_now();
     Ok(goal)
+}
+
+fn goal_now() -> chrono::DateTime<chrono::Utc> {
+    let now = chrono::Utc::now();
+    chrono::DateTime::from_timestamp_millis(now.timestamp_millis()).unwrap_or(now)
 }
 
 fn validate_expected_revision(expected: Option<u64>, actual: u64) -> Result<(), GoalError> {

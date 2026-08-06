@@ -203,9 +203,9 @@ impl SessionManager {
                 }
                 let current = self.get_goal(session_id).await?.ok_or(GoalError::Missing)?;
                 if current.goal_id != input.goal_id {
-                    return Err(GoalError::StaleRevision {
-                        expected: input.expected_revision,
-                        actual: current.revision,
+                    return Err(GoalError::GoalIdentityMismatch {
+                        expected: input.goal_id,
+                        actual: current.goal_id,
                     });
                 }
                 let goal = self
@@ -264,6 +264,7 @@ fn goal_error_code(error: &GoalError) -> &'static str {
         GoalError::SessionNotFound(_) => "session_not_found",
         GoalError::Missing => "missing",
         GoalError::StaleRevision { .. } => "stale_revision",
+        GoalError::GoalIdentityMismatch { .. } => "goal_identity_mismatch",
         GoalError::EmptyObjective => "empty_objective",
         GoalError::InvalidTokenBudget => "invalid_token_budget",
         GoalError::UnfinishedGoal => "unfinished_goal",
