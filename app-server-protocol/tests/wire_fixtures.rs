@@ -4,13 +4,124 @@
 //! clients) depend on.
 
 use orbcode_app_server_protocol::{
-    ClientCapabilities, ClientInfo, ClientMessage, ClientRequestEnvelope, ErrorCode,
-    InitializeParams, InitializeResult, ProtocolError, ResponseResult, ServerCapabilities,
-    ServerInfo, ServerMessage, ServerNotificationEnvelope, ServerRequestEnvelope,
-    ServerRequestResponse, ServerResponseEnvelope, StreamEventNotification,
+    ClientCapabilities, ClientInfo, ClientMessage, ClientPreferences, ClientRequestEnvelope,
+    EditorModeSetting, EffectivePermissionRules, ErrorCode, InitializeParams, InitializeResult,
+    PermissionRuleEffect, PermissionRuleKind, PermissionRuleParams, PermissionRuleTargetScope,
+    ProtocolError, ResponseResult, RuntimeModelOverride, ServerCapabilities, ServerInfo,
+    ServerMessage, ServerNotificationEnvelope, ServerRequestEnvelope, ServerRequestResponse,
+    ServerResponseEnvelope, SessionPermissionRuleParams, SetSessionModelParams, StatuslineConfig,
+    StreamEventNotification, ThemeSetting,
 };
 use orbcode_protocol::StreamEvent;
 use serde_json::json;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TypedSettingsWireFixture {
+    theme: ThemeSetting,
+    editor_mode: EditorModeSetting,
+    #[serde(flatten)]
+    statusline: StatuslineConfig,
+}
+
+#[test]
+fn typed_settings_wire_spelling_and_flattening_are_pinned() {
+    let value = serde_json::to_value(TypedSettingsWireFixture {
+        theme: ThemeSetting::DarkDaltonized,
+        editor_mode: EditorModeSetting::Vim,
+        statusline: StatuslineConfig {
+            command: Some("echo ready".to_string()),
+            refresh_interval_secs: 15,
+        },
+    })
+    .expect("serialize typed settings");
+    assert_eq!(
+        value,
+        json!({
+            "theme": "dark-daltonized",
+            "editor_mode": "vim",
+            "statusline_command": "echo ready",
+            "statusline_refresh_interval_secs": 15
+        })
+    );
+    let decoded: TypedSettingsWireFixture =
+        serde_json::from_value(value).expect("deserialize typed settings");
+    assert_eq!(decoded.theme, ThemeSetting::DarkDaltonized);
+    assert_eq!(decoded.editor_mode, EditorModeSetting::Vim);
+
+    // Bootstrap keeps its pre-typed PascalCase compatibility spelling even
+    // though settings methods use canonical lower/kebab-case enum values.
+    assert_eq!(
+        serde_json::to_value(ClientPreferences {
+            theme: ThemeSetting::DarkDaltonized,
+            editor_mode: EditorModeSetting::Vim,
+        })
+        .expect("serialize bootstrap preferences"),
+        json!({"theme": "DarkDaltonized", "editor_mode": "Vim"})
+    );
+}
+
+#[test]
+fn model_override_and_permission_mutation_intents_are_typed() {
+    assert_eq!(
+        serde_json::to_value(RuntimeModelOverride::Model("sonnet".to_string()))
+            .expect("serialize model override"),
+        json!({"kind": "model", "model": "sonnet"})
+    );
+    let selected = SetSessionModelParams::select("session-1", Some("sonnet".to_string()));
+    assert_eq!(
+        serde_json::to_value(&selected).expect("serialize selected model"),
+        json!({"session_id": "session-1", "model": "sonnet"})
+    );
+    assert_eq!(
+        selected.selection(),
+        RuntimeModelOverride::Model("sonnet".to_string())
+    );
+    let provider_default = SetSessionModelParams::select("session-1", None);
+    assert_eq!(
+        serde_json::to_value(&provider_default).expect("serialize provider default"),
+        json!({"session_id": "session-1", "model": null})
+    );
+    assert_eq!(provider_default.selection(), RuntimeModelOverride::Default);
+    let inherited = SetSessionModelParams::inherit("session-1");
+    assert_eq!(
+        serde_json::to_value(&inherited).expect("serialize inherit"),
+        json!({"session_id": "session-1", "model": null, "inherit": true})
+    );
+    assert_eq!(inherited.selection(), RuntimeModelOverride::Inherit);
+
+    let settings = PermissionRuleParams {
+        kind: PermissionRuleKind::Allow,
+        rule: "Read(src/**)".to_string(),
+    };
+    assert_eq!(settings.target_scope(), PermissionRuleTargetScope::Settings);
+    assert_eq!(
+        serde_json::to_value(&settings).expect("serialize settings rule"),
+        json!({"kind": "allow", "rule": "Read(src/**)"})
+    );
+    let session = SessionPermissionRuleParams {
+        session_id: "session-1".to_string(),
+        kind: PermissionRuleKind::Deny,
+        rule: "Bash(rm:*)".to_string(),
+    };
+    assert_eq!(session.target_scope(), PermissionRuleTargetScope::Session);
+    assert_eq!(
+        serde_json::to_value(&session).expect("serialize session rule"),
+        json!({"session_id": "session-1", "kind": "deny", "rule": "Bash(rm:*)"})
+    );
+
+    let effective = EffectivePermissionRules {
+        precedence: vec![
+            PermissionRuleEffect::Deny,
+            PermissionRuleEffect::Ask,
+            PermissionRuleEffect::Allow,
+        ],
+        ..EffectivePermissionRules::default()
+    };
+    assert_eq!(
+        serde_json::to_value(effective).expect("serialize permission projection")["precedence"],
+        json!(["deny", "ask", "allow"])
+    );
+}
 
 // ---------------------------------------------------------------------------
 // 1. ClientMessage::Request wire shape

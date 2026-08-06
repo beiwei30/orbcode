@@ -17,6 +17,67 @@ use orbcode_app_server_protocol::{
 
 const REDACTED: &str = "<redacted>";
 
+pub(crate) fn effective_model_selection_to_wire(
+    selection: orbcode_config::EffectiveModelSelection,
+) -> orbcode_app_server_protocol::EffectiveModelSelection {
+    use orbcode_app_server_protocol::{
+        EffectiveModelSelection, ModelSelectionSource, PersistedModelSetting,
+        ProviderModelSelection, RuntimeModelOverride, SettingSource,
+    };
+
+    let source_to_wire = |source: orbcode_config::SettingOrigin| match source {
+        orbcode_config::SettingOrigin::Defaults => SettingSource::Defaults,
+        orbcode_config::SettingOrigin::User => SettingSource::User,
+        orbcode_config::SettingOrigin::Project => SettingSource::Project,
+        orbcode_config::SettingOrigin::Local => SettingSource::Local,
+        orbcode_config::SettingOrigin::Managed => SettingSource::Managed,
+        orbcode_config::SettingOrigin::CliFlags => SettingSource::Cli,
+        orbcode_config::SettingOrigin::EnvVars => SettingSource::Environment,
+        orbcode_config::SettingOrigin::SessionOverride => SettingSource::Session,
+    };
+    let runtime_override = match selection.runtime_override {
+        orbcode_config::RuntimeModelOverride::Inherit => RuntimeModelOverride::Inherit,
+        orbcode_config::RuntimeModelOverride::Default => RuntimeModelOverride::Default,
+        orbcode_config::RuntimeModelOverride::Model(model) => RuntimeModelOverride::Model(model),
+    };
+    let source = match selection.source {
+        orbcode_config::ModelSelectionSource::Runtime => ModelSelectionSource::Runtime,
+        orbcode_config::ModelSelectionSource::Environment => ModelSelectionSource::Environment,
+        orbcode_config::ModelSelectionSource::Persisted => ModelSelectionSource::Persisted,
+        orbcode_config::ModelSelectionSource::ProviderDefault => {
+            ModelSelectionSource::ProviderDefault
+        }
+    };
+    EffectiveModelSelection {
+        persisted: PersistedModelSetting {
+            value: selection.persisted.value,
+            source: selection.persisted.source.map(source_to_wire),
+            locked: selection.persisted.locked,
+        },
+        runtime_override,
+        requested_model: selection.requested_model,
+        source,
+        provider: selection.provider,
+        resolution: ProviderModelSelection {
+            requested_setting: selection.resolution.requested_setting,
+            family: selection
+                .resolution
+                .family
+                .map(|family| family.alias().to_string()),
+            model: selection.resolution.model,
+            request_model: selection.resolution.request_model,
+            display_label: selection.resolution.display_label,
+            display_name: selection.resolution.display_name,
+            capabilities: selection
+                .resolution
+                .capabilities
+                .into_iter()
+                .map(|capability| capability.as_str().to_string())
+                .collect(),
+        },
+    }
+}
+
 pub(crate) fn context_window_options_to_wire(
     options: orbcode_config::ContextWindowOptions,
 ) -> ContextWindowOptions {
@@ -57,12 +118,33 @@ pub(crate) fn theme_setting_to_wire(theme: orbcode_config::ThemeSetting) -> Them
     }
 }
 
+pub(crate) fn theme_setting_from_wire(theme: ThemeSetting) -> orbcode_config::ThemeSetting {
+    match theme {
+        ThemeSetting::Auto => orbcode_config::ThemeSetting::Auto,
+        ThemeSetting::Dark => orbcode_config::ThemeSetting::Dark,
+        ThemeSetting::Light => orbcode_config::ThemeSetting::Light,
+        ThemeSetting::DarkDaltonized => orbcode_config::ThemeSetting::DarkDaltonized,
+        ThemeSetting::LightDaltonized => orbcode_config::ThemeSetting::LightDaltonized,
+        ThemeSetting::DarkAnsi => orbcode_config::ThemeSetting::DarkAnsi,
+        ThemeSetting::LightAnsi => orbcode_config::ThemeSetting::LightAnsi,
+    }
+}
+
 pub(crate) fn editor_mode_setting_to_wire(
     mode: orbcode_config::EditorModeSetting,
 ) -> EditorModeSetting {
     match mode {
         orbcode_config::EditorModeSetting::Normal => EditorModeSetting::Normal,
         orbcode_config::EditorModeSetting::Vim => EditorModeSetting::Vim,
+    }
+}
+
+pub(crate) fn editor_mode_setting_from_wire(
+    mode: EditorModeSetting,
+) -> orbcode_config::EditorModeSetting {
+    match mode {
+        EditorModeSetting::Normal => orbcode_config::EditorModeSetting::Normal,
+        EditorModeSetting::Vim => orbcode_config::EditorModeSetting::Vim,
     }
 }
 
@@ -555,11 +637,25 @@ pub(crate) fn mcp_diagnostic_check_to_wire(
 
 pub(crate) fn permission_rule_update_to_wire(
     update: orbcode_config::PermissionRuleSettingsUpdate,
+    kind: orbcode_app_server_protocol::PermissionRuleKind,
+    target: orbcode_app_server_protocol::PermissionRuleTargetScope,
+    effective_rules: orbcode_app_server_protocol::EffectivePermissionRules,
 ) -> PermissionRuleUpdateResult {
     PermissionRuleUpdateResult {
         path: update.path,
         rule: update.rule,
         changed: update.changed,
+        kind,
+        target,
+        source: match target {
+            orbcode_app_server_protocol::PermissionRuleTargetScope::Settings => {
+                orbcode_app_server_protocol::SettingSource::User
+            }
+            orbcode_app_server_protocol::PermissionRuleTargetScope::Session => {
+                orbcode_app_server_protocol::SettingSource::Session
+            }
+        },
+        effective_rules,
     }
 }
 

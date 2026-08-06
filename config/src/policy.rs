@@ -188,6 +188,43 @@ pub struct ManagedPermissionRules {
     pub ask: Vec<String>,
 }
 
+/// One persisted settings layer's permission rules. Rule order is retained so
+/// the structured parser sees the same sequence as the legacy merged lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingsPermissionRuleGroup {
+    pub source: SettingsSource,
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+    pub ask: Vec<String>,
+}
+
+/// Typed, source-preserving permission rules from all persisted layers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SettingsPermissionRules {
+    pub groups: Vec<SettingsPermissionRuleGroup>,
+}
+
+impl SettingsLayers {
+    pub fn permission_rules(&self) -> SettingsPermissionRules {
+        let mut groups = Vec::new();
+        for layer in &self.layers {
+            let Some(raw) = layer.raw.as_ref() else {
+                continue;
+            };
+            let Some(permissions) = raw.get("permissions").and_then(Value::as_object) else {
+                continue;
+            };
+            groups.push(SettingsPermissionRuleGroup {
+                source: layer.source,
+                allow: string_array_field(permissions, "allow").unwrap_or_default(),
+                deny: string_array_field(permissions, "deny").unwrap_or_default(),
+                ask: string_array_field(permissions, "ask").unwrap_or_default(),
+            });
+        }
+        SettingsPermissionRules { groups }
+    }
+}
+
 impl EffectivePolicy {
     /// Whether an MCP server may be registered. The denied list always wins;
     /// when an allowlist is present only listed servers pass; when
@@ -1380,6 +1417,54 @@ mod tests {
         assert_eq!(rules.allow, vec!["Read(src/**)".to_string()]);
         assert_eq!(rules.deny, vec!["Bash(rm:*)".to_string()]);
         assert_eq!(rules.ask, vec!["Write(**)".to_string()]);
+    }
+
+    #[test]
+    fn settings_permission_rules_preserve_source_and_rule_order() {
+        let layer = |source, value: Value| SettingsLayer {
+            source,
+            primary_path: PathBuf::from(source.short_label()),
+            contributing_paths: Vec::new(),
+            raw: value.as_object().cloned(),
+            errors: Vec::new(),
+        };
+        let layers = SettingsLayers {
+            layers: vec![
+                layer(
+                    SettingsSource::User,
+                    json!({"permissions": {"allow": ["Read(a)", "Read(b)"], "ask": ["Write(*)"]}}),
+                ),
+                layer(
+                    SettingsSource::Project,
+                    json!({"permissions": {"deny": ["Bash(rm:*)"]}}),
+                ),
+                layer(
+                    SettingsSource::Managed,
+                    json!({"permissions": {"allow": ["Grep(src/**)"]}}),
+                ),
+            ],
+        };
+
+        let rules = layers.permission_rules();
+        assert_eq!(
+            rules
+                .groups
+                .iter()
+                .map(|group| group.source)
+                .collect::<Vec<_>>(),
+            vec![
+                SettingsSource::User,
+                SettingsSource::Project,
+                SettingsSource::Managed,
+            ]
+        );
+        assert_eq!(
+            rules.groups[0].allow,
+            vec!["Read(a)".to_string(), "Read(b)".to_string()]
+        );
+        assert_eq!(rules.groups[0].ask, vec!["Write(*)".to_string()]);
+        assert_eq!(rules.groups[1].deny, vec!["Bash(rm:*)".to_string()]);
+        assert_eq!(rules.groups[2].allow, vec!["Grep(src/**)".to_string()]);
     }
 
     #[tokio::test]

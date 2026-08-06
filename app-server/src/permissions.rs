@@ -1,11 +1,24 @@
 use std::path::PathBuf;
 
-use orbcode_app_server_protocol::{AddDirectoryCandidate, AddedDirectory, PermissionOverview};
-use orbcode_config::{PermissionMode, PermissionRuleSettingKind, PermissionRuleSettingsUpdate};
+use orbcode_app_server_protocol::{
+    AddDirectoryCandidate, AddedDirectory, EffectivePermissionRules, PermissionOverview,
+    PermissionRuleEffect, PermissionRuleGroup, PermissionRuleTargetScope, SettingSource,
+    SourcedPermissionRuleGroup,
+};
+use orbcode_config::{
+    PermissionMode, PermissionRuleSettingKind, PermissionRuleSettingsUpdate, SettingsSource,
+    parse_tool_rule_list,
+};
 use orbcode_core::CoreError;
 
 use super::AppServer;
 use crate::protocol_conversion::permission_context_to_wire;
+
+#[derive(Clone, Copy)]
+pub(crate) enum PermissionRuleMutation {
+    Add,
+    Remove,
+}
 
 impl AppServer {
     pub fn permissions(&self) -> orbcode_core::PermissionContext {
@@ -20,27 +33,37 @@ impl AppServer {
     }
 
     pub async fn permission_overview(&self) -> PermissionOverview {
-        let mut runtime_allowed_rules = self.sessions.runtime_permission_rules().await;
-        for rule in self
+        let remembered_allowed_rules = self.sessions.runtime_permission_rules().await;
+        let session_allowed_rules = self
             .sessions
-            .session_permission_rules(PermissionRuleSettingKind::Allow)
-        {
+            .session_permission_rules(PermissionRuleSettingKind::Allow);
+        let mut runtime_allowed_rules = remembered_allowed_rules.clone();
+        for rule in &session_allowed_rules {
             if !runtime_allowed_rules
                 .iter()
-                .any(|existing| existing == &rule)
+                .any(|existing| existing == rule)
             {
-                runtime_allowed_rules.push(rule);
+                runtime_allowed_rules.push(rule.clone());
             }
         }
+        let settings_allowed_rules = self
+            .sessions
+            .settings_permission_rules(PermissionRuleSettingKind::Allow);
+        let settings_denied_rules = self
+            .sessions
+            .settings_permission_rules(PermissionRuleSettingKind::Deny);
+        let effective_rules = self.effective_permission_rules(
+            &settings_allowed_rules,
+            &settings_denied_rules,
+            &session_allowed_rules,
+            &remembered_allowed_rules,
+        );
         PermissionOverview {
             permissions: permission_context_to_wire(self.permissions()),
             allow_all: self.allow_all(),
-            settings_allowed_rules: self
-                .sessions
-                .settings_permission_rules(PermissionRuleSettingKind::Allow),
-            settings_denied_rules: self
-                .sessions
-                .settings_permission_rules(PermissionRuleSettingKind::Deny),
+            effective_rules,
+            settings_allowed_rules,
+            settings_denied_rules,
             startup_allowed_rules: self
                 .sessions
                 .startup_permission_rules(PermissionRuleSettingKind::Allow),
@@ -59,6 +82,91 @@ impl AppServer {
                 .session_permission_rules(PermissionRuleSettingKind::Deny),
             configured_additional_directories: self.sessions.configured_additional_directories(),
             session_additional_directories: self.sessions.runtime_additional_directories(),
+        }
+    }
+
+    fn effective_permission_rules(
+        &self,
+        active_settings_allow: &[String],
+        active_settings_deny: &[String],
+        session_allow: &[String],
+        remembered_allow: &[String],
+    ) -> EffectivePermissionRules {
+        let config = self.sessions.config();
+        let settings_locked = config.ensure_setting_mutable("permissions").is_err();
+        let managed_only = config.policy.allow_managed_permission_rules_only;
+        let mut managed = PermissionRuleGroup::default();
+        let mut settings = Vec::new();
+        for group in config.settings_layers.permission_rules().groups {
+            let rules = normalized_rule_group(group.allow, group.deny, group.ask);
+            if group.source == SettingsSource::Managed {
+                managed = rules;
+                continue;
+            }
+            let mut rules = rules;
+            rules
+                .allow
+                .retain(|rule| active_settings_allow.iter().any(|active| active == rule));
+            rules
+                .deny
+                .retain(|rule| active_settings_deny.iter().any(|active| active == rule));
+            settings.push(SourcedPermissionRuleGroup {
+                source: settings_source_to_wire(group.source),
+                active: !managed_only,
+                mutable: group.source == SettingsSource::User && !settings_locked,
+                rules,
+            });
+        }
+
+        let settings_ask = normalized_rules(&config.settings.ask_tools);
+        let managed_ask = managed.ask.clone();
+        let startup_ask = normalized_rules(&config.ask_tools)
+            .into_iter()
+            .filter(|rule| {
+                !settings_ask.iter().any(|existing| existing == rule)
+                    && !managed_ask.iter().any(|existing| existing == rule)
+            })
+            .collect();
+        EffectivePermissionRules {
+            managed,
+            settings,
+            startup: PermissionRuleGroup {
+                allow: self
+                    .sessions
+                    .startup_permission_rules(PermissionRuleSettingKind::Allow),
+                deny: self
+                    .sessions
+                    .startup_permission_rules(PermissionRuleSettingKind::Deny),
+                ask: startup_ask,
+            },
+            session: PermissionRuleGroup {
+                allow: session_allow.to_vec(),
+                deny: self
+                    .sessions
+                    .session_permission_rules(PermissionRuleSettingKind::Deny),
+                ask: Vec::new(),
+            },
+            runtime_added: PermissionRuleGroup {
+                allow: self
+                    .sessions
+                    .runtime_added_permission_rules(PermissionRuleSettingKind::Allow),
+                deny: self
+                    .sessions
+                    .runtime_added_permission_rules(PermissionRuleSettingKind::Deny),
+                ask: Vec::new(),
+            },
+            remembered: PermissionRuleGroup {
+                allow: remembered_allow.to_vec(),
+                deny: Vec::new(),
+                ask: Vec::new(),
+            },
+            settings_locked,
+            allow_managed_permission_rules_only: managed_only,
+            precedence: vec![
+                PermissionRuleEffect::Deny,
+                PermissionRuleEffect::Ask,
+                PermissionRuleEffect::Allow,
+            ],
         }
     }
 
@@ -104,6 +212,42 @@ impl AppServer {
         self.sessions
             .remove_session_permission_rule_for_session(session_id, kind, rule)
             .await
+    }
+
+    /// Route a validated caller intent to the existing storage owner. Parsing,
+    /// normalization, lock checks, and unknown-field-preserving writes stay in
+    /// config/core; target scope is resolved before either path is opened.
+    pub(crate) async fn mutate_permission_rule(
+        &self,
+        mutation: PermissionRuleMutation,
+        target: PermissionRuleTargetScope,
+        session_id: Option<&str>,
+        kind: PermissionRuleSettingKind,
+        rule: &str,
+    ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
+        match (mutation, target, session_id) {
+            (PermissionRuleMutation::Add, PermissionRuleTargetScope::Settings, None) => {
+                self.add_permission_rule(kind, rule).await
+            }
+            (PermissionRuleMutation::Remove, PermissionRuleTargetScope::Settings, None) => {
+                self.remove_permission_rule(kind, rule).await
+            }
+            (PermissionRuleMutation::Add, PermissionRuleTargetScope::Session, Some(session_id)) => {
+                self.add_session_permission_rule(session_id, kind, rule)
+                    .await
+            }
+            (
+                PermissionRuleMutation::Remove,
+                PermissionRuleTargetScope::Session,
+                Some(session_id),
+            ) => {
+                self.remove_session_permission_rule(session_id, kind, rule)
+                    .await
+            }
+            _ => Err(CoreError::Config(
+                "permission rule target and session id do not match".to_string(),
+            )),
+        }
     }
 
     pub async fn validate_add_directory(
@@ -193,6 +337,34 @@ impl AppServer {
     }
 }
 
+fn normalized_rules(rules: &[String]) -> Vec<String> {
+    parse_tool_rule_list(rules)
+        .into_iter()
+        .map(|rule| orbcode_config::PermissionRule::parse(&rule).raw)
+        .collect()
+}
+
+fn normalized_rule_group(
+    allow: Vec<String>,
+    deny: Vec<String>,
+    ask: Vec<String>,
+) -> PermissionRuleGroup {
+    PermissionRuleGroup {
+        allow: normalized_rules(&allow),
+        deny: normalized_rules(&deny),
+        ask: normalized_rules(&ask),
+    }
+}
+
+fn settings_source_to_wire(source: SettingsSource) -> SettingSource {
+    match source {
+        SettingsSource::User => SettingSource::User,
+        SettingsSource::Project => SettingSource::Project,
+        SettingsSource::Local => SettingSource::Local,
+        SettingsSource::Managed => SettingSource::Managed,
+    }
+}
+
 fn expand_add_dir_path(raw_path: &str) -> PathBuf {
     if let Some(rest) = raw_path.strip_prefix("~/")
         && let Some(home) = std::env::var_os("HOME")
@@ -216,6 +388,7 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use orbcode_app_server_protocol::{PermissionRuleEffect, PermissionRuleKind, SettingSource};
     use orbcode_config::AppConfigOverrides;
 
     use super::super::AppServer;
@@ -374,5 +547,88 @@ mod tests {
         assert!(empty.contains("Please provide a directory path."));
         assert!(not_found.contains("was not found."));
         assert!(not_dir.contains("is not a directory. Did you mean to add the parent directory"));
+    }
+
+    #[tokio::test]
+    async fn permission_overview_preserves_sources_ask_rules_and_legacy_effective_order() {
+        let home = test_path("permission-sources-home");
+        let cwd = test_path("permission-sources-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(cwd.join(".claude"))
+            .await
+            .expect("project settings dir");
+        tokio::fs::write(
+            home.join("settings.json"),
+            r#"{"permissions":{"allow":["Read(user/**)"],"ask":["Write(user/**)"]}}"#,
+        )
+        .await
+        .expect("user settings");
+        tokio::fs::write(
+            cwd.join(".claude/settings.json"),
+            r#"{"permissions":{"deny":["Bash(rm:*)"]}}"#,
+        )
+        .await
+        .expect("project settings");
+        tokio::fs::write(
+            cwd.join(".claude/settings.local.json"),
+            r#"{"permissions":{"allow":["Grep(src/**)"]}}"#,
+        )
+        .await
+        .expect("local settings");
+
+        let app = AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                env_overrides: orbcode_config::sealed_provider_env_overrides(),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+        let overview = app.permission_overview().await;
+
+        assert_eq!(
+            overview.effective_rules.precedence,
+            vec![
+                PermissionRuleEffect::Deny,
+                PermissionRuleEffect::Ask,
+                PermissionRuleEffect::Allow,
+            ]
+        );
+        assert_eq!(
+            overview
+                .effective_rules
+                .settings
+                .iter()
+                .map(|group| group.source)
+                .collect::<Vec<_>>(),
+            vec![
+                SettingSource::User,
+                SettingSource::Project,
+                SettingSource::Local
+            ]
+        );
+        assert_eq!(
+            overview.effective_rules.settings[0].rules.ask,
+            vec!["Write(user/**)".to_string()]
+        );
+        assert!(
+            overview
+                .effective_rules
+                .settings
+                .iter()
+                .all(|group| group.active)
+        );
+        assert!(overview.effective_rules.settings[0].mutable);
+        assert!(!overview.effective_rules.settings[1].mutable);
+        assert_eq!(
+            overview.configured_rules(PermissionRuleKind::Allow),
+            overview.settings_allowed_rules
+        );
+        assert_eq!(
+            overview.configured_rules(PermissionRuleKind::Deny),
+            overview.settings_denied_rules
+        );
     }
 }

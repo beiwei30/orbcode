@@ -134,7 +134,7 @@ impl ConfigPickerState {
     ) -> Result<Self> {
         let model_name = app_server.model_name().await?.model_name;
         let theme_result = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
+        let theme = theme_result.theme;
         let current_effort = app_server.effort_level().await?.effort;
         let options = config_options(
             model_name,
@@ -164,7 +164,7 @@ impl ConfigPickerState {
     ) -> Result<()> {
         let model_name = app_server.model_name().await?.model_name;
         let theme_result = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
+        let theme = theme_result.theme;
         let current_effort = app_server.effort_level().await?.effort;
         self.all_options = config_options(
             model_name,

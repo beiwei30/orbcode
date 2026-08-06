@@ -18,6 +18,14 @@ import type {
   ErrorCode,
   ServerCapabilities,
   ClientCapabilities,
+  BootstrapState,
+  PermissionOverview,
+  SessionControlState,
+  SetSessionModelParams,
+  ThemeResult,
+  ThemeSetting,
+  EditorModeResult,
+  EditorModeSetting,
 } from "@orbcode/protocol";
 
 export type ServerMessage =
@@ -129,13 +137,99 @@ export class OrbCodeClient {
     return result.data as unknown[];
   }
 
-  async bootstrap(): Promise<unknown> {
+  async bootstrap(): Promise<BootstrapState> {
     const resp = await this.request("session/bootstrap");
     const result = (resp as any).result;
     if (result?.status !== "success") {
       throw new Error(`session/bootstrap failed: ${JSON.stringify(result)}`);
     }
-    return result.data;
+    return result.data as BootstrapState;
+  }
+
+  async permissionOverview(): Promise<PermissionOverview> {
+    const resp = await this.request("permission/overview");
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`permission/overview failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as PermissionOverview;
+  }
+
+  async sessionControlState(sessionId: string): Promise<SessionControlState> {
+    const resp = await this.request("session/control_state", {
+      session_id: sessionId,
+    });
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`session/control_state failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as SessionControlState;
+  }
+
+  async setSessionModel(
+    sessionId: string,
+    model: string | null,
+  ): Promise<SessionControlState> {
+    const params: SetSessionModelParams = {
+      session_id: sessionId,
+      model,
+    };
+    const resp = await this.request("session/set_model", params);
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`session/set_model failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as SessionControlState;
+  }
+
+  async clearSessionModelOverride(sessionId: string): Promise<SessionControlState> {
+    const params: SetSessionModelParams = {
+      session_id: sessionId,
+      model: null,
+      inherit: true,
+    };
+    const resp = await this.request("session/set_model", params);
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`session/set_model clear failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as SessionControlState;
+  }
+
+  async theme(): Promise<ThemeResult> {
+    const resp = await this.request("settings/theme");
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`settings/theme failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as ThemeResult;
+  }
+
+  async setTheme(theme: ThemeSetting): Promise<ThemeResult> {
+    const resp = await this.request("settings/set_theme", { theme });
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`settings/set_theme failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as ThemeResult;
+  }
+
+  async editorMode(): Promise<EditorModeResult> {
+    const resp = await this.request("settings/editor_mode");
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`settings/editor_mode failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as EditorModeResult;
+  }
+
+  async setEditorMode(mode: EditorModeSetting): Promise<EditorModeResult> {
+    const resp = await this.request("settings/set_editor_mode", { mode });
+    const result = (resp as any).result;
+    if (result?.status !== "success") {
+      throw new Error(`settings/set_editor_mode failed: ${JSON.stringify(result)}`);
+    }
+    return result.data as EditorModeResult;
   }
 
   getServerRequests(): ServerMessage[] {

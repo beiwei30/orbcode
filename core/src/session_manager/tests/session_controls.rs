@@ -203,6 +203,93 @@ async fn explicit_session_model_overrides_global_model_control() {
 }
 
 #[tokio::test]
+async fn clearing_session_model_override_resumes_layered_global_model() {
+    let manager = test_manager().await;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    manager.set_runtime_model_override(Some("haiku".to_string()));
+    manager
+        .set_session_model(&session.session_id, Some("sonnet".to_string()))
+        .await
+        .expect("set session model");
+    manager
+        .clear_session_model_override(&session.session_id)
+        .await
+        .expect("clear session model");
+
+    assert_eq!(
+        manager
+            .effective_config_for_session(&session.session_id)
+            .provider_model_setting()
+            .as_deref(),
+        Some("haiku")
+    );
+}
+
+#[tokio::test]
+async fn invalid_session_model_does_not_mutate_existing_selection() {
+    let manager = test_manager().await;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+    let explicit_model = "claude-haiku-4-5-20251001";
+    manager
+        .set_session_model(&session.session_id, Some(explicit_model.to_string()))
+        .await
+        .expect("set valid explicit model id");
+
+    let error = manager
+        .set_session_model(&session.session_id, Some("bad\nmodel".to_string()))
+        .await
+        .expect_err("invalid model must fail");
+    assert!(error.to_string().contains("control characters"));
+    assert_eq!(
+        manager
+            .effective_config_for_session(&session.session_id)
+            .provider_model_setting()
+            .as_deref(),
+        Some(explicit_model)
+    );
+}
+
+#[tokio::test]
+async fn settings_write_failure_leaves_effective_runtime_state_unchanged() {
+    let manager = test_manager().await;
+    let settings_path = manager.config.home_dir.join("settings.json");
+    if tokio::fs::try_exists(&settings_path)
+        .await
+        .expect("inspect settings path")
+    {
+        tokio::fs::remove_file(&settings_path)
+            .await
+            .expect("remove test settings file");
+    }
+    tokio::fs::create_dir(&settings_path)
+        .await
+        .expect("replace settings file with directory");
+
+    let before_model = manager.effective_config().effective_model_selection();
+    let before_preferences = manager.client_preferences();
+
+    manager
+        .set_persisted_model_setting(Some("sonnet".to_string()))
+        .await
+        .expect_err("model write must fail");
+    manager
+        .set_theme_setting(orbcode_config::ThemeSetting::Dark)
+        .await
+        .expect_err("theme write must fail");
+    manager
+        .set_editor_mode_setting(orbcode_config::EditorModeSetting::Vim)
+        .await
+        .expect_err("editor write must fail");
+
+    assert_eq!(
+        manager.effective_config().effective_model_selection(),
+        before_model
+    );
+    assert_eq!(manager.client_preferences(), before_preferences);
+}
+
+#[tokio::test]
 async fn stale_session_control_mutation_is_typed_and_side_effect_free() {
     let manager = test_manager().await;
     let error = manager

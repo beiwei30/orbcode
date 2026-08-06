@@ -7,7 +7,7 @@ use crate::hooks::HookCommand;
 use crate::model_resolver::ModelCapability;
 use crate::model_resolver::{format_provider_model_display_name, normalize_model_string_for_api};
 use crate::settings_resolution::sealed_provider_env_overrides;
-use crate::{AuthManager, AuthMethod};
+use crate::{AuthManager, AuthMethod, ModelSelectionSource, RuntimeModelOverride, SettingOrigin};
 
 use super::{
     AppConfig, AppConfigOverrides, EffectivePolicy, PermissionMode, SettingsLayers,
@@ -49,7 +49,8 @@ fn test_config(default_provider: ProviderId, settings: ClaudeSettings) -> AppCon
         settings_warnings: Vec::new(),
         policy: EffectivePolicy::default(),
         policy_conflicts: Vec::new(),
-        runtime_model_override: None,
+        runtime_model_override: crate::RuntimeModelOverride::Inherit,
+        refreshed_persisted_model_setting: None,
         env_overrides,
         append_system_prompt: None,
         permission_mode: None,
@@ -302,6 +303,91 @@ fn runtime_model_override_wins_over_env_model() {
     config.apply_runtime_model_override(Some("sonnet"));
 
     assert_eq!(config.provider_model_setting().as_deref(), Some("sonnet"));
+}
+
+#[test]
+fn effective_model_selection_distinguishes_persisted_env_runtime_and_clear() {
+    use crate::layers::LayerInput;
+
+    let mut config = test_config(
+        ProviderId::Anthropic,
+        ClaudeSettings {
+            env: std::iter::once(("ANTHROPIC_MODEL".to_string(), "env-model".to_string()))
+                .collect(),
+            model: Some("persisted-model".to_string()),
+            ..ClaudeSettings::default()
+        },
+    );
+    config.resolved_settings = crate::ResolvedSettings::resolve(&[LayerInput::new(
+        SettingOrigin::Project,
+        Some(config.cwd.join(".claude/settings.json")),
+        serde_json::json!({"model": "persisted-model"})
+            .as_object()
+            .expect("object")
+            .clone(),
+    )]);
+
+    let env = config.effective_model_selection();
+    assert_eq!(env.persisted.value.as_deref(), Some("persisted-model"));
+    assert_eq!(env.persisted.source, Some(SettingOrigin::Project));
+    assert_eq!(env.source, ModelSelectionSource::Environment);
+    assert_eq!(env.requested_model.as_deref(), Some("env-model"));
+    assert_eq!(env.runtime_override, RuntimeModelOverride::Inherit);
+
+    config.apply_runtime_model_override(Some("sonnet"));
+    let runtime = config.effective_model_selection();
+    assert_eq!(runtime.source, ModelSelectionSource::Runtime);
+    assert_eq!(runtime.requested_model.as_deref(), Some("sonnet"));
+    assert_eq!(
+        runtime.runtime_override,
+        RuntimeModelOverride::Model("sonnet".to_string())
+    );
+
+    config.apply_runtime_model_override(None);
+    let provider_default = config.effective_model_selection();
+    assert_eq!(provider_default.source, ModelSelectionSource::Runtime);
+    assert_eq!(provider_default.requested_model, None);
+    assert_eq!(
+        provider_default.runtime_override,
+        RuntimeModelOverride::Default
+    );
+
+    config.clear_runtime_model_override();
+    let cleared = config.effective_model_selection();
+    assert_eq!(cleared.source, ModelSelectionSource::Environment);
+    assert_eq!(cleared.requested_model.as_deref(), Some("env-model"));
+    assert_eq!(cleared.runtime_override, RuntimeModelOverride::Inherit);
+}
+
+#[test]
+fn effective_model_selection_reports_persisted_source_and_managed_lock() {
+    use crate::layers::LayerInput;
+
+    let mut config = test_config(
+        ProviderId::Anthropic,
+        ClaudeSettings {
+            model: Some("opus".to_string()),
+            ..ClaudeSettings::default()
+        },
+    );
+    config.resolved_settings = crate::ResolvedSettings::resolve(&[LayerInput::new(
+        SettingOrigin::Managed,
+        Some(config.home_dir.join("managed-settings.json")),
+        serde_json::json!({"model": "opus"})
+            .as_object()
+            .expect("object")
+            .clone(),
+    )]);
+    config
+        .policy
+        .managed_locked_keys
+        .insert("model".to_string());
+
+    let selection = config.effective_model_selection();
+    assert_eq!(selection.source, ModelSelectionSource::Persisted);
+    assert_eq!(selection.requested_model.as_deref(), Some("opus"));
+    assert_eq!(selection.persisted.source, Some(SettingOrigin::Managed));
+    assert!(selection.persisted.locked);
 }
 
 #[test]

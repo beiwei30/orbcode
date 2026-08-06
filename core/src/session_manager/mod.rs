@@ -276,8 +276,7 @@ pub struct SessionManager {
 struct SessionControlOverrides {
     permission_mode: PermissionMode,
     permission_mode_overridden: bool,
-    model: Option<String>,
-    model_overridden: bool,
+    model: orbcode_config::RuntimeModelOverride,
     effort: Option<orbcode_protocol::EffortLevel>,
 }
 

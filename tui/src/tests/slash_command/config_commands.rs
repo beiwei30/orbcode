@@ -1028,7 +1028,18 @@ async fn model_picker_selection_pushes_slash_feedback() {
             .expect("read settings"),
     )
     .expect("settings json");
-    assert_eq!(settings["model"], "glm-4.7");
+    assert!(settings.get("model").is_none());
+    assert_eq!(settings["env"]["ANTHROPIC_MODEL"], "glm-4.7");
+
+    let controls = app_server
+        .session_control_state(&state.session_id)
+        .await
+        .expect("session model state");
+    assert_eq!(
+        controls.model_selection.runtime_override,
+        orbcode_app_server_client::RuntimeModelOverride::Model("glm-4.7".to_string())
+    );
+    assert_eq!(controls.model_selection.resolution.request_model, "glm-4.7");
 }
 
 #[tokio::test]

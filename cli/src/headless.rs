@@ -6,8 +6,8 @@ use std::{
 
 use anyhow::Result;
 use orbcode_app_server::AppServer;
+use orbcode_app_server_client::PermissionMode;
 use orbcode_app_server_client::{AppClient, PermissionDecision, PermissionDecisionWire};
-use orbcode_config::PermissionMode;
 use orbcode_protocol::{
     AskUserCancellationReason, AskUserQuestionSpec, AskUserResponseOutcome,
     AsyncCancellationOutcome, ControlRequest, ControlRequestEnvelope, SUPPORTED_CONTROL_SUBTYPES,
@@ -320,10 +320,8 @@ pub(crate) async fn run_print_mode(
         bootstrap.permissions.allow_tools,
         bootstrap.permissions.allow_network,
     );
-    if let Ok(mode) = client.permission_mode_name().await
-        && let Some(mode) = PermissionMode::parse(&mode)
-    {
-        run.apply_permission_mode(mode);
+    if let Ok(result) = client.permission_mode().await {
+        run.apply_permission_mode(result.mode);
     }
 
     if matches!(output_format, CliOutputFormat::StreamJson) {
@@ -427,17 +425,10 @@ pub(crate) async fn run_background_worker(
                 status: server.status,
             })
             .collect();
-        let permission_mode_name = client
-            .permission_mode_name()
+        let permission_mode = client
+            .permission_mode()
             .await
-            .unwrap_or_else(|_| "default".to_string());
-        let permission_mode_str = permission_mode_name.as_str();
-        let permission_mode = match permission_mode_str {
-            "acceptEdits" => PermissionMode::AcceptEdits,
-            "bypassPermissions" => PermissionMode::BypassPermissions,
-            "plan" => PermissionMode::Plan,
-            _ => PermissionMode::Default,
-        };
+            .map_or(PermissionMode::Default, |result| result.mode);
         let meta = InitMetadata {
             session_id: session_id.clone(),
             cwd: std::env::current_dir()
@@ -1224,7 +1215,7 @@ impl HeadlessRun {
                 Ok(ControlAction::None)
             }
             ControlFrame::SetPermissionMode { request_id, mode } => {
-                match client.set_permission_mode(mode.as_str()).await {
+                match client.set_permission_mode(mode).await {
                     Ok(_) => {
                         self.apply_permission_mode(mode);
                         self.emit_control_response(control_response_success(&request_id))?;
@@ -1264,13 +1255,13 @@ impl HeadlessRun {
                 Ok(ControlAction::None)
             }
             ControlFrame::SetModel { request_id, model } => {
-                match client.set_session_model_override(session_id, model).await {
+                match client.set_session_model(session_id, model).await {
                     Ok(result) => self.emit_typed_control_success(
                         &request_id,
                         &SdkModelChangeResponse {
-                            provider: result.provider.as_str().to_string(),
-                            model: result.model,
-                            display_name: result.display_name,
+                            provider: result.model_selection.provider.as_str().to_string(),
+                            model: result.model_selection.resolution.request_model,
+                            display_name: result.model_selection.resolution.display_name,
                         },
                     )?,
                     Err(error) => self.emit_control_response(control_response_error(
@@ -1734,9 +1725,12 @@ impl HeadlessRun {
             .map(sdk_mcp_status)
             .collect();
         let permission_mode = client
-            .permission_mode_name()
+            .permission_mode()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .mode
+            .as_str()
+            .to_string();
         Ok(SdkInitializeResponse {
             protocol_version: "1.0".to_string(),
             session_id: status.session_id,
@@ -1776,13 +1770,17 @@ impl HeadlessRun {
             .status_overview_typed(session_id)
             .await
             .map_err(|error| error.to_string())?;
+        let controls = client
+            .session_control_state(session_id)
+            .await
+            .map_err(|error| error.to_string())?;
         Ok(SdkSessionStateResponse {
             session_id: overview.session_id,
             cwd: overview.cwd.to_string_lossy().into_owned(),
-            model_display_name: overview.model_display_name,
-            model_name: overview.model_name,
-            model_capabilities: overview.model_capabilities,
-            effort_level: overview
+            model_display_name: controls.model_selection.resolution.display_name,
+            model_name: controls.model_selection.resolution.request_model,
+            model_capabilities: controls.model_selection.resolution.capabilities,
+            effort_level: controls
                 .effort_level
                 .map(|effort| effort.as_str().to_string()),
             max_thinking_tokens: overview.max_thinking_tokens,
@@ -2019,17 +2017,10 @@ pub(crate) async fn build_init_metadata(
             status: server.status,
         })
         .collect();
-    let permission_mode_name = client
-        .permission_mode_name()
+    let permission_mode = client
+        .permission_mode()
         .await
-        .unwrap_or_else(|_| "default".to_string());
-    let permission_mode_str = permission_mode_name.as_str();
-    let permission_mode = match permission_mode_str {
-        "acceptEdits" => PermissionMode::AcceptEdits,
-        "bypassPermissions" => PermissionMode::BypassPermissions,
-        "plan" => PermissionMode::Plan,
-        _ => PermissionMode::Default,
-    };
+        .map_or(PermissionMode::Default, |result| result.mode);
     InitMetadata {
         session_id: bootstrap.session.session_id.clone(),
         cwd: bootstrap.cwd.display().to_string(),

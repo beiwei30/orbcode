@@ -65,8 +65,40 @@ pub struct SetSessionPermissionModeParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SetSessionModelParams {
     pub session_id: String,
-    /// `None` selects the provider's configured default.
-    pub model: Option<String>,
+    /// `None` selects the provider's configured default. `inherit` is a
+    /// distinct clear operation that resumes env/persisted selection.
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    inherit: bool,
+}
+
+impl SetSessionModelParams {
+    pub fn select(session_id: impl Into<String>, model: Option<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            model,
+            inherit: false,
+        }
+    }
+
+    pub fn inherit(session_id: impl Into<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            model: None,
+            inherit: true,
+        }
+    }
+
+    pub fn selection(&self) -> crate::RuntimeModelOverride {
+        if self.inherit {
+            crate::RuntimeModelOverride::Inherit
+        } else {
+            self.model.clone().map_or(
+                crate::RuntimeModelOverride::Default,
+                crate::RuntimeModelOverride::Model,
+            )
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -166,12 +198,12 @@ pub struct SentResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PermissionModeResult {
-    pub mode: String,
+    pub mode: PermissionMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PermissionSetModeParams {
-    pub mode: String,
+    pub mode: PermissionMode,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -190,17 +222,38 @@ impl PermissionRuleKind {
     }
 }
 
+/// Storage scope for a permission-rule mutation. The endpoint-specific
+/// parameter DTOs expose this before app-server opens either storage path.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionRuleTargetScope {
+    Settings,
+    Session,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PermissionRuleParams {
-    pub kind: String,
+    pub kind: PermissionRuleKind,
     pub rule: String,
+}
+
+impl PermissionRuleParams {
+    pub fn target_scope(&self) -> PermissionRuleTargetScope {
+        PermissionRuleTargetScope::Settings
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SessionPermissionRuleParams {
     pub session_id: String,
-    pub kind: String,
+    pub kind: PermissionRuleKind,
     pub rule: String,
+}
+
+impl SessionPermissionRuleParams {
+    pub fn target_scope(&self) -> PermissionRuleTargetScope {
+        PermissionRuleTargetScope::Session
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -208,6 +261,10 @@ pub struct PermissionRuleUpdateResult {
     pub path: PathBuf,
     pub rule: String,
     pub changed: bool,
+    pub kind: PermissionRuleKind,
+    pub target: PermissionRuleTargetScope,
+    pub source: crate::SettingSource,
+    pub effective_rules: crate::EffectivePermissionRules,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -242,14 +299,13 @@ impl_list_result!(ModelOptionsResult, ModelOptionOverview);
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SetModelParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
     pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SetModelResult {
     pub display_name: String,
+    pub model_selection: crate::EffectiveModelSelection,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -271,12 +327,12 @@ pub struct ProvidersResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ThemeParams {
-    pub theme: String,
+    pub theme: crate::ThemeSetting,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ThemeResult {
-    pub theme: String,
+    pub theme: crate::ThemeSetting,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -320,12 +376,12 @@ pub struct KeybindingsLoadResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct EditorModeParams {
-    pub mode: String,
+    pub mode: crate::EditorModeSetting,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct EditorModeResult {
-    pub editor_mode: String,
+    pub editor_mode: crate::EditorModeSetting,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -666,4 +722,8 @@ fn default_empty_object_string() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

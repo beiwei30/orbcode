@@ -1,6 +1,8 @@
 use anyhow::Result;
-use orbcode_app_server_client::{AppClient, PermissionOverview};
-use orbcode_config::{PermissionRuleSettingKind, normalize_permission_rule_for_edit};
+use orbcode_app_server_client::{
+    AppClient, PermissionOverview, PermissionRuleKind as PermissionRuleSettingKind,
+};
+use orbcode_config::normalize_permission_rule_for_edit;
 
 use crate::commands::utils::{slash_command_display_path, split_first_word};
 use crate::render::slash_output::render_permission_overview;
@@ -40,25 +42,24 @@ pub(crate) async fn apply_permission_rule_update(
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let sources_before = permission_rule_sources(&overview_before, kind, normalized_rule);
-    let kind_str = kind.as_str();
     let update_value = match action {
         PermissionRuleAction::Add => match scope {
             PermissionRuleScope::Settings => app_server
-                .add_permission_rule(kind_str, normalized_rule)
+                .add_permission_rule(kind, normalized_rule)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
             PermissionRuleScope::Session => app_server
-                .add_session_permission_rule(session_id, kind_str, normalized_rule)
+                .add_session_permission_rule(session_id, kind, normalized_rule)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         },
         PermissionRuleAction::Remove => match scope {
             PermissionRuleScope::Settings => app_server
-                .remove_permission_rule(kind_str, normalized_rule)
+                .remove_permission_rule(kind, normalized_rule)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
             PermissionRuleScope::Session => app_server
-                .remove_session_permission_rule(session_id, kind_str, normalized_rule)
+                .remove_session_permission_rule(session_id, kind, normalized_rule)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         },
@@ -268,24 +269,14 @@ fn permission_rule_sources(
     rule: &str,
 ) -> Vec<&'static str> {
     let mut sources = Vec::new();
-    let (settings_rules, startup_rules, edited_rules, runtime_rules) = match kind {
-        PermissionRuleSettingKind::Allow => (
-            &overview.settings_allowed_rules,
-            &overview.startup_allowed_rules,
-            &overview.edited_allowed_rules,
-            &overview.runtime_allowed_rules,
-        ),
-        PermissionRuleSettingKind::Deny => (
-            &overview.settings_denied_rules,
-            &overview.startup_denied_rules,
-            &overview.edited_denied_rules,
-            &overview.runtime_denied_rules,
-        ),
-    };
-    push_permission_rule_source(&mut sources, settings_rules, rule, "settings");
-    push_permission_rule_source(&mut sources, edited_rules, rule, "settings edit");
-    push_permission_rule_source(&mut sources, startup_rules, rule, "env/CLI");
-    push_permission_rule_source(&mut sources, runtime_rules, rule, "session");
+    let settings_rules = overview.configured_rules(kind);
+    let startup_rules = overview.startup_rules(kind);
+    let edited_rules = overview.runtime_added_rules(kind);
+    let runtime_rules = overview.session_rules(kind);
+    push_permission_rule_source(&mut sources, &settings_rules, rule, "settings");
+    push_permission_rule_source(&mut sources, &edited_rules, rule, "settings edit");
+    push_permission_rule_source(&mut sources, &startup_rules, rule, "env/CLI");
+    push_permission_rule_source(&mut sources, &runtime_rules, rule, "session");
     sources
 }
 

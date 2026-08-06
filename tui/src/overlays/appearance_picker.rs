@@ -134,7 +134,7 @@ impl TuiState {
         app_server: &AppClient,
     ) -> Result<()> {
         let theme_result = app_server.theme_setting().await?;
-        let theme = ThemeSetting::parse(&theme_result.theme).unwrap_or(ThemeSetting::Auto);
+        let theme = theme_result.theme;
         self.overlay = Some(OverlayState::ThemePicker(ThemePickerState::new(
             command, theme,
         )));
@@ -180,8 +180,8 @@ impl TuiState {
             self.set_status_line("Custom themes are not supported in Rust yet.");
             return Ok(());
         };
-        let result = app_server.set_theme_setting(theme.as_str()).await?;
-        let applied_theme = ThemeSetting::parse(&result.theme).unwrap_or(ThemeSetting::Auto);
+        let result = app_server.set_theme_setting(theme).await?;
+        let applied_theme = result.theme;
         set_active_theme(applied_theme);
         self.overlay = None;
         let summary = format!("Theme set to {}", applied_theme.as_str());

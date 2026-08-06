@@ -18,7 +18,7 @@
 //! [`ControlFrame`] variant the caller can turn into a structured response, so
 //! a single bad line can never crash the process.
 
-use orbcode_config::PermissionMode;
+use orbcode_app_server_client::PermissionMode;
 use orbcode_protocol::{
     AskUserResponseOutcome, CONTROL_REQUEST_TYPE, CONTROL_RESPONSE_TYPE, ControlRequest,
     ControlRequestEnvelope, ControlResponse, ControlResponseEnvelope, SERVER_RESPONSE_TYPE,
