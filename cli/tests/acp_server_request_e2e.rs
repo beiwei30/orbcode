@@ -18,10 +18,10 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::{
     CancelNotification, CloseSessionRequest, ContentBlock, DeleteSessionRequest, Implementation,
     InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
-    LoadSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+    LoadSessionRequest, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     ResumeSessionRequest, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-    StopReason,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{AcpAgent, Client, Dispatch, SessionMessage};
 use serde_json::{Value, json};
@@ -54,6 +54,23 @@ impl AcpProcess {
     }
 
     async fn spawn_with_base_url_and_allow_tools(base_url: &str, allow_tools: bool) -> Self {
+        Self::spawn_with_options(base_url, allow_tools, None).await
+    }
+
+    async fn spawn_with_managed_settings(managed_settings: &str) -> Self {
+        Self::spawn_with_options(
+            "mock://anthropic?scenario=success",
+            false,
+            Some(managed_settings),
+        )
+        .await
+    }
+
+    async fn spawn_with_options(
+        base_url: &str,
+        allow_tools: bool,
+        managed_settings: Option<&str>,
+    ) -> Self {
         let home = tempfile::tempdir().expect("home tempdir");
         let cwd = tempfile::tempdir().expect("cwd tempdir");
 
@@ -62,13 +79,17 @@ impl AcpProcess {
             r#"{"env":{"ANTHROPIC_API_KEY":"stub-key"}}"#,
         )
         .expect("write settings");
+        if let Some(managed_settings) = managed_settings {
+            std::fs::write(home.path().join("managed-settings.json"), managed_settings)
+                .expect("write managed settings");
+        }
 
         let mut command = Command::new(ORBCODE_BIN);
         if allow_tools {
             command.arg("--allow-tools").arg("true");
         }
 
-        let mut child = command
+        let command = command
             .arg("acp")
             .current_dir(cwd.path())
             .env_clear()
@@ -77,7 +98,11 @@ impl AcpProcess {
             .env("HOME", home.path())
             .env("ANTHROPIC_BASE_URL", base_url)
             .env("ANTHROPIC_API_KEY", "test-key")
-            .env("RUST_LOG", "warn")
+            .env("RUST_LOG", "warn");
+        if managed_settings.is_some() {
+            command.env("CLAUDE_CODE_MANAGED_SETTINGS_PATH", home.path());
+        }
+        let mut child = command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1300,7 +1325,7 @@ async fn acp_sdk_client_conformance_harness_smoke() {
             assert!(!initialized.agent_capabilities.prompt_capabilities.image);
             assert!(!initialized.agent_capabilities.prompt_capabilities.audio);
             assert!(
-                !initialized
+                initialized
                     .agent_capabilities
                     .prompt_capabilities
                     .embedded_context
@@ -1483,10 +1508,27 @@ async fn acp_sdk_client_session_load_conformance_smoke() {
                 "session/load should be advertised"
             );
 
-            connection
+            let loaded = connection
                 .send_request(LoadSessionRequest::new(session_id, cwd.clone()))
                 .block_task()
                 .await?;
+            assert_eq!(
+                loaded
+                    .modes
+                    .as_ref()
+                    .expect("load modes")
+                    .current_mode_id
+                    .to_string(),
+                "default"
+            );
+            assert!(loaded.config_options.as_ref().is_some_and(|options| {
+                options
+                    .iter()
+                    .any(|option| option.id.to_string() == "model")
+                    && options
+                        .iter()
+                        .any(|option| option.id.to_string() == "thought_level")
+            }));
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
@@ -1577,10 +1619,27 @@ async fn acp_sdk_client_session_resume_conformance_smoke() {
                 "session/resume should be advertised"
             );
 
-            connection
+            let resumed = connection
                 .send_request(ResumeSessionRequest::new(session_id, cwd.clone()))
                 .block_task()
                 .await?;
+            assert_eq!(
+                resumed
+                    .modes
+                    .as_ref()
+                    .expect("resume modes")
+                    .current_mode_id
+                    .to_string(),
+                "default"
+            );
+            assert!(resumed.config_options.as_ref().is_some_and(|options| {
+                options
+                    .iter()
+                    .any(|option| option.id.to_string() == "model")
+                    && options
+                        .iter()
+                        .any(|option| option.id.to_string() == "thought_level")
+            }));
             tokio::time::sleep(Duration::from_millis(200)).await;
             assert!(
                 updates.lock().await.is_empty(),
@@ -1781,6 +1840,12 @@ async fn acp_initialize_uses_official_sdk_shape() {
     assert!(raw_capabilities.get("providers").is_none());
     assert!(raw_capabilities.get("nes").is_none());
     assert!(raw_capabilities.get("positionEncoding").is_none());
+    assert_eq!(raw_capabilities["promptCapabilities"]["image"], false);
+    assert_eq!(raw_capabilities["promptCapabilities"]["audio"], false);
+    assert_eq!(
+        raw_capabilities["promptCapabilities"]["embeddedContext"],
+        true
+    );
 
     let parsed: InitializeResponse =
         serde_json::from_value(response["result"].clone()).expect("valid ACP initialize response");
@@ -2007,6 +2072,9 @@ async fn acp_load_replays_history_before_response() {
         }
     };
     assert!(response.get("error").is_none(), "{response:?}");
+    assert_eq!(response["result"]["modes"]["currentModeId"], "default");
+    assert!(config_option(&response["result"]["configOptions"], "model").is_some());
+    assert!(config_option(&response["result"]["configOptions"], "thought_level").is_some());
     assert_eq!(updates.len(), 2, "expected user and assistant replay");
     assert!(matches!(
         updates[0].update,
@@ -2158,6 +2226,9 @@ async fn acp_resume_does_not_replay_history_and_accepts_prompt() {
         }
     };
     assert!(response.get("error").is_none(), "{response:?}");
+    assert_eq!(response["result"]["modes"]["currentModeId"], "default");
+    assert!(config_option(&response["result"]["configOptions"], "model").is_some());
+    assert!(config_option(&response["result"]["configOptions"], "thought_level").is_some());
     assert!(
         resume_updates.is_empty(),
         "session/resume must not replay persisted history: {resume_updates:?}"
@@ -4235,4 +4306,390 @@ async fn acp_permission_deny_via_request_permission() {
     );
 
     proc.close().await;
+}
+
+#[tokio::test]
+async fn acp_session_controls_have_stable_shape_and_session_isolation() {
+    let mut proc = AcpProcess::spawn().await;
+    initialize_acp(&mut proc).await;
+    let cwd = proc.cwd().to_string_lossy().to_string();
+
+    let mut new_results = Vec::new();
+    for id in [2, 3] {
+        proc.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/new",
+            "params": {"cwd": cwd, "mcpServers": []}
+        }))
+        .await;
+        let response = proc.recv_response(id).await;
+        assert!(response.get("error").is_none(), "{response:?}");
+        new_results.push(response["result"].clone());
+    }
+    let first_session = new_results[0]["sessionId"]
+        .as_str()
+        .expect("first session id")
+        .to_string();
+    let second_session = new_results[1]["sessionId"]
+        .as_str()
+        .expect("second session id")
+        .to_string();
+    assert_ne!(first_session, second_session);
+
+    for result in &new_results {
+        assert_eq!(result["modes"]["currentModeId"], "default");
+        let mode_ids = result["modes"]["availableModes"]
+            .as_array()
+            .expect("available modes")
+            .iter()
+            .map(|mode| mode["id"].as_str().expect("mode id"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mode_ids,
+            vec!["default", "accept_edits", "plan", "dont_ask"]
+        );
+        assert!(!mode_ids.contains(&"bypass_permissions"));
+        assert!(config_option(&result["configOptions"], "model").is_some());
+        assert!(config_option(&result["configOptions"], "thought_level").is_some());
+    }
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {"sessionId": first_session, "modeId": "plan"}
+    }))
+    .await;
+    let mode_response = proc.recv_response(4).await;
+    assert!(mode_response.get("error").is_none(), "{mode_response:?}");
+    assert_eq!(mode_response["result"], json!({}));
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/set_config_option",
+        "params": {"sessionId": first_session, "configId": "model", "value": "sonnet"}
+    }))
+    .await;
+    let model_response = proc.recv_response(5).await;
+    assert!(model_response.get("error").is_none(), "{model_response:?}");
+    assert_eq!(
+        config_option(&model_response["result"]["configOptions"], "model").expect("model option")["currentValue"],
+        "sonnet"
+    );
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/set_config_option",
+        "params": {"sessionId": first_session, "configId": "thought_level", "value": "high"}
+    }))
+    .await;
+    let effort_response = proc.recv_response(6).await;
+    assert!(
+        effort_response.get("error").is_none(),
+        "{effort_response:?}"
+    );
+    assert_eq!(
+        config_option(&effort_response["result"]["configOptions"], "thought_level")
+            .expect("thought option")["currentValue"],
+        "high"
+    );
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/set_config_option",
+        "params": {"sessionId": second_session, "configId": "model", "value": "default"}
+    }))
+    .await;
+    let second_response = proc.recv_response(7).await;
+    assert!(
+        second_response.get("error").is_none(),
+        "{second_response:?}"
+    );
+    assert_eq!(
+        config_option(&second_response["result"]["configOptions"], "model")
+            .expect("second model option")["currentValue"],
+        "default",
+        "changing the first session must not alter the second session"
+    );
+
+    for (id, params) in [
+        (
+            8,
+            json!({"sessionId": first_session, "modeId": "bypass_permissions"}),
+        ),
+        (9, json!({"sessionId": "missing-session", "modeId": "plan"})),
+    ] {
+        proc.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/set_mode",
+            "params": params
+        }))
+        .await;
+        let response = proc.recv_response(id).await;
+        assert_eq!(response["error"]["code"], json!(-32602), "{response:?}");
+    }
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "session/set_config_option",
+        "params": {"sessionId": first_session, "configId": "model", "value": true}
+    }))
+    .await;
+    let wrong_kind = proc.recv_response(10).await;
+    assert_eq!(wrong_kind["error"]["code"], json!(-32602), "{wrong_kind:?}");
+
+    proc.close().await;
+}
+
+#[tokio::test]
+async fn acp_session_control_change_during_prompt_is_rejected_until_next_prompt_boundary() {
+    let mut proc = AcpProcess::spawn_with_base_url(HANG_MOCK_BASE_URL).await;
+    initialize_acp(&mut proc).await;
+    let session_id = new_session_without_mcp_id(&mut proc, 2).await;
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+            "sessionId": session_id,
+            "prompt": [{"type": "text", "text": "keep this turn active"}]
+        }
+    }))
+    .await;
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {"sessionId": session_id, "modeId": "plan"}
+    }))
+    .await;
+    let response = proc.recv_response(4).await;
+    assert_eq!(response["error"]["code"], json!(-32602), "{response:?}");
+    assert!(
+        response["error"]["data"]
+            .as_str()
+            .is_some_and(|message| message.contains("active")),
+        "{response:?}"
+    );
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {"sessionId": session_id}
+    }))
+    .await;
+    let prompt = proc.recv_response(3).await;
+    assert!(prompt.get("error").is_none(), "{prompt:?}");
+    proc.close().await;
+}
+
+#[tokio::test]
+async fn acp_session_controls_surface_managed_setting_locks() {
+    let mut proc = AcpProcess::spawn_with_managed_settings(
+        r#"{"model":"sonnet","effortLevel":"high","permissions":{"defaultMode":"default"}}"#,
+    )
+    .await;
+    initialize_acp(&mut proc).await;
+    let session_id = new_session_without_mcp_id(&mut proc, 2).await;
+
+    for (id, method, params) in [
+        (
+            3,
+            "session/set_config_option",
+            json!({"sessionId": session_id, "configId": "model", "value": "opus"}),
+        ),
+        (
+            4,
+            "session/set_config_option",
+            json!({"sessionId": session_id, "configId": "thought_level", "value": "low"}),
+        ),
+        (
+            5,
+            "session/set_mode",
+            json!({"sessionId": session_id, "modeId": "plan"}),
+        ),
+    ] {
+        proc.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }))
+        .await;
+        let response = proc.recv_response(id).await;
+        assert_eq!(response["error"]["code"], json!(-32602), "{response:?}");
+        assert!(
+            response["error"]["data"]
+                .as_str()
+                .is_some_and(|message| message.contains("locked by managed policy")),
+            "{response:?}"
+        );
+    }
+
+    proc.close().await;
+}
+
+#[tokio::test]
+async fn acp_unsupported_prompt_content_submits_zero_turns_and_context_is_attributed() {
+    let mut proc = AcpProcess::spawn().await;
+    initialize_acp(&mut proc).await;
+    let session_id = new_session_without_mcp_id(&mut proc, 2).await;
+    let transcript = proc
+        .home()
+        .join("projects")
+        .join(sanitize_path(
+            &proc.cwd().canonicalize().unwrap().display().to_string(),
+        ))
+        .join(format!("{session_id}.jsonl"));
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+            "sessionId": session_id,
+            "prompt": [{"type": "image", "data": "AA==", "mimeType": "image/png"}]
+        }
+    }))
+    .await;
+    let rejected = proc.recv_response(3).await;
+    assert_eq!(rejected["error"]["code"], json!(-32602), "{rejected:?}");
+    assert!(
+        rejected["error"]["data"]
+            .as_str()
+            .is_some_and(|message| message.contains("image input is unsupported")),
+        "{rejected:?}"
+    );
+    assert!(
+        !transcript.exists(),
+        "unsupported prompt content must be rejected before turn persistence"
+    );
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/prompt",
+        "params": {
+            "sessionId": session_id,
+            "prompt": [
+                {"type": "text", "text": "alpha"},
+                {
+                    "type": "resource_link",
+                    "name": "Guide",
+                    "uri": "file:///guide.md",
+                    "description": "Project guide",
+                    "mimeType": "text/markdown"
+                },
+                {
+                    "type": "resource",
+                    "resource": {
+                        "uri": "file:///context.txt",
+                        "mimeType": "text/plain",
+                        "text": "embedded context"
+                    }
+                },
+                {"type": "text", "text": "omega"}
+            ]
+        }
+    }))
+    .await;
+    let accepted = proc.recv_response(4).await;
+    assert!(accepted.get("error").is_none(), "{accepted:?}");
+
+    let body = std::fs::read_to_string(&transcript).expect("accepted turn transcript");
+    assert_eq!(body.matches(r#""type":"user""#).count(), 1);
+    assert!(!body.contains("Unsupported image content"));
+    let alpha = body.find("alpha").expect("leading text");
+    let link = body.find("file:///guide.md").expect("link attribution");
+    let embedded = body
+        .find("file:///context.txt")
+        .expect("embedded attribution");
+    let omega = body.find("omega").expect("trailing text");
+    assert!(alpha < link && link < embedded && embedded < omega);
+    assert!(body.contains("metadata only, not fetched"));
+
+    proc.close().await;
+}
+
+#[tokio::test]
+async fn acp_sdk_client_session_control_conformance() {
+    let home = tempfile::tempdir().expect("home");
+    let cwd = tempfile::tempdir().expect("cwd");
+    let agent = sdk_acp_agent("mock://anthropic?scenario=success", home.path());
+    let cwd_path = cwd.path().to_path_buf();
+
+    let run =
+        Client
+            .builder()
+            .name("orbcode-sdk-client-session-controls")
+            .connect_with(agent, async move |connection| {
+                connection
+                    .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                let created = connection
+                    .send_request(NewSessionRequest::new(cwd_path))
+                    .block_task()
+                    .await?;
+                let modes = created.modes.expect("SDK parses session modes");
+                assert_eq!(modes.current_mode_id.to_string(), "default");
+                assert_eq!(modes.available_modes.len(), 4);
+                let options = created.config_options.expect("SDK parses config options");
+                assert!(
+                    options
+                        .iter()
+                        .any(|option| option.id.to_string() == "model")
+                );
+                assert!(
+                    options
+                        .iter()
+                        .any(|option| option.id.to_string() == "thought_level")
+                );
+
+                connection
+                    .send_request(SetSessionModeRequest::new(
+                        created.session_id.clone(),
+                        "plan",
+                    ))
+                    .block_task()
+                    .await?;
+                let changed = connection
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        created.session_id.clone(),
+                        "model",
+                        "sonnet",
+                    ))
+                    .block_task()
+                    .await?;
+                let changed_json = serde_json::to_value(changed).expect("config response JSON");
+                assert_eq!(
+                    config_option(&changed_json["configOptions"], "model").expect("changed model")
+                        ["currentValue"],
+                    "sonnet"
+                );
+                connection
+                    .send_request(CloseSessionRequest::new(created.session_id))
+                    .block_task()
+                    .await?;
+                Ok(())
+            });
+
+    tokio::time::timeout(Duration::from_secs(45), run)
+        .await
+        .expect("SDK ACP session-control harness timed out")
+        .expect("SDK ACP session-control harness failed");
+}
+
+fn config_option<'a>(options: &'a Value, id: &str) -> Option<&'a Value> {
+    options
+        .as_array()?
+        .iter()
+        .find(|option| option["id"].as_str() == Some(id))
 }

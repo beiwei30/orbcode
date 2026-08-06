@@ -108,10 +108,10 @@ async fn main() -> Result<()> {
         && matches!(input_format, CliInputFormat::StreamJson)
         && matches!(output_format, CliOutputFormat::StreamJson));
     let client = Arc::new(
-        if interactive_client {
-            AppClient::new_interactive(app_server.clone()).await
-        } else {
-            AppClient::new(app_server.clone()).await
+        match &command {
+            Command::Acp => AppClient::new_option_only(app_server.clone()).await,
+            _ if interactive_client => AppClient::new_interactive(app_server.clone()).await,
+            _ => AppClient::new(app_server.clone()).await,
         }
         .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
     );
@@ -225,7 +225,7 @@ async fn main() -> Result<()> {
         Command::Mcp { command } => commands::run_mcp(app_server, &client, command).await?,
         Command::Doctor { command } => commands::run_doctor(&client, command).await?,
         Command::Advanced => commands::print_advanced_capabilities(&client).await?,
-        Command::Acp => acp_sdk::run_acp_adapter(app_server).await?,
+        Command::Acp => acp_sdk::run_acp_adapter(Arc::clone(&client)).await?,
         Command::BgWorker {
             job_id,
             session_id,

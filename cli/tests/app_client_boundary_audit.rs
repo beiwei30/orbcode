@@ -79,14 +79,20 @@ fn headless_stream_json_and_acp_have_no_raw_protocol_requests() {
 }
 
 #[test]
-fn acp_keeps_app_server_only_at_client_construction() {
+fn acp_accepts_a_preconstructed_app_client() {
     let source = cli_source("acp_sdk/mod.rs");
-    let construction = source
-        .find("AppClient::new_option_only(app_server)")
-        .expect("ACP constructs its option-only AppClient from AppServer");
+    let main = cli_source("main.rs");
     assert!(
-        !source[construction..].contains("app_server."),
-        "ACP must not retain a parallel AppServer business path"
+        source.contains("run_acp_adapter(client: Arc<AppClient>)"),
+        "ACP must receive the canonical client instead of constructing or retaining AppServer"
+    );
+    assert!(
+        main.contains("Command::Acp => AppClient::new_option_only(app_server.clone()).await"),
+        "the CLI composition root must declare ACP's option-only interaction capability"
+    );
+    assert!(
+        !source.contains("AppClient::new(app_server)"),
+        "ACP client construction belongs at the CLI composition root"
     );
     let compact = source.split_whitespace().collect::<String>();
     assert!(

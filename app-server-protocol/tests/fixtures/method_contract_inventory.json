@@ -1311,6 +1311,54 @@
     "sensitive_fields": []
   },
   {
+    "method": "session/control_state",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "SessionControlState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/set_permission_mode",
+    "stability": "experimental",
+    "params": "SetSessionPermissionModeParams",
+    "result": "SessionControlState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/set_model",
+    "stability": "experimental",
+    "params": "SetSessionModelParams",
+    "result": "SessionControlState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/set_effort",
+    "stability": "experimental",
+    "params": "SetSessionEffortParams",
+    "result": "SessionControlState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
     "method": "background/create",
     "stability": "experimental",
     "params": "BackgroundCreateParams",

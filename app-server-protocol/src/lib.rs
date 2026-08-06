@@ -35,7 +35,9 @@ pub use initialize::{
 };
 pub use mcp::*;
 pub use notification::StreamEventNotification;
-pub use permission::{PermissionContext, PermissionDecision, PermissionRuleOverview};
+pub use permission::{
+    PermissionContext, PermissionDecision, PermissionMode, PermissionRuleOverview,
+};
 pub use request::{
     BootstrapParams, CancelAsyncTaskParams, SeedReadStateParams, SetThinkingBudgetParams,
 };
@@ -46,7 +48,7 @@ pub use response::{
     McpServerStatusOverview, McpSlashSuggestionCatalog, McpStatusResult, McpToolSlashSuggestion,
     MemoryFileOverview, MemoryOverview, ModelChangeResult, PermissionOverview, PlanOverview,
     PolicyConflictOverview, PolicyOverview, PolicySourceOverview, SeedReadStateResult,
-    StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
+    SessionControlState, SessionModelOption, StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
 };
 pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,
@@ -63,7 +65,7 @@ pub use orbcode_protocol::{
     AskUserAnswerValue, AskUserCancellationReason, AskUserOption, AskUserQuestionSpec,
     AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError, BillingBasis,
     CompactDecision, CompactSessionResult, ContextDiagnosticsReport, ContextTokenSource,
-    ContextUsageOverview, CostOverview, McpTrustApprovalRequest, PermissionRequest,
+    ContextUsageOverview, CostOverview, EffortLevel, McpTrustApprovalRequest, PermissionRequest,
     ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent, TurnContext,
     UsageOverview, WorkflowCommand, WorkflowSource,
 };

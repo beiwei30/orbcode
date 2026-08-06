@@ -8,6 +8,7 @@ mod capabilities;
 mod mcp_setup;
 mod replay;
 mod server_requests;
+mod session_controls;
 mod sessions;
 mod tool_updates;
 
@@ -19,10 +20,10 @@ use std::sync::Arc;
 use agent_client_protocol::schema::{
     CancelNotification, CloseSessionRequest, ContentBlock, ContentChunk, DeleteSessionRequest,
     InitializeRequest, ListSessionsRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
-    ResumeSessionRequest, SessionNotification, SessionUpdate, StopReason,
+    ResumeSessionRequest, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Error, Lines, Result, Role};
-use orbcode_app_server::AppServer;
 use orbcode_app_server_client::AppClient;
 use orbcode_app_server_protocol::{RequestId, ResponseResult, ServerRequestEnvelope, StreamEvent};
 use orbcode_protocol::format_tool_title;
@@ -31,6 +32,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use capabilities::initialize_response;
 use server_requests::{deny_pending_server_requests, server_request_pump};
+use session_controls::{handle_set_config_option, handle_set_mode};
 use sessions::{
     handle_close_session, handle_delete_session, handle_list_sessions, handle_load_session,
     handle_new_session, handle_prompt, handle_resume_session,
@@ -125,12 +127,7 @@ impl AcpSdkState {
     }
 }
 
-pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()> {
-    let client = Arc::new(
-        AppClient::new_option_only(app_server)
-            .await
-            .map_err(|e| anyhow::anyhow!("protocol init: {e}"))?,
-    );
+pub(crate) async fn run_acp_adapter(client: Arc<AppClient>) -> anyhow::Result<()> {
     let server_request_rx = client.take_server_request_receiver().await;
     let state = Arc::new(AcpSdkState::new(Arc::clone(&client), server_request_rx));
     let (stdio, stdin_eof_rx) = EofAwareStdio::new();
@@ -141,6 +138,24 @@ pub(crate) async fn run_acp_adapter(app_server: AppServer) -> anyhow::Result<()>
         .on_receive_request(
             async move |initialize: InitializeRequest, responder, _connection| {
                 responder.respond(initialize_response(initialize))
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: SetSessionModeRequest, responder, _connection| {
+                    handle_set_mode(Arc::clone(&state), request, responder).await
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: SetSessionConfigOptionRequest, responder, _connection| {
+                    handle_set_config_option(Arc::clone(&state), request, responder).await
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )

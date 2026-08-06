@@ -146,7 +146,7 @@ the throwaway-home and tracing patterns.
 | `stream-json` duplex (`--input-format stream-json`) | Beta | NDJSON in and out with correlated SDK controls; see the [control matrix](#stream-json-controls). |
 | Background jobs | Stable | `prompt --bg` plus `ps`, `logs`, `attach`, `kill`. |
 | Direct tool invocation (`orbcode tool`) | Beta | Runs one tool outside a turn; useful for debugging. |
-| ACP adapter (`orbcode acp`) | Experimental | Agent Client Protocol v1 over stdio; manually smoke-tested against Zed. |
+| ACP adapter (`orbcode acp`) | Experimental | Agent Client Protocol v1 over stdio; verified with Zed 1.13.2 on macOS 26.6 for startup, prompt/streaming, history restoration, model/thought controls, permission rejection, tool titles, and clean shutdown. See the [support matrix](docs/acp-support.md) and [Zed smoke guide](docs/acp-zed-smoke.md). |
 | App-server protocol (`orbcode serve` / `orbcode remote`) | Experimental | Hidden subcommands. Protocol `1.0` over stdio, Unix socket or WebSocket; one client per `serve`. Stdio is implicitly trusted; socket and WebSocket require an auth token (auto-generated if `--auth-token` is omitted, reported in the startup connection-info line), and WebSocket also validates `Origin`. |
 | Remote-control bridge, voice, computer use | Deferred | Reported as deferred by `orbcode advanced`. |
 

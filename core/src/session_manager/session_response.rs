@@ -471,7 +471,7 @@ impl SessionManager {
         cancel_flag: Arc<AtomicBool>,
     ) -> Option<StreamedToolUseExecution> {
         let permissions = self
-            .streamed_tool_invocation_permissions(&ready_item)
+            .streamed_tool_invocation_permissions(session_id, &ready_item)
             .await?;
         let tool_use_id = ready_item.tool_use_id().to_string();
         let tool_name = ready_item.tool_name().to_string();
@@ -514,6 +514,7 @@ impl SessionManager {
 
     async fn streamed_tool_invocation_permissions(
         &self,
+        session_id: &str,
         ready_item: &ToolRoundReadyItem,
     ) -> Option<ToolInvocationPermissions> {
         let tool_name = ready_item.tool_name();
@@ -526,7 +527,7 @@ impl SessionManager {
         }
 
         let spec = self.tools.spec(tool_name).cloned()?;
-        let permissions = self.permission_context();
+        let permissions = self.permission_context_for_session(session_id);
         if self
             .tool_deny_precedence_reason(
                 &permissions,

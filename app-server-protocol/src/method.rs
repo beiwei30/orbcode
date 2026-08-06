@@ -21,6 +21,10 @@ pub const SESSION_ACP_LOAD_SETUP: &str = "session/acp_load_setup";
 pub const SESSION_ACP_RESUME_SETUP: &str = "session/acp_resume_setup";
 pub const SESSION_ACP_DELETE: &str = "session/acp_delete";
 pub const SESSION_ACP_CLOSE: &str = "session/acp_close";
+pub const SESSION_CONTROL_STATE: &str = "session/control_state";
+pub const SESSION_SET_PERMISSION_MODE: &str = "session/set_permission_mode";
+pub const SESSION_SET_MODEL: &str = "session/set_model";
+pub const SESSION_SET_EFFORT: &str = "session/set_effort";
 
 // ---------------------------------------------------------------------------
 // Turn
@@ -303,6 +307,10 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         SESSION_ACP_RESUME_SETUP,
         SESSION_ACP_DELETE,
         SESSION_ACP_CLOSE,
+        SESSION_CONTROL_STATE,
+        SESSION_SET_PERMISSION_MODE,
+        SESSION_SET_MODEL,
+        SESSION_SET_EFFORT,
         // Background
         BACKGROUND_CREATE,
         BACKGROUND_LIST,
@@ -368,6 +376,10 @@ mod tests {
         assert!(methods.contains(&SESSION_ACP_RESUME_SETUP));
         assert!(methods.contains(&SESSION_ACP_DELETE));
         assert!(methods.contains(&SESSION_ACP_CLOSE));
+        assert!(methods.contains(&SESSION_CONTROL_STATE));
+        assert!(methods.contains(&SESSION_SET_PERMISSION_MODE));
+        assert!(methods.contains(&SESSION_SET_MODEL));
+        assert!(methods.contains(&SESSION_SET_EFFORT));
         assert!(methods.contains(&TURN_SUBMIT));
         assert!(methods.contains(&PERMISSION_RESPOND));
         assert!(methods.contains(&SETTINGS_MODEL_NAME));
@@ -413,9 +425,11 @@ mod tests {
 
     #[test]
     fn method_count_matches_expected() {
-        // Main's 111 methods plus SDK thinking-budget, MCP-status,
-        // read-state, and cancellation methods.
-        assert_eq!(all_methods().len(), 115);
+        // Current count: 1 lifecycle + 19 session + 4 turn + 10 permission +
+        // 25 settings + 5 context/usage + 17 mcp + 9 tools + 9 background +
+        // 4 workflows + 3 auth + 9 diagnostics + 1 notification +
+        // 3 server requests = 119
+        assert_eq!(all_methods().len(), 119);
     }
 
     #[test]
@@ -524,7 +538,7 @@ mod tests {
     fn client_request_methods_count() {
         // Stable and experimental client methods are counted independently
         // below; this assertion locks their union.
-        assert_eq!(client_request_methods().len(), 111);
+        assert_eq!(client_request_methods().len(), 115);
     }
 
     #[test]
@@ -536,7 +550,7 @@ mod tests {
 
     #[test]
     fn experimental_client_request_methods_count() {
-        // Includes explicit async-task cancellation.
-        assert_eq!(experimental_client_request_methods().len(), 18);
+        // 9 session + 9 background (including async cancellation) + 4 workflows.
+        assert_eq!(experimental_client_request_methods().len(), 22);
     }
 }

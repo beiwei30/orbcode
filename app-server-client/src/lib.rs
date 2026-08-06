@@ -503,6 +503,62 @@ impl AppClient {
         .await
     }
 
+    pub async fn session_control_state(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_CONTROL_STATE,
+            Some(json!({ "session_id": session_id })),
+        )
+        .await
+    }
+
+    pub async fn set_session_permission_mode(
+        &self,
+        session_id: &str,
+        mode: PermissionMode,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_PERMISSION_MODE,
+            Some(serde_json::to_value(SetSessionPermissionModeParams {
+                session_id: session_id.to_string(),
+                mode,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_MODEL,
+            Some(serde_json::to_value(SetSessionModelParams {
+                session_id: session_id.to_string(),
+                model,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn set_session_effort(
+        &self,
+        session_id: &str,
+        effort: Option<EffortLevel>,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_EFFORT,
+            Some(serde_json::to_value(SetSessionEffortParams {
+                session_id: session_id.to_string(),
+                effort,
+            })?),
+        )
+        .await
+    }
+
     /// Clear a session and start fresh.
     pub async fn clear_session(
         &self,

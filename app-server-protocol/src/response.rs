@@ -7,7 +7,7 @@ use orbcode_protocol::{
 
 use crate::{
     ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionContext,
-    StatusAuthOverview, ThemeSetting, TokenWarningOptions,
+    PermissionMode, StatusAuthOverview, ThemeSetting, TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -46,6 +46,33 @@ pub struct AcpLoadReplayPreflight {
 pub struct AcpDeleteSessionParams {
     pub session_id: String,
     pub cwd: PathBuf,
+}
+
+/// Canonical session-scoped controls consumed by headless clients and edge
+/// adapters. Values are resolved by app-server; adapters only project them into
+/// their protocol-specific shapes.
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct SessionControlState {
+    pub session_id: String,
+    pub permission_mode: PermissionMode,
+    pub model_options: Vec<SessionModelOption>,
+    #[schemars(with = "Option<String>")]
+    pub effort_level: Option<EffortLevel>,
+    #[schemars(with = "Vec<String>")]
+    pub effort_options: Vec<EffortLevel>,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct SessionModelOption {
+    /// `None` denotes the provider's configured default.
+    pub value: Option<String>,
+    pub label: String,
+    pub description: String,
+    pub current: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

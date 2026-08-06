@@ -573,8 +573,8 @@ impl ToolRuntimeHost for SessionManager {
         .await
     }
 
-    fn permission_context(&self) -> PermissionContext {
-        SessionManager::permission_context(self)
+    fn permission_context(&self, session_id: &str) -> PermissionContext {
+        SessionManager::permission_context_for_session(self, session_id)
     }
 
     async fn tool_deny_precedence_reason(

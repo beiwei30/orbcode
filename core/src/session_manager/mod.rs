@@ -11,10 +11,11 @@ use std::{
 use chrono::Duration as ChronoDuration;
 use chrono::{Local, TimeZone, Utc};
 use orbcode_config::{
-    AgentDefinition, AppConfig, AuthManager, OutputStyleDefinition, ResolvedOutputStyle,
-    RuntimeSessionState, built_in_agent_definitions, built_in_output_style_definitions,
-    load_agent_definitions, load_output_style_definitions, load_output_style_setting,
-    parse_forced_login_method, resolve_active_output_style, sanitize_path,
+    AgentDefinition, AppConfig, AuthManager, OutputStyleDefinition, PermissionMode,
+    ResolvedOutputStyle, RuntimeSessionState, built_in_agent_definitions,
+    built_in_output_style_definitions, load_agent_definitions, load_output_style_definitions,
+    load_output_style_setting, parse_forced_login_method, resolve_active_output_style,
+    sanitize_path,
 };
 #[cfg(test)]
 use orbcode_config::{HookCommand, HookMatcher};
@@ -246,6 +247,7 @@ pub struct SessionManager {
     active_turns: ActiveTurnRegistry,
     permission_runtime: PermissionRuntimeState,
     runtime_state: RuntimeSessionState,
+    session_controls: Arc<RwLock<HashMap<String, SessionControlOverrides>>>,
     provider_debug_trace: ProviderDebugTrace,
     queued_model_visible_contexts: QueuedModelVisibleContextStore,
     queued_user_commands: QueuedUserCommandStore,
@@ -268,6 +270,15 @@ pub struct SessionManager {
     /// `parent_uuid` chain. Holding this lock across the read+write makes appends
     /// atomic per session.
     transcript_append_locks: TranscriptAppendLocks,
+}
+
+#[derive(Clone, Debug)]
+struct SessionControlOverrides {
+    permission_mode: PermissionMode,
+    permission_mode_overridden: bool,
+    model: Option<String>,
+    model_overridden: bool,
+    effort: Option<orbcode_protocol::EffortLevel>,
 }
 
 impl fmt::Debug for SessionManager {
@@ -429,6 +440,7 @@ impl SessionManager {
             active_turns: ActiveTurnRegistry::new(),
             permission_runtime: PermissionRuntimeState::new(),
             runtime_state: RuntimeSessionState::new(),
+            session_controls: Arc::new(RwLock::new(HashMap::new())),
             provider_debug_trace: ProviderDebugTrace::new(),
             queued_model_visible_contexts: QueuedModelVisibleContextStore::default(),
             queued_user_commands: QueuedUserCommandStore::default(),
@@ -1078,7 +1090,8 @@ impl SessionManager {
                 session
             }
         };
-        let config = self.effective_config();
+        self.register_session_controls(&session);
+        let config = self.effective_config_for_session(&session.session_id);
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);
         self.live_session_registry
@@ -1125,7 +1138,8 @@ impl SessionManager {
             .upsert_session_servers(&session.session_id, session_mcp_servers)
             .await;
 
-        let config = self.effective_config();
+        self.register_session_controls(&session);
+        let config = self.effective_config_for_session(&session.session_id);
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);
         self.live_session_registry
@@ -1148,7 +1162,8 @@ impl SessionManager {
             .ok_or_else(|| CoreError::SessionNotFound("latest".to_string()))?;
         let session = self.load_and_repair_session(&session_id).await?;
         self.restore_runtime_context_for_session(&session).await;
-        let config = self.effective_config();
+        self.register_session_controls(&session);
+        let config = self.effective_config_for_session(&session.session_id);
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);
         self.live_session_registry
@@ -1441,6 +1456,7 @@ impl SessionManager {
         // it would keep issuing provider requests and appending to the now
         // abandoned session id.
         self.active_turns.interrupt(previous_session_id).await;
+        self.remove_session_controls(previous_session_id);
         self.permission_runtime.clear_denied_tool_calls().await;
 
         let session = SessionRecord::new();
@@ -1451,7 +1467,8 @@ impl SessionManager {
             .set_session_permission_rules(Vec::new(), Vec::new());
         self.runtime_state.set_effort_override(None);
         self.runtime_state.set_max_thinking_tokens(None);
-        let config = self.effective_config();
+        self.register_session_controls(&session);
+        let config = self.effective_config_for_session(&session.session_id);
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);
         self.live_session_registry
@@ -1762,7 +1779,7 @@ impl SessionManager {
         // never spawned, so the entry would leak and wedge the session forever
         // with `CoreError::ActiveTurn`. Run the setup fallibly and, on error,
         // clear the entry we just inserted before returning.
-        let config = self.effective_config();
+        let config = self.effective_config_for_session(session_id);
         let user_message = TranscriptMessage::new(MessageRole::User, prompt.clone());
         let setup_result = async {
             self.live_session_registry
