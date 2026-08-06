@@ -15,6 +15,30 @@ use crate::output_styles::load_output_style_definitions;
 const MAX_SANITIZED_LENGTH: usize = 200;
 const DEFAULT_OUTPUT_STYLE_NAME: &str = "default";
 
+/// Default cadence for client-owned statusline command execution.
+pub const DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS: u64 = 30;
+/// A zero interval would make Tokio's interval constructor panic.
+pub const MIN_STATUSLINE_REFRESH_INTERVAL_SECS: u64 = 1;
+/// Keep accidental settings values from creating effectively dead timers.
+pub const MAX_STATUSLINE_REFRESH_INTERVAL_SECS: u64 = 3_600;
+
+/// Resolved statusline settings. Config owns parsing/defaulting; clients own
+/// command execution, timeout, cwd, truncation, and cancellation behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatuslineConfig {
+    pub command: Option<String>,
+    pub refresh_interval_secs: u64,
+}
+
+impl Default for StatuslineConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            refresh_interval_secs: DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ClaudeSettings {
     pub env: BTreeMap<String, String>,
@@ -46,6 +70,23 @@ impl ClaudeSettings {
             .and_then(|sources| sources.get(index))
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Resolve the statusline setting family as one value. Missing, null, and
+    /// out-of-range intervals use the centralized default; wrong JSON types
+    /// remain load errors at the persisted-settings parser boundary.
+    pub fn statusline_config(&self) -> StatuslineConfig {
+        let refresh_interval_secs = self
+            .statusline_refresh_interval_secs
+            .filter(|interval| {
+                (MIN_STATUSLINE_REFRESH_INTERVAL_SECS..=MAX_STATUSLINE_REFRESH_INTERVAL_SECS)
+                    .contains(interval)
+            })
+            .unwrap_or(DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS);
+        StatuslineConfig {
+            command: self.statusline_command.clone(),
+            refresh_interval_secs,
+        }
     }
 }
 
@@ -562,6 +603,8 @@ async fn update_permission_rule_setting(
     let path = home_dir.join("settings.json");
     tokio::fs::create_dir_all(home_dir).await?;
 
+    // Intentional raw persistence boundary: mutate the original document so
+    // unknown TypeScript/plugin keys survive a typed permission-rule edit.
     let mut settings = if tokio::fs::try_exists(&path).await? {
         let contents = tokio::fs::read_to_string(&path).await?;
         match serde_json::from_str::<Value>(&contents)? {
@@ -770,6 +813,7 @@ pub async fn update_model_setting(home_dir: &Path, model: Option<&str>) -> Resul
     let path = home_dir.join("settings.json");
     tokio::fs::create_dir_all(home_dir).await?;
 
+    // Intentional raw persistence boundary: preserve all unknown siblings.
     let mut settings = if tokio::fs::try_exists(&path).await? {
         let contents = tokio::fs::read_to_string(&path).await?;
         match serde_json::from_str::<Value>(&contents)? {
@@ -803,6 +847,7 @@ pub async fn update_theme_setting(home_dir: &Path, theme: ThemeSetting) -> Resul
     let path = home_dir.join("settings.json");
     tokio::fs::create_dir_all(home_dir).await?;
 
+    // Intentional raw persistence boundary: preserve all unknown siblings.
     let mut settings = if tokio::fs::try_exists(&path).await? {
         let contents = tokio::fs::read_to_string(&path).await?;
         match serde_json::from_str::<Value>(&contents)? {
@@ -835,6 +880,7 @@ pub async fn update_editor_mode_setting(
     let path = home_dir.join("settings.json");
     tokio::fs::create_dir_all(home_dir).await?;
 
+    // Intentional raw persistence boundary: preserve all unknown siblings.
     let mut settings = if tokio::fs::try_exists(&path).await? {
         let contents = tokio::fs::read_to_string(&path).await?;
         match serde_json::from_str::<Value>(&contents)? {
@@ -923,6 +969,8 @@ pub async fn update_output_style_setting(cwd: &Path, style: &str) -> Result<Path
 }
 
 pub async fn load_sandbox_local_settings(cwd: &Path) -> Result<SandboxLocalSettings, ConfigError> {
+    // Intentional raw loader boundary: SandboxLocalSettings owns validation of
+    // the open nested source while unrelated local settings remain untouched.
     let path = local_settings_path(cwd);
     if !tokio::fs::try_exists(&path).await? {
         return Ok(SandboxLocalSettings::default());
@@ -1099,6 +1147,8 @@ async fn update_local_settings(
         .ok_or_else(|| ConfigError::Config("failed to resolve local settings directory".into()))?;
     tokio::fs::create_dir_all(settings_dir).await?;
 
+    // Intentional raw persistence boundary: local settings may contain keys
+    // owned by other clients/plugins, so updates are read-modify-write.
     let mut settings = if tokio::fs::try_exists(&path).await? {
         let contents = tokio::fs::read_to_string(&path).await?;
         match serde_json::from_str::<Value>(&contents)? {
@@ -2154,6 +2204,107 @@ mod tests {
             Some("git rev-parse --short HEAD")
         );
         assert_eq!(settings.statusline_refresh_interval_secs, Some(15));
+        assert_eq!(
+            settings.statusline_config(),
+            StatuslineConfig {
+                command: Some("git rev-parse --short HEAD".to_string()),
+                refresh_interval_secs: 15,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn statusline_missing_command_only_and_interval_only_use_one_resolver() {
+        let missing = tempfile::tempdir().expect("missing dir");
+        assert_eq!(
+            load_settings(missing.path())
+                .await
+                .expect("load missing")
+                .statusline_config(),
+            StatuslineConfig::default()
+        );
+
+        let command_only = tempfile::tempdir().expect("command dir");
+        tokio::fs::write(
+            command_only.path().join("settings.json"),
+            r#"{"statusline":{"command":"echo ready"}}"#,
+        )
+        .await
+        .expect("write command-only settings");
+        assert_eq!(
+            load_settings(command_only.path())
+                .await
+                .expect("load command-only")
+                .statusline_config(),
+            StatuslineConfig {
+                command: Some("echo ready".to_string()),
+                refresh_interval_secs: DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS,
+            }
+        );
+
+        let interval_only = tempfile::tempdir().expect("interval dir");
+        tokio::fs::write(
+            interval_only.path().join("settings.json"),
+            r#"{"statusline":{"refreshInterval":45}}"#,
+        )
+        .await
+        .expect("write interval-only settings");
+        assert_eq!(
+            load_settings(interval_only.path())
+                .await
+                .expect("load interval-only")
+                .statusline_config(),
+            StatuslineConfig {
+                command: None,
+                refresh_interval_secs: 45,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn statusline_null_and_out_of_range_intervals_resolve_compatibly() {
+        let nulls = tempfile::tempdir().expect("null dir");
+        tokio::fs::write(
+            nulls.path().join("settings.json"),
+            r#"{"statusline":{"command":null,"refreshInterval":null}}"#,
+        )
+        .await
+        .expect("write null settings");
+        assert_eq!(
+            load_settings(nulls.path())
+                .await
+                .expect("load nulls")
+                .statusline_config(),
+            StatuslineConfig::default()
+        );
+
+        for interval in [0, MAX_STATUSLINE_REFRESH_INTERVAL_SECS + 1] {
+            let settings = ClaudeSettings {
+                statusline_refresh_interval_secs: Some(interval),
+                ..ClaudeSettings::default()
+            };
+            assert_eq!(
+                settings.statusline_config().refresh_interval_secs,
+                DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn statusline_wrong_nested_types_remain_load_errors() {
+        for statusline in [r#"{"command":7}"#, r#"{"refreshInterval":"fast"}"#] {
+            let dir = tempfile::tempdir().expect("wrong type dir");
+            tokio::fs::write(
+                dir.path().join("settings.json"),
+                format!(r#"{{"statusline":{statusline}}}"#),
+            )
+            .await
+            .expect("write wrong type settings");
+            assert!(
+                load_settings(dir.path()).await.is_err(),
+                "wrong nested statusline type must not be silently accepted: {statusline}"
+            );
+        }
     }
 
     #[tokio::test]

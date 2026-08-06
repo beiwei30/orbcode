@@ -290,7 +290,8 @@ async fn build_test_session_manager() -> SessionManager {
         settings_warnings: Vec::new(),
         policy: EffectivePolicy::default(),
         policy_conflicts: Vec::new(),
-        runtime_model_override: None,
+        runtime_model_override: orbcode_config::RuntimeModelOverride::Inherit,
+        refreshed_persisted_model_setting: None,
         // Empty entries seal off matching `std::env::var` reads but let
         // `settings.env` still serve the value, so a developer's real
         // `ANTHROPIC_*` / `OPENAI_*` shell env never bleeds into the

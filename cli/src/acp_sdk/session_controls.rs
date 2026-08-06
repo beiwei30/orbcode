@@ -247,7 +247,10 @@ fn control_error(
 mod tests {
     use std::collections::HashMap;
 
-    use orbcode_app_server_protocol::{PermissionMode, SessionModelOption};
+    use orbcode_app_server_protocol::{
+        EffectiveModelSelection, ModelSelectionSource, PermissionMode, PersistedModelSetting,
+        ProviderModelSelection, RuntimeModelOverride, SessionModelOption,
+    };
     use tokio::sync::Mutex;
 
     use super::*;
@@ -256,6 +259,26 @@ mod tests {
         SessionControlState {
             session_id: "session".to_string(),
             permission_mode: PermissionMode::Plan,
+            model_selection: EffectiveModelSelection {
+                persisted: PersistedModelSetting {
+                    value: None,
+                    source: None,
+                    locked: false,
+                },
+                runtime_override: RuntimeModelOverride::Model("sonnet".to_string()),
+                requested_model: Some("sonnet".to_string()),
+                source: ModelSelectionSource::Runtime,
+                provider: orbcode_protocol::ProviderId::Anthropic,
+                resolution: ProviderModelSelection {
+                    requested_setting: Some("sonnet".to_string()),
+                    family: Some("sonnet".to_string()),
+                    model: "claude-sonnet-4-6".to_string(),
+                    request_model: "claude-sonnet-4-6".to_string(),
+                    display_label: "Sonnet".to_string(),
+                    display_name: "Sonnet".to_string(),
+                    capabilities: Vec::new(),
+                },
+            },
             model_options: vec![
                 SessionModelOption {
                     value: None,

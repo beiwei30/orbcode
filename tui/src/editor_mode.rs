@@ -42,8 +42,8 @@ impl TuiState {
         app_server: &AppClient,
         mode: EditorModeSetting,
     ) -> Result<String> {
-        let result = app_server.set_editor_mode_setting(mode.as_str()).await?;
-        let mode = EditorModeSetting::parse(&result.editor_mode).unwrap_or(mode);
+        let result = app_server.set_editor_mode_setting(mode).await?;
+        let mode = result.editor_mode;
         self.editor_mode = editor_mode_from_setting(mode);
         self.normal_pending = None;
         self.normal_count = None;

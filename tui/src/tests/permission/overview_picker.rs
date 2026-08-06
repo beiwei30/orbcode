@@ -15,6 +15,7 @@ fn permission_picker_lines_show_source_editability_and_add_rows() {
             additional_directories: vec![PathBuf::from("/tmp/extra")],
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: vec!["Bash(cargo test:*)".to_string()],
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: vec!["Read(src/**)".to_string()],
@@ -158,6 +159,7 @@ fn permission_picker_main_tabs_keep_fixed_height() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: vec!["Read(src/**)".to_string()],
         settings_denied_rules: vec!["Bash(rm:*)".to_string()],
         startup_allowed_rules: Vec::new(),
@@ -195,6 +197,7 @@ fn permission_picker_empty_state_keeps_add_rows_visible_first() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: Vec::new(),
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: Vec::new(),
@@ -250,6 +253,7 @@ fn permission_picker_recently_denied_includes_denied_requests() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: Vec::new(),
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: Vec::new(),
@@ -303,6 +307,7 @@ fn permission_picker_desired_height_includes_picker_lines() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: Vec::new(),
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: Vec::new(),
@@ -413,7 +418,7 @@ async fn permissions_picker_removes_selected_session_rule() {
         .unwrap()
         .add_session_permission_rule(
             &state.session_id,
-            PermissionRuleSettingKind::Deny,
+            orbcode_config::PermissionRuleSettingKind::Deny,
             "Bash(rm:*)",
         )
         .await

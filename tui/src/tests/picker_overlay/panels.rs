@@ -456,6 +456,7 @@ fn permission_picker_lines_at_wide_200_col() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: vec!["Bash(cargo test:*)".to_string()],
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: vec!["Read(src/**)".to_string()],

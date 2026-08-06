@@ -730,31 +730,35 @@ pub(crate) fn permission_picker_items(
                 ));
             }
             let mut rules = Vec::new();
+            let configured = overview.configured_rules(PermissionRuleSettingKind::Allow);
+            let edited = overview.runtime_added_rules(PermissionRuleSettingKind::Allow);
+            let startup = overview.startup_rules(PermissionRuleSettingKind::Allow);
+            let session = overview.session_rules(PermissionRuleSettingKind::Allow);
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Allow,
-                &overview.settings_allowed_rules,
+                &configured,
                 "settings",
                 Some(PermissionRuleScope::Settings),
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Allow,
-                &overview.edited_allowed_rules,
+                &edited,
                 "settings edit",
                 Some(PermissionRuleScope::Settings),
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Allow,
-                &overview.startup_allowed_rules,
+                &startup,
                 "env/CLI",
                 None,
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Allow,
-                &overview.runtime_allowed_rules,
+                &session,
                 "session",
                 Some(PermissionRuleScope::Session),
             );
@@ -767,31 +771,35 @@ pub(crate) fn permission_picker_items(
                 ));
             }
             let mut rules = Vec::new();
+            let configured = overview.configured_rules(PermissionRuleSettingKind::Deny);
+            let edited = overview.runtime_added_rules(PermissionRuleSettingKind::Deny);
+            let startup = overview.startup_rules(PermissionRuleSettingKind::Deny);
+            let session = overview.session_rules(PermissionRuleSettingKind::Deny);
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Deny,
-                &overview.settings_denied_rules,
+                &configured,
                 "settings",
                 Some(PermissionRuleScope::Settings),
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Deny,
-                &overview.edited_denied_rules,
+                &edited,
                 "settings edit",
                 Some(PermissionRuleScope::Settings),
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Deny,
-                &overview.startup_denied_rules,
+                &startup,
                 "env/CLI",
                 None,
             );
             push_permission_picker_rule_items(
                 &mut rules,
                 PermissionRuleSettingKind::Deny,
-                &overview.runtime_denied_rules,
+                &session,
                 "session",
                 Some(PermissionRuleScope::Session),
             );

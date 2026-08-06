@@ -62,11 +62,6 @@ struct StreamRoute {
 }
 
 #[derive(serde::Deserialize)]
-struct PermissionModeValue {
-    mode: String,
-}
-
-#[derive(serde::Deserialize)]
 struct ToolNameValue {
     name: String,
 }
@@ -509,7 +504,9 @@ impl AppClient {
     ) -> Result<SessionControlState, ClientError> {
         self.request_typed(
             method::SESSION_CONTROL_STATE,
-            Some(json!({ "session_id": session_id })),
+            Some(serde_json::to_value(SessionIdParams {
+                session_id: session_id.to_string(),
+            })?),
         )
         .await
     }
@@ -536,10 +533,24 @@ impl AppClient {
     ) -> Result<SessionControlState, ClientError> {
         self.request_typed(
             method::SESSION_SET_MODEL,
-            Some(serde_json::to_value(SetSessionModelParams {
-                session_id: session_id.to_string(),
-                model,
-            })?),
+            Some(serde_json::to_value(SetSessionModelParams::select(
+                session_id, model,
+            ))?),
+        )
+        .await
+    }
+
+    /// Clear a session-local model choice and resume layered env/persisted
+    /// selection. This is distinct from selecting the provider default.
+    pub async fn clear_session_model_override(
+        &self,
+        session_id: &str,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_MODEL,
+            Some(serde_json::to_value(SetSessionModelParams::inherit(
+                session_id,
+            ))?),
         )
         .await
     }
@@ -831,17 +842,15 @@ impl AppClient {
     }
 
     pub async fn permission_mode_name(&self) -> Result<String, ClientError> {
-        let value: PermissionModeValue = self.request_typed(method::PERMISSION_MODE, None).await?;
-        Ok(value.mode)
+        let value = self.permission_mode().await?;
+        Ok(value.mode.as_str().to_string())
     }
 
     /// Set the runtime permission mode.
-    pub async fn set_permission_mode(&self, mode: &str) -> Result<NoData, ClientError> {
+    pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<NoData, ClientError> {
         self.request_no_data(
             method::PERMISSION_SET_MODE,
-            Some(serde_json::to_value(PermissionSetModeParams {
-                mode: mode.to_string(),
-            })?),
+            Some(serde_json::to_value(PermissionSetModeParams { mode })?),
         )
         .await
     }
@@ -849,13 +858,13 @@ impl AppClient {
     /// Add a permission rule (allow or deny).
     pub async fn add_permission_rule(
         &self,
-        kind: &str,
+        kind: PermissionRuleKind,
         rule: &str,
     ) -> Result<PermissionRuleUpdateResult, ClientError> {
         self.request_typed(
             method::PERMISSION_ADD_RULE,
             Some(serde_json::to_value(PermissionRuleParams {
-                kind: kind.to_string(),
+                kind,
                 rule: rule.to_string(),
             })?),
         )
@@ -865,13 +874,13 @@ impl AppClient {
     /// Remove a permission rule (allow or deny).
     pub async fn remove_permission_rule(
         &self,
-        kind: &str,
+        kind: PermissionRuleKind,
         rule: &str,
     ) -> Result<PermissionRuleUpdateResult, ClientError> {
         self.request_typed(
             method::PERMISSION_REMOVE_RULE,
             Some(serde_json::to_value(PermissionRuleParams {
-                kind: kind.to_string(),
+                kind,
                 rule: rule.to_string(),
             })?),
         )
@@ -882,14 +891,14 @@ impl AppClient {
     pub async fn add_session_permission_rule(
         &self,
         session_id: &str,
-        kind: &str,
+        kind: PermissionRuleKind,
         rule: &str,
     ) -> Result<PermissionRuleUpdateResult, ClientError> {
         self.request_typed(
             method::PERMISSION_ADD_SESSION_RULE,
             Some(serde_json::to_value(SessionPermissionRuleParams {
                 session_id: session_id.to_string(),
-                kind: kind.to_string(),
+                kind,
                 rule: rule.to_string(),
             })?),
         )
@@ -900,14 +909,14 @@ impl AppClient {
     pub async fn remove_session_permission_rule(
         &self,
         session_id: &str,
-        kind: &str,
+        kind: PermissionRuleKind,
         rule: &str,
     ) -> Result<PermissionRuleUpdateResult, ClientError> {
         self.request_typed(
             method::PERMISSION_REMOVE_SESSION_RULE,
             Some(serde_json::to_value(SessionPermissionRuleParams {
                 session_id: session_id.to_string(),
-                kind: kind.to_string(),
+                kind,
                 rule: rule.to_string(),
             })?),
         )
@@ -964,33 +973,14 @@ impl AppClient {
         self.request_typed(method::SETTINGS_PROVIDERS, None).await
     }
 
-    /// Set or clear the model override. Returns the new display name.
-    pub async fn set_model_override(
+    /// Persist or clear the layered user model setting.
+    pub async fn set_persisted_model_setting(
         &self,
         model: Option<String>,
     ) -> Result<SetModelResult, ClientError> {
         self.request_typed(
             method::SETTINGS_SET_MODEL,
-            Some(serde_json::to_value(SetModelParams {
-                session_id: None,
-                model,
-            })?),
-        )
-        .await
-    }
-
-    /// Set or clear the validated model override for a loaded session.
-    pub async fn set_session_model_override(
-        &self,
-        session_id: &str,
-        model: Option<String>,
-    ) -> Result<ModelChangeResult, ClientError> {
-        self.request_typed(
-            method::SETTINGS_SET_MODEL,
-            Some(serde_json::to_value(SetModelParams {
-                session_id: Some(session_id.to_string()),
-                model,
-            })?),
+            Some(serde_json::to_value(SetModelParams { model })?),
         )
         .await
     }
@@ -1003,10 +993,10 @@ impl AppClient {
     ) -> Result<ThinkingBudgetResult, ClientError> {
         self.request_typed(
             method::SETTINGS_SET_THINKING_BUDGET,
-            Some(json!({
-                "session_id": session_id,
-                "max_thinking_tokens": max_thinking_tokens,
-            })),
+            Some(serde_json::to_value(SetThinkingBudgetParams {
+                session_id: session_id.to_string(),
+                max_thinking_tokens,
+            })?),
         )
         .await
     }
@@ -1017,12 +1007,10 @@ impl AppClient {
     }
 
     /// Update the theme setting.
-    pub async fn set_theme_setting(&self, theme: &str) -> Result<ThemeResult, ClientError> {
+    pub async fn set_theme_setting(&self, theme: ThemeSetting) -> Result<ThemeResult, ClientError> {
         self.request_typed(
             method::SETTINGS_SET_THEME,
-            Some(serde_json::to_value(ThemeParams {
-                theme: theme.to_string(),
-            })?),
+            Some(serde_json::to_value(ThemeParams { theme })?),
         )
         .await
     }
@@ -1685,13 +1673,11 @@ impl AppClient {
     /// Set the editor mode.
     pub async fn set_editor_mode_setting(
         &self,
-        mode: &str,
+        mode: EditorModeSetting,
     ) -> Result<EditorModeResult, ClientError> {
         self.request_typed(
             method::SETTINGS_SET_EDITOR_MODE,
-            Some(serde_json::to_value(EditorModeParams {
-                mode: mode.to_string(),
-            })?),
+            Some(serde_json::to_value(EditorModeParams { mode })?),
         )
         .await
     }
@@ -2248,13 +2234,18 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use orbcode_app_server_protocol::ErrorCode;
+    use orbcode_app_server_protocol::{
+        EditorModeSetting, ErrorCode, ModelSelectionSource, NoData, PermissionMode,
+        PermissionRuleEffect, PermissionRuleKind, PermissionRuleTargetScope, RuntimeModelOverride,
+        SettingSource, ThemeSetting, method,
+    };
     use orbcode_config::{AppConfigOverrides, sanitize_path};
     use orbcode_protocol::{BackgroundTaskViewStatus, StreamEvent};
     use orbcode_tools::{
         BackgroundTaskRecord, BackgroundTaskStatus, background_log_path, register_progress_stream,
         task_record_to_view, unregister_progress_stream, write_background_task_record,
     };
+    use serde_json::json;
 
     use super::{AppClient, ClientError};
 
@@ -2296,6 +2287,12 @@ mod tests {
         let cwd = test_path("bootstrap-cwd");
         tokio::fs::create_dir_all(&home).await.expect("home");
         tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        tokio::fs::write(
+            home.join("settings.json"),
+            r#"{"theme":"dark","editorMode":"vim","statusline":{"command":"echo ready","refreshInterval":45}}"#,
+        )
+        .await
+        .expect("settings");
 
         let client = AppClient::from_cwd(
             cwd,
@@ -2318,6 +2315,10 @@ mod tests {
             !state.model_display_name.is_empty(),
             "bootstrap should include model_display_name"
         );
+        assert_eq!(state.preferences.theme, ThemeSetting::Dark);
+        assert_eq!(state.preferences.editor_mode, EditorModeSetting::Vim);
+        assert_eq!(state.statusline.command.as_deref(), Some("echo ready"));
+        assert_eq!(state.statusline.refresh_interval_secs, 45);
     }
 
     #[tokio::test]
@@ -2738,6 +2739,65 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn persisted_model_mutation_returns_typed_source_and_preserves_unknown_fields() {
+        let home = test_path("persisted-model-home");
+        let cwd = test_path("persisted-model-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        tokio::fs::write(home.join("settings.json"), r#"{"unknown":{"keep":true}}"#)
+            .await
+            .expect("settings");
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home.clone()),
+                env_overrides: orbcode_config::sealed_provider_env_overrides(),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+
+        let changed = client
+            .set_persisted_model_setting(Some("sonnet".to_string()))
+            .await
+            .expect("persist model");
+        assert_eq!(
+            changed.model_selection.persisted.value.as_deref(),
+            Some("sonnet")
+        );
+        assert_eq!(
+            changed.model_selection.persisted.source,
+            Some(SettingSource::User)
+        );
+        assert_eq!(
+            changed.model_selection.runtime_override,
+            RuntimeModelOverride::Inherit
+        );
+        assert_eq!(
+            changed.model_selection.source,
+            ModelSelectionSource::Persisted
+        );
+        let document: serde_json::Value = serde_json::from_str(
+            &tokio::fs::read_to_string(home.join("settings.json"))
+                .await
+                .expect("read settings"),
+        )
+        .expect("settings JSON");
+        assert_eq!(document["unknown"]["keep"], true);
+
+        let cleared = client
+            .set_persisted_model_setting(None)
+            .await
+            .expect("clear persisted model");
+        assert_eq!(cleared.model_selection.persisted.value, None);
+        assert_eq!(
+            cleared.model_selection.source,
+            ModelSelectionSource::ProviderDefault
+        );
+    }
+
     // -----------------------------------------------------------------------
     // 4. Permission mode defaults to default
     // -----------------------------------------------------------------------
@@ -2760,7 +2820,11 @@ mod tests {
         .expect("client");
 
         let result = client.permission_mode().await.expect("permission_mode");
-        assert_eq!(result.mode, "default", "should default to 'default' mode");
+        assert_eq!(
+            result.mode,
+            PermissionMode::Default,
+            "should default to the typed default mode"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3023,6 +3087,30 @@ mod tests {
         assert!(
             !overview.allow_all,
             "fresh server should not have allow_all"
+        );
+        assert_eq!(
+            overview.effective_rules.precedence,
+            vec![
+                PermissionRuleEffect::Deny,
+                PermissionRuleEffect::Ask,
+                PermissionRuleEffect::Allow,
+            ]
+        );
+
+        let update = client
+            .add_permission_rule(PermissionRuleKind::Allow, "Read(src/**)")
+            .await
+            .expect("add typed permission rule");
+        assert_eq!(update.kind, PermissionRuleKind::Allow);
+        assert_eq!(update.target, PermissionRuleTargetScope::Settings);
+        assert_eq!(update.source, SettingSource::User);
+        assert!(
+            update
+                .effective_rules
+                .runtime_added
+                .allow
+                .iter()
+                .any(|rule| rule == "Read(src/**)")
         );
     }
 
@@ -3686,7 +3774,7 @@ mod tests {
 
         // Set to bypassPermissions mode (sets allow_all = true)
         client
-            .set_permission_mode("bypassPermissions")
+            .set_permission_mode(PermissionMode::BypassPermissions)
             .await
             .expect("set_permission_mode bypassPermissions");
 
@@ -3701,7 +3789,12 @@ mod tests {
         );
 
         // Invalid mode should return InvalidParams
-        let result = client.set_permission_mode("nonexistent_mode").await;
+        let result = client
+            .request_typed::<NoData>(
+                method::PERMISSION_SET_MODE,
+                Some(json!({"mode": "nonexistent_mode"})),
+            )
+            .await;
         match result {
             Err(ClientError::Protocol(e)) => {
                 assert_eq!(e.code, ErrorCode::InvalidParams);
@@ -3843,12 +3936,17 @@ mod tests {
     #[tokio::test]
     async fn model_and_thinking_controls_change_the_next_provider_request() {
         let (client, session_id) = client_with_mock("sdk-model-thinking", "hello").await;
+        let setting = "haiku";
         let model = "claude-haiku-4-5-20251001";
         let changed = client
-            .set_session_model_override(&session_id, Some(model.to_string()))
+            .set_session_model(&session_id, Some(setting.to_string()))
             .await
             .expect("set model");
-        assert_eq!(changed.model, model);
+        assert_eq!(
+            changed.model_selection.requested_model.as_deref(),
+            Some(setting)
+        );
+        assert_eq!(changed.model_selection.resolution.request_model, model);
         let thinking = client
             .set_max_thinking_tokens(&session_id, Some(4096))
             .await
@@ -3894,6 +3992,19 @@ mod tests {
         let cleared_body: serde_json::Value =
             serde_json::from_str(&cleared.body_json).expect("cleared provider request body JSON");
         assert_ne!(cleared_body["thinking"]["budget_tokens"], 4096);
+
+        let inherited = client
+            .clear_session_model_override(&session_id)
+            .await
+            .expect("clear session model override");
+        assert_eq!(
+            inherited.model_selection.runtime_override,
+            RuntimeModelOverride::Inherit
+        );
+        assert_eq!(
+            inherited.model_selection.source,
+            ModelSelectionSource::ProviderDefault
+        );
         assert_eq!(
             client
                 .status_overview_typed(&session_id)

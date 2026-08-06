@@ -11,7 +11,7 @@ use crate::claude_home::{
     merge_project_settings, resolve_env_value, resolve_home_dir, sanitize_path,
 };
 use crate::hooks::HookMatcher;
-use crate::layers::{ResolvedSettings, SettingWarning};
+use crate::layers::{ResolvedSettings, SettingOrigin, SettingWarning};
 use crate::model_resolver::{
     ProviderModelResolution, family_model_options, known_model_option, resolve_openai_model,
     resolve_provider_model, resolve_small_fast_model,
@@ -208,6 +208,9 @@ pub struct AppConfig {
     pub policy: EffectivePolicy,
     pub policy_conflicts: Vec<PolicyConflict>,
     pub runtime_model_override: RuntimeModelOverride,
+    /// In-memory reflection of a successful persisted-model write. Effective
+    /// config clones use this without mislabeling it as a runtime override.
+    pub refreshed_persisted_model_setting: Option<PersistedModelSetting>,
     pub append_system_prompt: Option<String>,
     pub permission_mode: Option<PermissionMode>,
     /// Test-only environment overrides that take precedence over both
@@ -228,6 +231,33 @@ pub struct ModelOption {
     pub label: String,
     pub description: String,
     pub current: bool,
+}
+
+/// The layered on-disk model value, before environment or runtime overrides.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PersistedModelSetting {
+    pub value: Option<String>,
+    pub source: Option<SettingOrigin>,
+    pub locked: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelSelectionSource {
+    Runtime,
+    Environment,
+    Persisted,
+    ProviderDefault,
+}
+
+/// Unambiguous effective model state at the provider-resolution boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveModelSelection {
+    pub persisted: PersistedModelSetting,
+    pub runtime_override: RuntimeModelOverride,
+    pub requested_model: Option<String>,
+    pub source: ModelSelectionSource,
+    pub provider: ProviderId,
+    pub resolution: ProviderModelResolution,
 }
 
 impl AppConfig {
@@ -399,7 +429,8 @@ impl AppConfig {
             settings_warnings,
             policy,
             policy_conflicts,
-            runtime_model_override: None,
+            runtime_model_override: RuntimeModelOverride::Inherit,
+            refreshed_persisted_model_setting: None,
             env_overrides: overrides.env_overrides,
             append_system_prompt: overrides
                 .append_system_prompt
@@ -534,9 +565,10 @@ impl AppConfig {
             .unwrap_or(false)
     }
 
-    /// Returns the user-supplied `CLAUDE_CODE_EXTRA_BODY` parsed as a JSON
-    /// object. Anything that isn't an object is dropped to match the
-    /// TypeScript behavior (it emits a `console.error` and continues).
+    /// Returns the provider-owned, intentionally opaque
+    /// `CLAUDE_CODE_EXTRA_BODY` pass-through object. Anything that isn't an
+    /// object is dropped to match the TypeScript behavior (it emits a
+    /// `console.error` and continues).
     pub fn extra_body(&self) -> serde_json::Map<String, serde_json::Value> {
         self.resolve_env("CLAUDE_CODE_EXTRA_BODY")
             .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
@@ -778,8 +810,10 @@ impl AppConfig {
     }
 
     pub fn provider_model_setting(&self) -> Option<String> {
-        if let Some(model) = &self.runtime_model_override {
-            return model.clone();
+        match &self.runtime_model_override {
+            RuntimeModelOverride::Model(model) => return Some(model.clone()),
+            RuntimeModelOverride::Default => return None,
+            RuntimeModelOverride::Inherit => {}
         }
 
         let provider_env_model = match self.default_provider {
@@ -787,6 +821,57 @@ impl AppConfig {
             _ => self.resolve_env("ANTHROPIC_MODEL"),
         };
         provider_env_model.or_else(|| self.settings.model.clone())
+    }
+
+    pub fn persisted_model_setting(&self) -> PersistedModelSetting {
+        if let Some(setting) = &self.refreshed_persisted_model_setting {
+            return setting.clone();
+        }
+        let attribution = self.resolved_settings.attributed("/model");
+        let source = attribution.and_then(|attributed| {
+            (attributed.value.as_str() == self.settings.model.as_deref())
+                .then_some(attributed.attribution.origin)
+        });
+        PersistedModelSetting {
+            value: self.settings.model.clone(),
+            source,
+            locked: self.ensure_setting_mutable("model").is_err(),
+        }
+    }
+
+    pub fn effective_model_selection(&self) -> EffectiveModelSelection {
+        let persisted = self.persisted_model_setting();
+        let (requested_model, source) = match &self.runtime_model_override {
+            RuntimeModelOverride::Model(model) => {
+                (Some(model.clone()), ModelSelectionSource::Runtime)
+            }
+            RuntimeModelOverride::Default => (None, ModelSelectionSource::Runtime),
+            RuntimeModelOverride::Inherit => {
+                let provider_env_model = match self.default_provider {
+                    ProviderId::OpenAi => self.resolve_env("OPENAI_MODEL"),
+                    _ => self.resolve_env("ANTHROPIC_MODEL"),
+                };
+                match provider_env_model {
+                    Some(model) => (Some(model), ModelSelectionSource::Environment),
+                    None => match persisted.value.clone() {
+                        Some(model) => (Some(model), ModelSelectionSource::Persisted),
+                        None => (None, ModelSelectionSource::ProviderDefault),
+                    },
+                }
+            }
+        };
+        let resolution = self.provider_model_resolution_for_setting(
+            self.default_provider,
+            requested_model.as_deref(),
+        );
+        EffectiveModelSelection {
+            persisted,
+            runtime_override: self.runtime_model_override.clone(),
+            requested_model,
+            source,
+            provider: self.default_provider,
+            resolution,
+        }
     }
 
     pub fn provider_model_is_explicit(&self) -> bool {
@@ -825,12 +910,12 @@ impl AppConfig {
     }
 
     pub fn apply_runtime_model_override(&mut self, model: Option<&str>) {
-        self.runtime_model_override = Some(
-            model
-                .map(str::trim)
-                .filter(|model| !model.is_empty())
-                .map(str::to_string),
-        );
+        self.runtime_model_override = RuntimeModelOverride::from_model(model.map(str::to_string));
+    }
+
+    /// Remove the runtime model choice so env and persisted settings apply.
+    pub fn clear_runtime_model_override(&mut self) {
+        self.runtime_model_override = RuntimeModelOverride::Inherit;
     }
 
     pub fn settings_env(&self) -> &BTreeMap<String, String> {

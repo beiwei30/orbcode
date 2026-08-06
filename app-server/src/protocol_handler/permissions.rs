@@ -1,14 +1,24 @@
 use orbcode_app_server_protocol::{
     AddDirectoryParams, PermissionDecisionWire, PermissionModeResult, PermissionResponseParams,
-    PermissionRuleParams, PermissionSetModeParams, ResponseResult, SentResult,
+    PermissionRuleKind, PermissionRuleParams, PermissionSetModeParams, ResponseResult, SentResult,
     SessionPermissionRuleParams, ValidateDirectoryParams,
 };
-use orbcode_config::{PermissionMode, PermissionRuleSettingKind};
+use orbcode_config::PermissionRuleSettingKind;
 use serde_json::Value;
 
 use super::{core_error, invalid_params, success, success_empty, try_parse};
 use crate::AppServer;
-use crate::protocol_conversion::permission_rule_update_to_wire;
+use crate::permissions::PermissionRuleMutation;
+use crate::protocol_conversion::{
+    permission_mode_from_wire, permission_mode_to_wire, permission_rule_update_to_wire,
+};
+
+fn rule_kind_from_wire(kind: PermissionRuleKind) -> PermissionRuleSettingKind {
+    match kind {
+        PermissionRuleKind::Allow => PermissionRuleSettingKind::Allow,
+        PermissionRuleKind::Deny => PermissionRuleSettingKind::Deny,
+    }
+}
 
 /// Convert the wire-level [`PermissionDecisionWire`] to core's
 /// [`PermissionDecision`](orbcode_core::PermissionDecision).
@@ -57,28 +67,30 @@ impl AppServer {
     pub(super) fn handle_permission_mode(&self, _params: Option<Value>) -> ResponseResult {
         let mode = self.permission_mode();
         success(PermissionModeResult {
-            mode: mode.as_str().to_string(),
+            mode: permission_mode_to_wire(mode),
         })
     }
 
     pub(super) fn handle_permission_set_mode(&self, params: Option<Value>) -> ResponseResult {
         let p: PermissionSetModeParams = try_parse!(params);
-        let Some(mode) = PermissionMode::parse(&p.mode) else {
-            return invalid_params(format!("unknown permission mode: {}", p.mode));
-        };
-        self.set_permission_mode(mode);
+        self.set_permission_mode(permission_mode_from_wire(p.mode));
         success_empty()
     }
 
     pub(super) async fn handle_permission_add_rule(&self, params: Option<Value>) -> ResponseResult {
         let p: PermissionRuleParams = try_parse!(params);
-        let kind = match p.kind.as_str() {
-            "allow" => PermissionRuleSettingKind::Allow,
-            "deny" => PermissionRuleSettingKind::Deny,
-            other => return invalid_params(format!("unknown rule kind: {other}")),
-        };
-        match self.add_permission_rule(kind, &p.rule).await {
-            Ok(update) => success(permission_rule_update_to_wire(update)),
+        let kind = rule_kind_from_wire(p.kind);
+        let target = p.target_scope();
+        match self
+            .mutate_permission_rule(PermissionRuleMutation::Add, target, None, kind, &p.rule)
+            .await
+        {
+            Ok(update) => success(permission_rule_update_to_wire(
+                update,
+                p.kind,
+                target,
+                self.permission_overview().await.effective_rules,
+            )),
             Err(e) => core_error(e),
         }
     }
@@ -88,13 +100,18 @@ impl AppServer {
         params: Option<Value>,
     ) -> ResponseResult {
         let p: PermissionRuleParams = try_parse!(params);
-        let kind = match p.kind.as_str() {
-            "allow" => PermissionRuleSettingKind::Allow,
-            "deny" => PermissionRuleSettingKind::Deny,
-            other => return invalid_params(format!("unknown rule kind: {other}")),
-        };
-        match self.remove_permission_rule(kind, &p.rule).await {
-            Ok(update) => success(permission_rule_update_to_wire(update)),
+        let kind = rule_kind_from_wire(p.kind);
+        let target = p.target_scope();
+        match self
+            .mutate_permission_rule(PermissionRuleMutation::Remove, target, None, kind, &p.rule)
+            .await
+        {
+            Ok(update) => success(permission_rule_update_to_wire(
+                update,
+                p.kind,
+                target,
+                self.permission_overview().await.effective_rules,
+            )),
             Err(e) => core_error(e),
         }
     }
@@ -104,16 +121,24 @@ impl AppServer {
         params: Option<Value>,
     ) -> ResponseResult {
         let p: SessionPermissionRuleParams = try_parse!(params);
-        let kind = match p.kind.as_str() {
-            "allow" => PermissionRuleSettingKind::Allow,
-            "deny" => PermissionRuleSettingKind::Deny,
-            other => return invalid_params(format!("unknown rule kind: {other}")),
-        };
+        let kind = rule_kind_from_wire(p.kind);
+        let target = p.target_scope();
         match self
-            .add_session_permission_rule(&p.session_id, kind, &p.rule)
+            .mutate_permission_rule(
+                PermissionRuleMutation::Add,
+                target,
+                Some(&p.session_id),
+                kind,
+                &p.rule,
+            )
             .await
         {
-            Ok(update) => success(permission_rule_update_to_wire(update)),
+            Ok(update) => success(permission_rule_update_to_wire(
+                update,
+                p.kind,
+                target,
+                self.permission_overview().await.effective_rules,
+            )),
             Err(e) => core_error(e),
         }
     }
@@ -123,16 +148,24 @@ impl AppServer {
         params: Option<Value>,
     ) -> ResponseResult {
         let p: SessionPermissionRuleParams = try_parse!(params);
-        let kind = match p.kind.as_str() {
-            "allow" => PermissionRuleSettingKind::Allow,
-            "deny" => PermissionRuleSettingKind::Deny,
-            other => return invalid_params(format!("unknown rule kind: {other}")),
-        };
+        let kind = rule_kind_from_wire(p.kind);
+        let target = p.target_scope();
         match self
-            .remove_session_permission_rule(&p.session_id, kind, &p.rule)
+            .mutate_permission_rule(
+                PermissionRuleMutation::Remove,
+                target,
+                Some(&p.session_id),
+                kind,
+                &p.rule,
+            )
             .await
         {
-            Ok(update) => success(permission_rule_update_to_wire(update)),
+            Ok(update) => success(permission_rule_update_to_wire(
+                update,
+                p.kind,
+                target,
+                self.permission_overview().await.effective_rules,
+            )),
             Err(e) => core_error(e),
         }
     }

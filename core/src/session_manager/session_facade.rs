@@ -33,8 +33,8 @@ impl SessionManager {
         let Some(controls) = self.session_controls_read().get(session_id).cloned() else {
             return config;
         };
-        if controls.model_overridden {
-            config.apply_runtime_model_override(controls.model.as_deref());
+        if !controls.model.is_inherit() {
+            config.apply_runtime_model_override(controls.model.requested_model());
         }
         config.permission_mode = Some(controls.permission_mode);
         if let Some(allow_tools) = controls.permission_mode.default_allow_tools() {
@@ -56,7 +56,6 @@ impl SessionManager {
             | PermissionMode::DontAsk => configured_permission_mode,
             PermissionMode::BypassPermissions | PermissionMode::Auto => PermissionMode::Default,
         };
-        let model = config.provider_model_setting();
         let effort = session
             .session_effort
             .or_else(|| self.runtime_effort_override());
@@ -65,8 +64,7 @@ impl SessionManager {
             .or_insert(SessionControlOverrides {
                 permission_mode,
                 permission_mode_overridden: false,
-                model,
-                model_overridden: false,
+                model: RuntimeModelOverride::Inherit,
                 effort,
             });
     }
@@ -96,13 +94,13 @@ impl SessionManager {
             .cloned()
             .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))?;
         let mut config = self.effective_config();
-        if controls.model_overridden {
-            config.apply_runtime_model_override(controls.model.as_deref());
+        if !controls.model.is_inherit() {
+            config.apply_runtime_model_override(controls.model.requested_model());
         }
-        let current_model = if controls.model_overridden {
-            controls.model
-        } else {
+        let current_model = if controls.model.is_inherit() {
             config.provider_model_setting()
+        } else {
+            controls.model.requested_model().map(str::to_string)
         };
         Ok(config.model_options_for_setting(current_model.as_deref()))
     }
@@ -171,28 +169,72 @@ impl SessionManager {
         session_id: &str,
         model: Option<String>,
     ) -> Result<(), CoreError> {
-        self.ensure_session_controls_mutable(session_id).await?;
+        // The active provider request already owns an immutable model. Updating
+        // this session control during a turn is therefore safe and applies only
+        // to the next request, matching the stream-json SDK contract.
+        self.ensure_session_controls_exist(session_id)?;
         let model = model.and_then(|model| {
             let trimmed = model.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
+            (!trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("default"))
+                .then(|| trimmed.to_string())
         });
-        if !self
-            .session_model_options(session_id)?
-            .iter()
-            .any(|option| option.value == model)
-        {
-            return Err(CoreError::Config(format!(
-                "model option {} is not available for session {session_id}",
-                model.as_deref().unwrap_or("default")
-            )));
+        if let Some(model) = model.as_deref() {
+            if model.chars().any(char::is_control) {
+                return Err(CoreError::Config(
+                    "model name must not contain control characters".to_string(),
+                ));
+            }
+            let config = self.effective_config();
+            if !config.default_provider.is_active() {
+                return Err(CoreError::Config(format!(
+                    "provider '{}' cannot serve model requests",
+                    config.default_provider
+                )));
+            }
+            if !config.policy.model_allowed(model) {
+                return Err(CoreError::PermissionDenied(format!(
+                    "model `{model}` is not allowed by managed policy"
+                )));
+            }
+            let resolved = config.resolve_model_setting(config.default_provider, Some(model));
+            if resolved.trim().is_empty() {
+                return Err(CoreError::Config(format!(
+                    "model `{model}` resolved to an empty provider model"
+                )));
+            }
         }
         {
             let mut controls = self.session_controls_write();
             let controls = controls
                 .get_mut(session_id)
                 .expect("session controls validated before mutation");
-            controls.model = model;
-            controls.model_overridden = true;
+            controls.model = RuntimeModelOverride::from_model(model);
+        }
+
+        let available_effort = self.session_effort_options(session_id)?;
+        let mut controls = self.session_controls_write();
+        let controls = controls
+            .get_mut(session_id)
+            .expect("session controls validated before mutation");
+        if controls
+            .effort
+            .is_some_and(|effort| !available_effort.contains(&effort))
+        {
+            controls.effort = None;
+        }
+        Ok(())
+    }
+
+    /// Clear the session-local choice and resume the layered global model.
+    /// Selecting the provider default remains `set_session_model(..., None)`.
+    pub async fn clear_session_model_override(&self, session_id: &str) -> Result<(), CoreError> {
+        self.ensure_session_controls_exist(session_id)?;
+        {
+            let mut controls = self.session_controls_write();
+            let controls = controls
+                .get_mut(session_id)
+                .expect("session controls validated before mutation");
+            controls.model = RuntimeModelOverride::Inherit;
         }
 
         let available_effort = self.session_effort_options(session_id)?;
@@ -239,13 +281,19 @@ impl SessionManager {
     }
 
     async fn ensure_session_controls_mutable(&self, session_id: &str) -> Result<(), CoreError> {
-        if !self.session_controls_read().contains_key(session_id) {
-            return Err(CoreError::SessionNotFound(session_id.to_string()));
-        }
+        self.ensure_session_controls_exist(session_id)?;
         if self.active_turns.has_active_session(session_id).await {
             return Err(CoreError::ActiveTurn(session_id.to_string()));
         }
         Ok(())
+    }
+
+    fn ensure_session_controls_exist(&self, session_id: &str) -> Result<(), CoreError> {
+        if self.session_controls_read().contains_key(session_id) {
+            Ok(())
+        } else {
+            Err(CoreError::SessionNotFound(session_id.to_string()))
+        }
     }
 
     fn session_controls_read(
@@ -276,14 +324,21 @@ impl SessionManager {
         self.runtime_state.set_model_override(model);
     }
 
-    pub async fn set_model_override(&self, model: Option<String>) -> Result<(), CoreError> {
+    pub async fn set_persisted_model_setting(
+        &self,
+        model: Option<String>,
+    ) -> Result<(), CoreError> {
         update_model_setting(&self.config.home_dir, model.as_deref()).await?;
-        self.set_runtime_model_override(model);
+        self.runtime_state.refresh_persisted_model_setting(model);
         Ok(())
     }
 
     pub fn theme_setting(&self) -> ThemeSetting {
         self.runtime_state.theme_setting(&self.config)
+    }
+
+    pub fn client_preferences(&self) -> orbcode_config::ClientPreferences {
+        self.runtime_state.client_preferences(&self.config)
     }
 
     pub fn set_runtime_theme_setting(&self, theme: ThemeSetting) {
@@ -351,14 +406,14 @@ impl SessionManager {
 
     pub fn model_options(&self) -> Vec<ModelOption> {
         let runtime_setting = self.runtime_model_override();
-        let base_setting = self.config.provider_model_setting();
-        let current_setting = match runtime_setting.as_ref() {
-            Some(Some(model)) => Some(model.as_str()),
-            Some(None) => None,
-            None => base_setting.as_deref(),
-        };
         let effective = self.effective_config();
-        let mut options = self.config.model_options_for_setting(current_setting);
+        let base_setting = effective.provider_model_setting();
+        let current_setting = match &runtime_setting {
+            RuntimeModelOverride::Model(model) => Some(model.as_str()),
+            RuntimeModelOverride::Default => None,
+            RuntimeModelOverride::Inherit => base_setting.as_deref(),
+        };
+        let mut options = effective.model_options_for_setting(current_setting);
         for option in effective.model_options_for_setting(current_setting) {
             if !options
                 .iter()
@@ -415,6 +470,7 @@ impl SessionManager {
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
+        self.ensure_permission_rules_mutable()?;
         let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
         let update = add_permission_rule_setting(&self.config.home_dir, kind, &normalized).await?;
         if update.changed {
@@ -432,6 +488,7 @@ impl SessionManager {
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
+        self.ensure_permission_rules_mutable()?;
         let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
         let update =
             remove_permission_rule_setting(&self.config.home_dir, kind, &normalized).await?;
@@ -448,6 +505,7 @@ impl SessionManager {
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
+        self.ensure_permission_rules_mutable()?;
         let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
         let changed = self
             .permission_runtime
@@ -477,6 +535,7 @@ impl SessionManager {
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
+        self.ensure_permission_rules_mutable()?;
         let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
         let changed = self
             .permission_runtime
@@ -500,6 +559,12 @@ impl SessionManager {
             self.persist_runtime_session_context(session_id).await?;
         }
         Ok(update)
+    }
+
+    fn ensure_permission_rules_mutable(&self) -> Result<(), CoreError> {
+        self.config
+            .ensure_setting_mutable("permissions")
+            .map_err(|error| CoreError::PermissionDenied(error.message))
     }
 
     pub fn set_allow_all(&self, enabled: bool) {

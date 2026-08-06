@@ -868,6 +868,61 @@ async fn session_permission_rule_edits_affect_permission_context_without_setting
 }
 
 #[tokio::test]
+async fn managed_only_policy_rejects_session_permission_rule_mutation() {
+    let mut manager = test_manager().await;
+    manager.config.policy.allow_managed_permission_rules_only = true;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    let error = manager
+        .add_session_permission_rule_for_session(
+            &session.session_id,
+            PermissionRuleSettingKind::Allow,
+            "Read(notes/**)",
+        )
+        .await
+        .expect_err("managed-only policy must reject session rules");
+    assert!(matches!(error, CoreError::PermissionDenied(_)));
+    assert!(
+        manager
+            .session_permission_rules(PermissionRuleSettingKind::Allow)
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn managed_only_policy_does_not_remember_approve_always_runtime_rule() {
+    let mut manager = test_manager().await;
+    manager.config.policy.allow_managed_permission_rules_only = true;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+    let mut rx = manager
+        .submit_turn(
+            &session.session_id,
+            r#"#tool:bash {"command":"printf managed-only"}"#,
+        )
+        .await
+        .expect("submit turn");
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::PermissionRequested { request } => {
+                assert!(
+                    manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::ApproveAlways("printf:*".to_string()),
+                        )
+                        .await
+                );
+            }
+            StreamEvent::TurnFinished { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(manager.runtime_permission_rules().await.is_empty());
+}
+
+#[tokio::test]
 async fn cancellation_appends_interrupted_tool_result_for_pending_tool_use() {
     let manager = test_manager().await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");

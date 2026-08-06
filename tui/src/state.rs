@@ -6,9 +6,8 @@ use std::time::Instant;
 use crossterm::cursor::SetCursorStyle;
 use orbcode_app_server_client::{
     AppClient, BootstrapState, ContextWindowOptions, MaxOutputTokenOptions,
-    McpSlashSuggestionCatalog, TokenWarningOptions,
+    McpSlashSuggestionCatalog, PermissionMode, TokenWarningOptions,
 };
-use orbcode_config::PermissionMode;
 use orbcode_protocol::{EffortLevel, ProviderId, StreamEvent, TokenUsage, TranscriptMessage};
 use ratatui::prelude::Rect;
 use serde_json::Value;
@@ -164,7 +163,7 @@ pub(crate) struct TuiState {
 
 impl TuiState {
     pub(crate) fn new(client: TuiClientHandle, bootstrap: BootstrapState) -> Self {
-        set_active_theme(bootstrap.theme);
+        set_active_theme(bootstrap.preferences.theme);
         let keybinding_warnings = crate::keybindings::keybinding_warnings();
         // Orb Code's own version, from the workspace Cargo version — the single
         // source of truth shared with `--version` and the doctor build_info row.
@@ -252,7 +251,7 @@ impl TuiState {
             current_turn_total_tokens: 0,
             last_provider: None,
             last_usage: None,
-            editor_mode: editor_mode_from_setting(bootstrap.editor_mode),
+            editor_mode: editor_mode_from_setting(bootstrap.preferences.editor_mode),
             normal_pending: None,
             last_find: None,
             normal_count: None,
@@ -266,9 +265,9 @@ impl TuiState {
             background_agent_panel,
             transcript_task_cards,
             status: StatusLineState::default(),
-            statusline_command: bootstrap.statusline_command,
+            statusline_command: bootstrap.statusline.command,
             statusline_refresh_interval: std::time::Duration::from_secs(
-                bootstrap.statusline_refresh_interval_secs,
+                bootstrap.statusline.refresh_interval_secs,
             ),
             clear_session_info: None,
         }

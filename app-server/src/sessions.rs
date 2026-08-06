@@ -12,7 +12,9 @@ use orbcode_protocol::{
 use tokio::sync::mpsc;
 
 use super::AppServer;
-use crate::protocol_conversion::{permission_mode_from_wire, permission_mode_to_wire};
+use crate::protocol_conversion::{
+    effective_model_selection_to_wire, permission_mode_from_wire, permission_mode_to_wire,
+};
 
 impl AppServer {
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
@@ -135,11 +137,16 @@ impl AppServer {
         &self,
         session_id: &str,
     ) -> Result<SessionControlState, CoreError> {
+        let model_selection = self
+            .sessions
+            .effective_config_for_session(session_id)
+            .effective_model_selection();
         Ok(SessionControlState {
             session_id: session_id.to_string(),
             permission_mode: permission_mode_to_wire(
                 self.sessions.session_permission_mode(session_id)?,
             ),
+            model_selection: effective_model_selection_to_wire(model_selection),
             model_options: self
                 .sessions
                 .session_model_options(session_id)?
@@ -175,6 +182,30 @@ impl AppServer {
     ) -> Result<SessionControlState, CoreError> {
         self.ensure_setting_mutable("model")?;
         self.sessions.set_session_model(session_id, model).await?;
+        self.session_control_state(session_id)
+    }
+
+    pub async fn set_session_model_override(
+        &self,
+        session_id: &str,
+        selection: orbcode_app_server_protocol::RuntimeModelOverride,
+    ) -> Result<SessionControlState, CoreError> {
+        self.ensure_setting_mutable("model")?;
+        match selection {
+            orbcode_app_server_protocol::RuntimeModelOverride::Inherit => {
+                self.sessions
+                    .clear_session_model_override(session_id)
+                    .await?
+            }
+            orbcode_app_server_protocol::RuntimeModelOverride::Default => {
+                self.sessions.set_session_model(session_id, None).await?
+            }
+            orbcode_app_server_protocol::RuntimeModelOverride::Model(model) => {
+                self.sessions
+                    .set_session_model(session_id, Some(model))
+                    .await?
+            }
+        }
         self.session_control_state(session_id)
     }
 

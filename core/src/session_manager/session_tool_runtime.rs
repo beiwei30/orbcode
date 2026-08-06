@@ -428,16 +428,20 @@ impl SessionManager {
         {
             Some(PermissionDecision::Approve) => ToolPermissionResolutionOutcome::Approved,
             Some(PermissionDecision::ApproveAlways(rule)) => {
-                self.permission_runtime
-                    .remember_permission_rule(tool_name, &rule)
-                    .await;
-                ToolPermissionResolutionOutcome::Approved
-            }
-            Some(PermissionDecision::ApproveAlwaysMany(rules)) => {
-                for rule in rules {
+                if !self.config.policy.allow_managed_permission_rules_only {
                     self.permission_runtime
                         .remember_permission_rule(tool_name, &rule)
                         .await;
+                }
+                ToolPermissionResolutionOutcome::Approved
+            }
+            Some(PermissionDecision::ApproveAlwaysMany(rules)) => {
+                if !self.config.policy.allow_managed_permission_rules_only {
+                    for rule in rules {
+                        self.permission_runtime
+                            .remember_permission_rule(tool_name, &rule)
+                            .await;
+                    }
                 }
                 ToolPermissionResolutionOutcome::Approved
             }
