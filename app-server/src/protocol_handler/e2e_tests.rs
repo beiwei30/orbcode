@@ -403,6 +403,31 @@ async fn session_rename_with_wrong_param_types_returns_invalid_params() {
 }
 
 #[tokio::test]
+async fn session_set_model_rejects_inherit_with_non_null_model() {
+    let app = test_app("invalid-params-session-model").await;
+    let resp = app
+        .handle_request(make_request(
+            "session/set_model",
+            json!({
+                "session_id": "session-1",
+                "model": "sonnet",
+                "inherit": true,
+            }),
+        ))
+        .await;
+    match &resp.result {
+        ResponseResult::Error(err) => {
+            assert_eq!(err.code, ErrorCode::InvalidParams);
+            assert_eq!(
+                err.message,
+                "`inherit` cannot be true when `model` is non-null"
+            );
+        }
+        other => panic!("expected InvalidParams for contradictory model intent, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn turn_submit_without_params_returns_invalid_params() {
     let app = test_app("invalid-params-turn").await;
     let resp = app

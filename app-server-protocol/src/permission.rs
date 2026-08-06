@@ -18,11 +18,83 @@ pub enum PermissionMode {
     Auto,
 }
 
+impl PermissionMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "default" => Some(Self::Default),
+            "acceptEdits" | "accept-edits" => Some(Self::AcceptEdits),
+            "bypassPermissions" | "bypass-permissions" => Some(Self::BypassPermissions),
+            "dontAsk" | "dont-ask" => Some(Self::DontAsk),
+            "plan" => Some(Self::Plan),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AcceptEdits => "acceptEdits",
+            Self::BypassPermissions => "bypassPermissions",
+            Self::DontAsk => "dontAsk",
+            Self::Plan => "plan",
+            Self::Auto => "auto",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PermissionRuleOverview {
     pub raw: String,
     pub tool_name: String,
     pub rule_content: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionRuleEffect {
+    Deny,
+    Ask,
+    Allow,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PermissionRuleGroup {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+    pub ask: Vec<String>,
+}
+
+impl PermissionRuleGroup {
+    pub fn rules(&self, kind: crate::PermissionRuleKind) -> &[String] {
+        match kind {
+            crate::PermissionRuleKind::Allow => &self.allow,
+            crate::PermissionRuleKind::Deny => &self.deny,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcedPermissionRuleGroup {
+    pub source: crate::SettingSource,
+    pub active: bool,
+    pub mutable: bool,
+    pub rules: PermissionRuleGroup,
+}
+
+/// Source-preserving permission projection. Matching remains owned by config's
+/// structured parser; this DTO only describes effective rule provenance.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EffectivePermissionRules {
+    pub managed: PermissionRuleGroup,
+    pub settings: Vec<SourcedPermissionRuleGroup>,
+    pub startup: PermissionRuleGroup,
+    pub session: PermissionRuleGroup,
+    pub runtime_added: PermissionRuleGroup,
+    pub remembered: PermissionRuleGroup,
+    pub settings_locked: bool,
+    pub allow_managed_permission_rules_only: bool,
+    pub precedence: Vec<PermissionRuleEffect>,
 }
 
 /// Data-only view of the effective permission context.

@@ -18,6 +18,149 @@ fn collect_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn production_source(source: &str) -> &str {
+    source
+        .split_once("#[cfg(test)]\nmod tests")
+        .map_or(source, |(production, _)| production)
+}
+
+#[test]
+fn app_client_public_methods_never_return_raw_json() {
+    let source = cli_source("../../app-server-client/src/lib.rs");
+    let source = production_source(&source);
+    let mut violations = Vec::new();
+    for marker in ["pub async fn ", "pub fn "] {
+        let mut rest = source;
+        while let Some(start) = rest.find(marker) {
+            let declaration = &rest[start..];
+            let end = declaration
+                .find('{')
+                .unwrap_or_else(|| panic!("unterminated public function declaration"));
+            let signature = &declaration[..end];
+            let name = signature[marker.len()..]
+                .split(['(', '<'])
+                .next()
+                .unwrap_or("<unknown>")
+                .trim();
+            let return_type = signature.rsplit_once("->").map(|(_, value)| value);
+            if return_type.is_some_and(|value| {
+                value.contains("Result<Value")
+                    || value.contains("Result<serde_json::Value")
+                    || value.trim_start().starts_with("Value")
+                    || value.trim_start().starts_with("serde_json::Value")
+            }) {
+                violations.push(name.to_string());
+            }
+            rest = &declaration[end + 1..];
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "public AppClient methods must return named DTOs, not raw JSON: {violations:?}"
+    );
+}
+
+#[test]
+fn production_clients_do_not_read_settings_files_directly() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let roots = [
+        manifest.join("../app-server-client/src"),
+        manifest.join("../tui/src"),
+        manifest.join("src"),
+    ];
+    let mut files = Vec::new();
+    for root in roots {
+        collect_rs_files(&root, &mut files);
+    }
+    let mut violations = Vec::new();
+    for path in files {
+        if path.components().any(|part| part.as_os_str() == "tests") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("read client source");
+        let source = production_source(&source);
+        for pattern in [
+            "join(\"settings.json\")",
+            "join(\".claude/settings",
+            "join(\"managed-settings.json\")",
+        ] {
+            if source.contains(pattern) {
+                violations.push(format!("{} contains {pattern}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "clients must obtain settings through typed AppClient projections:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn stable_settings_consumers_do_not_reparse_typed_results() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = [
+        manifest.join("../tui/src/app.rs"),
+        manifest.join("../tui/src/state.rs"),
+        manifest.join("../tui/src/editor_mode.rs"),
+        manifest.join("../tui/src/overlays/appearance_picker.rs"),
+        manifest.join("../tui/src/overlays/config_picker.rs"),
+        manifest.join("../tui/src/overlays/model_picker.rs"),
+        manifest.join("src/headless.rs"),
+        manifest.join("src/control.rs"),
+        manifest.join("src/acp_sdk/session_controls.rs"),
+    ];
+    let forbidden = [
+        "ThemeSetting::parse(",
+        "EditorModeSetting::parse(",
+        "PermissionMode::parse(&result.mode)",
+        ".settings_allowed_rules",
+        ".settings_denied_rules",
+        ".statusline_refresh_interval_secs",
+    ];
+    let mut violations = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(&path).expect("read settings consumer");
+        let source = production_source(&source);
+        for pattern in forbidden {
+            if source.contains(pattern) {
+                violations.push(format!("{} contains {pattern}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "stable settings consumers must use typed DTOs:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn statusline_execution_is_client_owned() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let server_files = [
+        manifest.join("../config/src/claude_home.rs"),
+        manifest.join("../app-server/src/bootstrap.rs"),
+        manifest.join("../app-server/src/settings.rs"),
+        manifest.join("../app-server/src/protocol_handler/settings.rs"),
+    ];
+    for path in server_files {
+        let source = std::fs::read_to_string(&path).expect("read server settings source");
+        assert!(
+            !source.contains("run_statusline_command")
+                && !source.contains("statusline_command).output")
+                && !source.contains("Command::new(statusline"),
+            "statusline execution leaked outside the client: {}",
+            path.display()
+        );
+    }
+    let tui = std::fs::read_to_string(manifest.join("../tui/src/app.rs")).expect("read TUI app");
+    assert!(
+        tui.contains("run_statusline_command"),
+        "the TUI must remain the explicit statusline execution owner"
+    );
+}
+
 #[test]
 fn headless_business_operations_use_app_client() {
     let source = cli_source("headless.rs");

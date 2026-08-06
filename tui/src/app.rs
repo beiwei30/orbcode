@@ -5,7 +5,6 @@ use std::sync::atomic::Ordering;
 use anyhow::Result;
 use crossterm::{SynchronizedUpdate, execute};
 use orbcode_app_server_client::AppClient;
-use orbcode_config::PermissionMode;
 use orbcode_protocol::{MessageRole, ProviderId, StreamEvent, TokenUsage, TranscriptMessage};
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration, MissedTickBehavior};
@@ -60,10 +59,8 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
     if std::env::var_os("ORBCODE_TUI_FINAL_ANSWER_FIXTURE").is_some() {
         install_final_answer_fixture(&mut state);
     }
-    if let Ok(result) = client.permission_mode().await
-        && let Some(mode) = PermissionMode::parse(&result.mode)
-    {
-        state.status.permission_mode = mode;
+    if let Ok(result) = client.permission_mode().await {
+        state.status.permission_mode = result.mode;
     }
     if let Ok(allow) = client.allow_all().await {
         state.status.allow_all = allow;

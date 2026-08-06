@@ -36,7 +36,8 @@ pub use initialize::{
 pub use mcp::*;
 pub use notification::StreamEventNotification;
 pub use permission::{
-    PermissionContext, PermissionDecision, PermissionMode, PermissionRuleOverview,
+    EffectivePermissionRules, PermissionContext, PermissionDecision, PermissionMode,
+    PermissionRuleEffect, PermissionRuleGroup, PermissionRuleOverview, SourcedPermissionRuleGroup,
 };
 pub use request::{
     BootstrapParams, CancelAsyncTaskParams, SeedReadStateParams, SetThinkingBudgetParams,
@@ -46,18 +47,20 @@ pub use response::{
     AsyncCancellationResultKind, BootstrapState, CancelAsyncTaskResult, ContextOverview,
     DoctorCheck, DoctorReport, DoctorStatus, McpResourceSlashSuggestion, McpServerSlashSuggestion,
     McpServerStatusOverview, McpSlashSuggestionCatalog, McpStatusResult, McpToolSlashSuggestion,
-    MemoryFileOverview, MemoryOverview, ModelChangeResult, PermissionOverview, PlanOverview,
-    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, SeedReadStateResult,
-    SessionControlState, SessionModelOption, StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
+    MemoryFileOverview, MemoryOverview, PermissionOverview, PlanOverview, PolicyConflictOverview,
+    PolicyOverview, PolicySourceOverview, SeedReadStateResult, SessionControlState,
+    SessionModelOption, StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
 };
 pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,
     PermissionDecisionWire, PermissionResponseParams,
 };
 pub use settings::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, SandboxFilesystemLocalSettings,
-    SandboxLocalSettings, SandboxNetworkLocalSettings, SandboxSettingsUpdate, ThemeSetting,
-    TokenWarningOptions,
+    ClientPreferences, ContextWindowOptions, EditorModeSetting, EffectiveModelSelection,
+    MaxOutputTokenOptions, ModelSelectionSource, PersistedModelSetting, ProviderModelSelection,
+    RuntimeModelOverride, SandboxFilesystemLocalSettings, SandboxLocalSettings,
+    SandboxNetworkLocalSettings, SandboxSettingsUpdate, SettingSource, StatuslineConfig,
+    ThemeSetting, TokenWarningOptions,
 };
 
 // Re-export protocol types used by consumers of this crate.

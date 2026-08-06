@@ -313,6 +313,68 @@ export type SessionGoalContinueResult = {
   outcome: "not_started";
 };
 
+export interface SetSessionPermissionModeParams {
+  session_id: string;
+  mode: PermissionMode;
+}
+
+export type SetSessionModelParams = {
+  session_id: string;
+  model?: string | null;
+  inherit?: boolean;
+};
+
+export type SetSessionEffortParams = {
+  session_id: string;
+  effort?: string | null;
+};
+
+/** Canonical session-scoped controls consumed by headless clients and edge
+adapters. Values are resolved by app-server; adapters only project them into
+their protocol-specific shapes. */
+export type SessionControlState = {
+  session_id: string;
+  permission_mode: PermissionMode;
+  model_selection: EffectiveModelSelection;
+  model_options: SessionModelOption[];
+  effort_level?: string | null;
+  effort_options: string[];
+};
+
+export type SessionModelOption = {
+  value?: string | null;
+  label: string;
+  description: string;
+  current: boolean;
+};
+
+/** Client-owned appearance and editing preferences. Bootstrap uses the legacy
+PascalCase wire spelling through field adapters while typed settings
+methods use each enum's canonical settings spelling. */
+export type BootstrapState = {
+  session: unknown;
+  bootstrap_event: unknown;
+  prompt_history: string[];
+  available_tool_count: number;
+  configured_mcp_server_count: number;
+  enabled_mcp_capability_count: number;
+  home_dir: string;
+  cwd: string;
+  model_display_name: string;
+  context_window_options: ContextWindowOptions;
+  max_output_token_options: MaxOutputTokenOptions;
+  token_warning_options: TokenWarningOptions;
+  theme: string;
+  editor_mode: string;
+  default_provider: string;
+  fallback_provider?: string | null;
+  max_retries: number;
+  permissions: PermissionContext;
+  mcp_slash_suggestions: McpSlashSuggestionCatalog;
+  statusline_command?: string | null;
+  statusline_refresh_interval_secs: number;
+};
+
 export interface SessionRenameParams {
   session_id: string;
   new_title: string;
@@ -364,21 +426,21 @@ export interface SentResult {
 }
 
 export interface PermissionModeResult {
-  mode: string;
+  mode: PermissionMode;
 }
 
 export interface PermissionSetModeParams {
-  mode: string;
+  mode: PermissionMode;
 }
 
 export interface PermissionRuleParams {
-  kind: string;
+  kind: PermissionRuleKind;
   rule: string;
 }
 
 export interface SessionPermissionRuleParams {
   session_id: string;
-  kind: string;
+  kind: PermissionRuleKind;
   rule: string;
 }
 
@@ -386,6 +448,26 @@ export interface PermissionRuleUpdateResult {
   path: string;
   rule: string;
   changed: boolean;
+  kind: PermissionRuleKind;
+  target: PermissionRuleTargetScope;
+  source: SettingSource;
+  effective_rules: EffectivePermissionRules;
+}
+
+export interface PermissionOverview {
+  permissions: PermissionContext;
+  allow_all: boolean;
+  effective_rules?: EffectivePermissionRules;
+  settings_allowed_rules: string[];
+  settings_denied_rules: string[];
+  startup_allowed_rules: string[];
+  startup_denied_rules: string[];
+  edited_allowed_rules: string[];
+  edited_denied_rules: string[];
+  runtime_allowed_rules: string[];
+  runtime_denied_rules: string[];
+  configured_additional_directories: string[];
+  session_additional_directories: string[];
 }
 
 export interface AddDirectoryParams {
@@ -404,12 +486,12 @@ export interface ModelNameResult {
 export type ModelOptionsResult = ModelOptionOverview[];
 
 export type SetModelParams = {
-  session_id?: string | null;
   model?: string | null;
 };
 
 export interface SetModelResult {
   display_name: string;
+  model_selection: EffectiveModelSelection;
 }
 
 /** Set or clear the per-session thinking-token override. */
@@ -431,11 +513,11 @@ export type ProvidersResult = {
 };
 
 export interface ThemeParams {
-  theme: string;
+  theme: ThemeSetting;
 }
 
 export interface ThemeResult {
-  theme: string;
+  theme: ThemeSetting;
 }
 
 export type EffortParams = {
@@ -469,11 +551,11 @@ export interface KeybindingsLoadResult {
 }
 
 export interface EditorModeParams {
-  mode: string;
+  mode: EditorModeSetting;
 }
 
 export interface EditorModeResult {
-  editor_mode: string;
+  editor_mode: EditorModeSetting;
 }
 
 export type OutputStyleOptionsResult = OutputStyleOptionOverview[];
@@ -952,6 +1034,12 @@ export interface ClientInfo {
   version: string;
 }
 
+export type ContextWindowOptions = {
+  disable_1m_context: boolean;
+  max_context_tokens_override?: number | null;
+  auto_compact_window_override?: number | null;
+};
+
 export type DiscoveredHook = {
   event: string;
   provenance: HookProvenance;
@@ -960,6 +1048,31 @@ export type DiscoveredHook = {
   trusted: boolean;
   validation: HookValidationStatus;
 };
+
+export type EditorModeSetting = "normal" | "vim";
+
+export type EffectiveModelSelection = {
+  persisted: PersistedModelSetting;
+  runtime_override: RuntimeModelOverride;
+  requested_model?: string | null;
+  source: ModelSelectionSource;
+  provider: string;
+  resolution: ProviderModelSelection;
+};
+
+/** Source-preserving permission projection. Matching remains owned by config's
+structured parser; this DTO only describes effective rule provenance. */
+export interface EffectivePermissionRules {
+  managed: PermissionRuleGroup;
+  settings: SourcedPermissionRuleGroup[];
+  startup: PermissionRuleGroup;
+  session: PermissionRuleGroup;
+  runtime_added: PermissionRuleGroup;
+  remembered: PermissionRuleGroup;
+  settings_locked: boolean;
+  allow_managed_permission_rules_only: boolean;
+  precedence: PermissionRuleEffect[];
+}
 
 export interface HookDiscoveryWarning {
   provenance: HookProvenance;
@@ -987,6 +1100,10 @@ export type HookProvenance = "built_in" | {
 
 export type HookValidationStatus = "valid" | {
   invalid: string;
+};
+
+export type MaxOutputTokenOptions = {
+  max_output_tokens_override?: number | null;
 };
 
 export type McpAnnotations = {
@@ -1085,6 +1202,13 @@ export interface McpPromptMessage {
   content: McpContent;
 }
 
+export interface McpResourceSlashSuggestion {
+  server_id: string;
+  uri: string;
+  name: string;
+  description: string;
+}
+
 export type McpResourceSummary = {
   uri: string;
   name: string;
@@ -1093,6 +1217,11 @@ export type McpResourceSummary = {
   annotations?: McpAnnotations | null;
 };
 
+export interface McpServerSlashSuggestion {
+  id: string;
+  summary: string;
+}
+
 export type McpServerSource = McpPluginSource & {
   kind: "plugin";
 };
@@ -1100,6 +1229,19 @@ export type McpServerSource = McpPluginSource & {
 export type McpServerStatus = "disabled" | "starting" | "ready" | "failed" | "unauthorized" | "restarting" | "stopped";
 
 export type McpServerTrust = "unknown" | "trusted" | "denied";
+
+export interface McpSlashSuggestionCatalog {
+  servers: McpServerSlashSuggestion[];
+  tools: McpToolSlashSuggestion[];
+  resources: McpResourceSlashSuggestion[];
+}
+
+export interface McpToolSlashSuggestion {
+  server_id: string;
+  name: string;
+  provider_name: string;
+  description: string;
+}
 
 export interface McpToolSpec {
   name: string;
@@ -1119,6 +1261,8 @@ export type ModelOptionOverview = {
   current: boolean;
 };
 
+export type ModelSelectionSource = "runtime" | "environment" | "persisted" | "provider_default";
+
 export interface OutputStyleOptionOverview {
   value: string;
   label: string;
@@ -1126,10 +1270,43 @@ export interface OutputStyleOptionOverview {
   current: boolean;
 }
 
+/** Protocol-owned permission mode used by session-scoped client controls. */
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
+
+export type PermissionRuleEffect = "deny" | "ask" | "allow";
+
+export interface PermissionRuleGroup {
+  allow: string[];
+  deny: string[];
+  ask: string[];
+}
+
+export type PermissionRuleKind = "allow" | "deny";
+
 export type PermissionRuleOverview = {
   raw: string;
   tool_name: string;
   rule_content?: string | null;
+};
+
+/** Storage scope for a permission-rule mutation. The endpoint-specific
+parameter DTOs expose this before app-server opens either storage path. */
+export type PermissionRuleTargetScope = "settings" | "session";
+
+export type PersistedModelSetting = {
+  value?: string | null;
+  source?: SettingSource | null;
+  locked: boolean;
+};
+
+export type ProviderModelSelection = {
+  requested_setting?: string | null;
+  family?: string | null;
+  model: string;
+  request_model: string;
+  display_label: string;
+  display_name: string;
+  capabilities: string[];
 };
 
 export interface ProviderRequestDebugOverview {
@@ -1151,6 +1328,15 @@ export interface ProviderResolutionOverview {
   display_name: string;
   capabilities: string[];
 }
+
+export type RuntimeModelOverride = {
+  kind: "inherit";
+} | {
+  kind: "default";
+} | {
+  kind: "model";
+  model: string;
+};
 
 export interface SandboxFilesystemLocalSettings {
   allow_write: string[];
@@ -1180,6 +1366,8 @@ export interface ServerRequestResponse {
   result: ResponseResult;
 }
 
+export type SettingSource = "defaults" | "user" | "project" | "local" | "managed" | "cli" | "environment" | "session";
+
 export type SkillDefinition = {
   name: string;
   description?: string | null;
@@ -1202,12 +1390,27 @@ export type SkillSource = "User" | "Project" | "Bundled" | {
   };
 };
 
+export interface SourcedPermissionRuleGroup {
+  source: SettingSource;
+  active: boolean;
+  mutable: boolean;
+  rules: PermissionRuleGroup;
+}
+
 export interface TaskOverview {
   id: string;
   subject: string;
   description: string;
   status: string;
 }
+
+export type ThemeSetting = "auto" | "dark" | "light" | "dark-daltonized" | "light-daltonized" | "dark-ansi" | "light-ansi";
+
+export type TokenWarningOptions = {
+  auto_compact_enabled: boolean;
+  auto_compact_percent_override?: number | null;
+  blocking_limit_override?: number | null;
+};
 
 export type ToolOverview = {
   name: string;
