@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use orbcode_protocol::{EffortLevel, SessionRecord, TranscriptMessage};
+use orbcode_protocol::{
+    EffortLevel, SessionGoal, SessionGoalTurnTerminalKind, SessionRecord, TokenUsage,
+    TranscriptMessage,
+};
 use serde_json::Value;
 
 use crate::{
@@ -16,6 +19,87 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
+    pub async fn append_goal_snapshot(&self, goal: &SessionGoal) -> Result<(), SessionStoreError> {
+        self.transcript_files.append_goal_snapshot(goal).await
+    }
+
+    pub async fn append_goal_cleared(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        revision: u64,
+    ) -> Result<(), SessionStoreError> {
+        self.transcript_files
+            .append_goal_cleared(session_id, goal_id, revision)
+            .await
+    }
+
+    pub async fn append_goal_turn_start(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        goal_revision: u64,
+        turn_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        self.transcript_files
+            .append_goal_turn_start(session_id, goal_id, goal_revision, turn_id)
+            .await
+    }
+
+    pub async fn append_goal_snapshot_and_turn_start(
+        &self,
+        goal: &SessionGoal,
+        turn_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        self.transcript_files
+            .append_goal_snapshot_and_turn_start(goal, turn_id)
+            .await
+    }
+
+    pub async fn append_goal_turn_terminal(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        goal_revision: u64,
+        turn_id: &str,
+        terminal_kind: SessionGoalTurnTerminalKind,
+        usage: &TokenUsage,
+        elapsed_seconds: u64,
+    ) -> Result<(), SessionStoreError> {
+        self.transcript_files
+            .append_goal_turn_terminal(
+                session_id,
+                goal_id,
+                goal_revision,
+                turn_id,
+                terminal_kind,
+                usage,
+                elapsed_seconds,
+            )
+            .await
+    }
+
+    pub async fn append_goal_turn_terminal_and_snapshot(
+        &self,
+        goal: &SessionGoal,
+        started_revision: u64,
+        turn_id: &str,
+        terminal_kind: SessionGoalTurnTerminalKind,
+        usage: &TokenUsage,
+        elapsed_seconds: u64,
+    ) -> Result<(), SessionStoreError> {
+        self.transcript_files
+            .append_goal_turn_terminal_and_snapshot(
+                goal,
+                started_revision,
+                turn_id,
+                terminal_kind,
+                usage,
+                elapsed_seconds,
+            )
+            .await
+    }
+
     pub fn new(current_project_dir: PathBuf, cwd: PathBuf, anthropic_model: String) -> Self {
         Self {
             transcript_files: TranscriptFileStore::new(

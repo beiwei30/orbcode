@@ -1,6 +1,6 @@
 # ACP support matrix
 
-Last verified: 2026-08-05
+Last verified: 2026-08-06
 
 `orbcode acp` is an experimental Agent Client Protocol (ACP) v1 adapter over
 stdio. The canonical runtime API remains `AppClient` and
@@ -27,7 +27,7 @@ add handlers and process tests, and update this table before advertising one.
 | --- | --- | --- |
 | `initialize` | Implemented | Negotiates v1 and returns the capability truth table below. |
 | `session/new` | Implemented | Creates a session with absolute `cwd`, additional directories, and session-scoped MCP overlays. |
-| `session/prompt` | Implemented | Validates content, submits one canonical turn, and streams `session/update`. |
+| `session/prompt` | Implemented | Validates content, submits the user turn, and streams `session/update`. If that session has an active persistent goal, the same ACP prompt lifecycle observes successive ordinary goal-turn subscriptions until the goal stops. |
 | `session/cancel` | Implemented | Cancels the active prompt and resolves its pending server requests. |
 | `session/set_mode` | Implemented | Sets a reviewed, session-scoped permission mode. |
 | `session/set_config_option` | Implemented | Sets the session model or thought level and returns refreshed options. |
@@ -70,6 +70,13 @@ intentionally unsupported behind the SDK's `unstable_session_fork` feature.
 
 The initialize unit tests and raw-process tests pin both advertised fields and
 important omissions.
+
+Persistent goals do not add an ACP wire capability. The adapter explicitly
+opts its internal `AppClient` into the experimental app-server capability and
+uses only typed `get_goal`/`continue_goal` calls. Load and resume therefore see
+the same transcript-backed goal as the TUI. Cancel, close, stdin EOF, and
+disconnect cancel the current ordinary turn; an active goal is checkpointed as
+paused and is never left running without the ACP client.
 
 ## Session controls
 

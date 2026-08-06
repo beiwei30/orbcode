@@ -24,7 +24,7 @@ use agent_client_protocol::schema::{
     SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Error, Lines, Result, Role};
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server_client::{AppClient, GoalContinuation};
 use orbcode_app_server_protocol::{RequestId, ResponseResult, ServerRequestEnvelope, StreamEvent};
 use orbcode_protocol::format_tool_title;
 use tokio::io::AsyncWriteExt;
@@ -358,6 +358,57 @@ async fn prompt_response_loop(
     Err(internal_error(
         "session/prompt stream ended before terminal event",
     ))
+}
+
+async fn continue_active_goal(
+    client: &AppClient,
+    session_id: &str,
+) -> std::result::Result<Option<mpsc::UnboundedReceiver<StreamEvent>>, Error> {
+    let Some(goal) = client
+        .get_goal(session_id)
+        .await
+        .map_err(|error| internal_error(format!("persistent goal get failed: {error}")))?
+    else {
+        return Ok(None);
+    };
+    if goal.status != orbcode_protocol::SessionGoalStatus::Active {
+        return Ok(None);
+    }
+    match client
+        .continue_goal(session_id, &goal.goal_id, goal.revision)
+        .await
+        .map_err(|error| internal_error(format!("persistent goal continue failed: {error}")))?
+    {
+        GoalContinuation::Started { events, .. } => Ok(Some(events)),
+        GoalContinuation::NotStarted { .. } => Ok(None),
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn continue_active_goal_for_test(
+    client: &AppClient,
+    session_id: &str,
+) -> std::result::Result<Option<mpsc::UnboundedReceiver<StreamEvent>>, Error> {
+    continue_active_goal(client, session_id).await
+}
+
+async fn goal_aware_prompt_response_loop(
+    state: &AcpSdkState,
+    session_id: &str,
+    mut event_rx: mpsc::UnboundedReceiver<StreamEvent>,
+    connection: ConnectionTo<Client>,
+) -> std::result::Result<StopReason, Error> {
+    loop {
+        let stop_reason =
+            prompt_response_loop(session_id, &mut event_rx, connection.clone()).await?;
+        if !matches!(stop_reason, StopReason::EndTurn) {
+            return Ok(stop_reason);
+        }
+        let Some(next_events) = continue_active_goal(&state.client, session_id).await? else {
+            return Ok(stop_reason);
+        };
+        event_rx = next_events;
+    }
 }
 
 async fn finish_prompt_generation(state: &AcpSdkState, session_id: &str, generation: u64) {

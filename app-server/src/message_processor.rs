@@ -10,10 +10,14 @@ use orbcode_app_server_protocol::{
     ClientRequestEnvelope, ErrorCode, InitializeParams, McpTrustDecisionWire,
     McpTrustResponseParams, PermissionDecisionWire, PermissionResponseParams, ProtocolError,
     RequestId, ResponseResult, SentResult, ServerMessage, ServerNotificationEnvelope,
-    ServerRequestEnvelope, ServerRequestResponse, ServerResponseEnvelope, StreamEventNotification,
-    TurnSubmitParams, TurnSubmitResult, method,
+    ServerRequestEnvelope, ServerRequestResponse, ServerResponseEnvelope,
+    SessionGoalContinueParams, SessionGoalContinueResult, StreamEventNotification, ToolOverview,
+    ToolsListResult, TurnSubmitParams, TurnSubmitResult, method,
 };
-use orbcode_core::{InteractiveQuestionCapabilities, PermissionDecision, TurnInteractionContext};
+use orbcode_core::{
+    GoalContinuationOutcome, InteractiveQuestionCapabilities, PermissionDecision,
+    TurnInteractionContext,
+};
 use orbcode_protocol::{
     AskUserCancellationReason, AskUserValidationCode, AskUserValidationError, StreamEvent,
 };
@@ -203,6 +207,23 @@ impl MessageProcessor {
             return ServerResponseEnvelope { id: req.id, result };
         }
 
+        if method::persistent_goal_client_request_methods().contains(&req.method.as_str())
+            && (!self.client_capabilities.experimental_methods
+                || !self.client_capabilities.persistent_goals)
+        {
+            return ServerResponseEnvelope {
+                id: req.id,
+                result: ResponseResult::Error(ProtocolError {
+                    code: ErrorCode::MethodNotFound,
+                    message: format!(
+                        "persistent goal method '{}' requires capabilities.experimental_methods = true and capabilities.persistent_goals = true",
+                        req.method
+                    ),
+                    data: None,
+                }),
+            };
+        }
+
         if !self.client_capabilities.experimental_methods
             && method::experimental_client_request_methods().contains(&req.method.as_str())
         {
@@ -221,6 +242,16 @@ impl MessageProcessor {
 
         if req.method == method::TURN_SUBMIT {
             let result = self.handle_turn_submit_with_pump(req.params).await;
+            return ServerResponseEnvelope { id: req.id, result };
+        }
+
+        if req.method == method::SESSION_GOAL_CONTINUE {
+            let result = self.handle_goal_continue_with_pump(req.params).await;
+            return ServerResponseEnvelope { id: req.id, result };
+        }
+
+        if req.method == method::TOOLS_LIST && self.client_capabilities.persistent_goals {
+            let result = self.handle_tools_list_with_goals();
             return ServerResponseEnvelope { id: req.id, result };
         }
 
@@ -254,7 +285,14 @@ impl MessageProcessor {
 
         let to_strings = |v: Vec<&str>| v.into_iter().map(String::from).collect();
         let experimental = if self.client_capabilities.experimental_methods {
-            to_strings(method::experimental_client_request_methods())
+            method::experimental_client_request_methods()
+                .into_iter()
+                .filter(|candidate| {
+                    self.client_capabilities.persistent_goals
+                        || !method::persistent_goal_client_request_methods().contains(candidate)
+                })
+                .map(String::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -314,6 +352,7 @@ impl MessageProcessor {
                 TurnInteractionContext {
                     owner_id: self.connection_id.clone(),
                     capabilities: interactive,
+                    persistent_goals: self.client_capabilities.persistent_goals,
                 },
             )
             .await
@@ -400,6 +439,124 @@ impl MessageProcessor {
         crate::protocol_handler::success(orbcode_app_server_protocol::BackgroundSubscribeResult {
             subscription_id,
         })
+    }
+
+    async fn handle_goal_continue_with_pump(
+        &mut self,
+        params: Option<serde_json::Value>,
+    ) -> ResponseResult {
+        let p: SessionGoalContinueParams = match crate::protocol_handler::parse_params(params) {
+            Ok(value) => value,
+            Err(error) => return ResponseResult::Error(error),
+        };
+        let interaction = TurnInteractionContext {
+            owner_id: self.connection_id.clone(),
+            capabilities: self
+                .client_capabilities
+                .interactive_questions
+                .as_ref()
+                .map(|capability| InteractiveQuestionCapabilities {
+                    single_select: capability.single_select,
+                    multi_select: capability.multi_select,
+                    free_text: capability.free_text,
+                    previews: capability.previews,
+                    annotations: capability.annotations,
+                    special_outcomes: capability.special_outcomes,
+                })
+                .unwrap_or_default(),
+            persistent_goals: true,
+        };
+        let outcome = match self
+            .app_server
+            .continue_goal_if_eligible(
+                &p.session_id,
+                &p.goal_id,
+                p.expected_revision,
+                true,
+                interaction,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => return crate::protocol_handler::goal_error(error),
+        };
+        match outcome {
+            GoalContinuationOutcome::NotStarted { reason, goal } => {
+                crate::protocol_handler::success(SessionGoalContinueResult::NotStarted {
+                    reason: crate::protocol_handler::sessions::goal_not_started_reason_to_wire(
+                        reason,
+                    ),
+                    goal,
+                })
+            }
+            GoalContinuationOutcome::Started(started) => {
+                let subscription_id = uuid::Uuid::new_v4().to_string();
+                let sink = Arc::clone(&self.sink);
+                let pending = Arc::clone(&self.pending_server_requests);
+                let app_server = self.app_server.clone();
+                let sub_id = subscription_id.clone();
+                let next_id = self.next_server_request_id;
+                self.next_server_request_id += 1_000_000;
+                let handle = tokio::spawn(async move {
+                    pump_events(
+                        started.events,
+                        sink,
+                        pending,
+                        app_server,
+                        sub_id,
+                        next_id,
+                        DEFAULT_PERMISSION_TIMEOUT,
+                    )
+                    .await;
+                });
+                self.prune_finished_subscriptions();
+                self.active_subscriptions
+                    .insert(subscription_id.clone(), handle);
+                crate::protocol_handler::success(SessionGoalContinueResult::Started {
+                    subscription_id,
+                    turn_id: started.turn_id,
+                    goal: started.goal,
+                })
+            }
+        }
+    }
+
+    fn handle_tools_list_with_goals(&self) -> ResponseResult {
+        let mut tools = self
+            .app_server
+            .list_tools()
+            .into_iter()
+            .map(|tool| {
+                let unavailable_reason = matches!(
+                    tool.name,
+                    "ask-user-question" | "AskUserQuestion"
+                )
+                .then_some(
+                    "available to the provider only for turns owned by a client that declares the full interactive_questions capability".to_string(),
+                );
+                ToolOverview {
+                    name: tool.name.to_string(),
+                    summary: tool.summary.to_string(),
+                    requires_tools_permission: tool.requires_tools_permission,
+                    requires_network_permission: tool.requires_network_permission,
+                    provider_hidden: tool.provider_hidden,
+                    unavailable_reason,
+                }
+            })
+            .collect::<Vec<_>>();
+        tools.extend(
+            orbcode_core::persistent_goal_tool_specs()
+                .iter()
+                .map(|tool| ToolOverview {
+                    name: tool.name.to_string(),
+                    summary: tool.summary.to_string(),
+                    requires_tools_permission: tool.requires_tools_permission,
+                    requires_network_permission: tool.requires_network_permission,
+                    provider_hidden: tool.provider_hidden,
+                    unavailable_reason: None,
+                }),
+        );
+        crate::protocol_handler::success(ToolsListResult(tools))
     }
 
     /// Fallback handler for `permission/respond` sent as a regular client
@@ -2349,6 +2506,21 @@ mod tests {
         })
     }
 
+    fn initialize_with_persistent_goals() -> ClientMessage {
+        ClientMessage::Request(ClientRequestEnvelope {
+            id: "init-goals".into(),
+            method: "initialize".into(),
+            params: Some(json!({
+                "protocol_version": "1.0",
+                "client_info": { "name": "goal-test", "version": "0.1" },
+                "capabilities": {
+                    "experimental_methods": true,
+                    "persistent_goals": true
+                }
+            })),
+        })
+    }
+
     #[tokio::test]
     async fn default_client_hides_experimental_methods() {
         let app = test_app("cap-default").await;
@@ -2405,12 +2577,76 @@ mod tests {
                         .contains(&"background/create".to_string()),
                     "background/create should be in experimental methods"
                 );
+                assert!(
+                    !init
+                        .capabilities
+                        .experimental_methods
+                        .contains(&method::SESSION_GOAL_GET.to_string()),
+                    "generic experimental opt-in must not advertise persistent goals"
+                );
             } else {
                 panic!("expected success response");
             }
         } else {
             panic!("expected response message");
         }
+    }
+
+    #[tokio::test]
+    async fn persistent_goal_client_sees_goal_method_family() {
+        let app = test_app("cap-goal-optin").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+
+        processor
+            .handle_message(initialize_with_persistent_goals())
+            .await;
+
+        let msgs = messages.lock().await;
+        let ServerMessage::Response(env) = &msgs[0] else {
+            panic!("expected response message");
+        };
+        let ResponseResult::Success { data: Some(data) } = &env.result else {
+            panic!("expected success response");
+        };
+        let init: orbcode_app_server_protocol::InitializeResult =
+            serde_json::from_value(data.clone()).unwrap();
+        for goal_method in method::persistent_goal_client_request_methods() {
+            assert!(
+                init.capabilities
+                    .experimental_methods
+                    .contains(&goal_method.to_string()),
+                "goal-capable client should see {goal_method}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_experimental_client_is_rejected_for_goal_method() {
+        let app = test_app("cap-goal-reject").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+
+        processor
+            .handle_message(initialize_with_experimental())
+            .await;
+        processor
+            .handle_message(ClientMessage::Request(ClientRequestEnvelope {
+                id: "goal-1".into(),
+                method: method::SESSION_GOAL_GET.into(),
+                params: Some(json!({ "session_id": "session-1" })),
+            }))
+            .await;
+
+        let msgs = messages.lock().await;
+        let ServerMessage::Response(env) = &msgs[1] else {
+            panic!("expected response message");
+        };
+        let ResponseResult::Error(error) = &env.result else {
+            panic!("expected error response");
+        };
+        assert_eq!(error.code, ErrorCode::MethodNotFound);
+        assert!(error.message.contains("persistent_goals"));
     }
 
     #[tokio::test]

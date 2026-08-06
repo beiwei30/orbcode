@@ -1,8 +1,13 @@
 use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, BootstrapParams, ResponseResult, SessionFindByTitleParams,
-    SessionFindByTitleResult, SessionForkParams, SessionForkResult, SessionIdParams,
+    SessionFindByTitleResult, SessionForkParams, SessionForkResult, SessionGoalClearResult,
+    SessionGoalContinueParams, SessionGoalContinueResult, SessionGoalGetResult,
+    SessionGoalNotStartedReason, SessionGoalSetParams, SessionGoalSetResult, SessionIdParams,
     SessionListResult, SessionRecordMessageParams, SessionRenameParams, SessionRewindParams,
     SetSessionEffortParams, SetSessionModelParams, SetSessionPermissionModeParams,
+};
+use orbcode_core::{
+    GoalContinuationOutcome, GoalNotStartedReason, GoalSetRequest, GoalUpdateAuthority,
 };
 use serde_json::Value;
 
@@ -10,6 +15,70 @@ use super::{core_error, success, try_parse};
 use crate::AppServer;
 
 impl AppServer {
+    pub(super) async fn handle_session_goal_get(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        match self.get_goal(&p.session_id).await {
+            Ok(goal) => success(SessionGoalGetResult { goal }),
+            Err(error) => super::goal_error(error),
+        }
+    }
+
+    pub(super) async fn handle_session_goal_set(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionGoalSetParams = try_parse!(params);
+        match self
+            .set_goal(GoalSetRequest {
+                session_id: p.session_id,
+                expected_revision: p.expected_revision,
+                replace: p.replace,
+                objective: p.objective,
+                status: p.status,
+                token_budget: p.token_budget,
+                stop_reason: None,
+                authority: GoalUpdateAuthority::User,
+            })
+            .await
+        {
+            Ok(goal) => success(SessionGoalSetResult { goal }),
+            Err(error) => super::goal_error(error),
+        }
+    }
+
+    pub(super) async fn handle_session_goal_clear(&self, params: Option<Value>) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        match self.clear_goal(&p.session_id).await {
+            Ok(cleared) => success(SessionGoalClearResult { cleared }),
+            Err(error) => super::goal_error(error),
+        }
+    }
+
+    pub(super) async fn handle_session_goal_continue_without_client(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: SessionGoalContinueParams = try_parse!(params);
+        match self
+            .continue_goal_if_eligible(
+                &p.session_id,
+                &p.goal_id,
+                p.expected_revision,
+                false,
+                orbcode_core::TurnInteractionContext::disabled(),
+            )
+            .await
+        {
+            Ok(GoalContinuationOutcome::NotStarted { reason, goal }) => {
+                success(SessionGoalContinueResult::NotStarted {
+                    reason: goal_not_started_reason_to_wire(reason),
+                    goal,
+                })
+            }
+            Ok(GoalContinuationOutcome::Started(_)) => {
+                unreachable!("incapable direct call cannot start")
+            }
+            Err(error) => super::goal_error(error),
+        }
+    }
+
     pub(super) async fn handle_session_bootstrap(&self, params: Option<Value>) -> ResponseResult {
         let p: BootstrapParams = try_parse!(params);
         match self.bootstrap_with_params(p).await {
@@ -181,5 +250,20 @@ impl AppServer {
             Ok(state) => success(state),
             Err(e) => core_error(e),
         }
+    }
+}
+
+pub(crate) fn goal_not_started_reason_to_wire(
+    reason: GoalNotStartedReason,
+) -> SessionGoalNotStartedReason {
+    match reason {
+        GoalNotStartedReason::Missing => SessionGoalNotStartedReason::Missing,
+        GoalNotStartedReason::StaleRevision => SessionGoalNotStartedReason::StaleRevision,
+        GoalNotStartedReason::Inactive => SessionGoalNotStartedReason::Inactive,
+        GoalNotStartedReason::UsageLimited => SessionGoalNotStartedReason::UsageLimited,
+        GoalNotStartedReason::BudgetLimited => SessionGoalNotStartedReason::BudgetLimited,
+        GoalNotStartedReason::PendingUserInput => SessionGoalNotStartedReason::PendingUserInput,
+        GoalNotStartedReason::ActiveTurn => SessionGoalNotStartedReason::ActiveTurn,
+        GoalNotStartedReason::ClientNotCapable => SessionGoalNotStartedReason::ClientNotCapable,
     }
 }

@@ -1359,6 +1359,63 @@
     "sensitive_fields": []
   },
   {
+    "method": "session/goal/get",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "SessionGoalGetResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.goal.objective"
+    ]
+  },
+  {
+    "method": "session/goal/set",
+    "stability": "experimental",
+    "params": "SessionGoalSetParams",
+    "result": "SessionGoalSetResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "objective",
+      "result.goal.objective"
+    ]
+  },
+  {
+    "method": "session/goal/clear",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "SessionGoalClearResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/goal/continue",
+    "stability": "experimental",
+    "params": "SessionGoalContinueParams",
+    "result": "SessionGoalContinueResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src",
+      "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": [
+      "result.goal.objective"
+    ]
+  },
+  {
     "method": "background/create",
     "stability": "experimental",
     "params": "BackgroundCreateParams",

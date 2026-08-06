@@ -6,6 +6,7 @@
   },
   "capabilities": {
     "streaming": true,
-    "experimental_methods": false
+    "experimental_methods": false,
+    "persistent_goals": false
   }
 }

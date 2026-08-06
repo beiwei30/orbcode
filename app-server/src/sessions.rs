@@ -3,8 +3,9 @@ use orbcode_app_server_protocol::{
     PermissionMode, SessionControlState, SessionModelOption,
 };
 use orbcode_core::{
-    CompactDecision, CompactSessionResult, CoreError, CostOverview, PermissionDecision,
-    ProviderRequestDebugSnapshot, StatsOverview, TurnInteractionContext, UsageOverview,
+    CompactDecision, CompactSessionResult, CoreError, CostOverview, GoalContinuationOutcome,
+    GoalError, GoalSetRequest, PermissionDecision, ProviderRequestDebugSnapshot, StatsOverview,
+    TurnInteractionContext, UsageOverview,
 };
 use orbcode_protocol::{
     EffortLevel, SessionRecord, SessionSummary, StreamEvent, TranscriptMessage, TurnContext,
@@ -15,6 +16,43 @@ use super::AppServer;
 use crate::protocol_conversion::{permission_mode_from_wire, permission_mode_to_wire};
 
 impl AppServer {
+    pub async fn get_goal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<orbcode_protocol::SessionGoal>, GoalError> {
+        self.sessions.get_goal(session_id).await
+    }
+
+    pub async fn set_goal(
+        &self,
+        request: GoalSetRequest,
+    ) -> Result<orbcode_protocol::SessionGoal, GoalError> {
+        self.sessions.set_goal(request).await
+    }
+
+    pub async fn clear_goal(&self, session_id: &str) -> Result<bool, GoalError> {
+        self.sessions.clear_goal(session_id).await
+    }
+
+    pub async fn continue_goal_if_eligible(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        expected_revision: u64,
+        client_capable: bool,
+        interaction: TurnInteractionContext,
+    ) -> Result<GoalContinuationOutcome, GoalError> {
+        self.sessions
+            .continue_goal_if_eligible(
+                session_id,
+                goal_id,
+                expected_revision,
+                client_capable,
+                interaction,
+            )
+            .await
+    }
+
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>, CoreError> {
         self.sessions.list_sessions().await
     }

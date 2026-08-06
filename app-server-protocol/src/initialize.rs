@@ -24,6 +24,10 @@ pub struct ClientCapabilities {
     pub streaming: bool,
     #[serde(default)]
     pub experimental_methods: bool,
+    /// Opts this connection into the experimental persistent-goal method
+    /// family. `experimental_methods` must also be enabled.
+    #[serde(default)]
+    pub persistent_goals: bool,
     /// Interactive question behaviors this connection can complete. Missing
     /// means the capability is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,6 +138,7 @@ mod tests {
         let params: InitializeParams = serde_json::from_value(value).unwrap();
         assert!(!params.capabilities.streaming);
         assert!(!params.capabilities.experimental_methods);
+        assert!(!params.capabilities.persistent_goals);
         assert!(params.capabilities.interactive_questions.is_none());
     }
 
@@ -142,6 +147,7 @@ mod tests {
         let caps = ClientCapabilities::default();
         assert!(!caps.streaming);
         assert!(!caps.experimental_methods);
+        assert!(!caps.persistent_goals);
         assert!(caps.interactive_questions.is_none());
     }
 
@@ -161,6 +167,19 @@ mod tests {
         let value = json!({"streaming": true});
         let caps: ClientCapabilities = serde_json::from_value(value).unwrap();
         assert!(!caps.experimental_methods);
+        assert!(!caps.persistent_goals);
+    }
+
+    #[test]
+    fn persistent_goals_requires_explicit_opt_in() {
+        let caps: ClientCapabilities = serde_json::from_value(json!({
+            "streaming": true,
+            "experimental_methods": true,
+            "persistent_goals": true
+        }))
+        .unwrap();
+        assert!(caps.experimental_methods);
+        assert!(caps.persistent_goals);
     }
 
     #[test]

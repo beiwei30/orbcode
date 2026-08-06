@@ -7,10 +7,11 @@ use orbcode_app_server_protocol::{
     ClientCapabilities, ClientInfo, ClientMessage, ClientRequestEnvelope, ErrorCode,
     InitializeParams, InitializeResult, ProtocolError, ResponseResult, ServerCapabilities,
     ServerInfo, ServerMessage, ServerNotificationEnvelope, ServerRequestEnvelope,
-    ServerRequestResponse, ServerResponseEnvelope, StreamEventNotification,
+    ServerRequestResponse, ServerResponseEnvelope, SessionGoalContinueResult,
+    SessionGoalNotStartedReason, SessionGoalSetParams, StreamEventNotification,
 };
 use orbcode_protocol::StreamEvent;
-use serde_json::json;
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // 1. ClientMessage::Request wire shape
@@ -276,6 +277,7 @@ fn initialize_params_default_capabilities_wire_shape() {
     let value = serde_json::to_value(&params).unwrap();
     assert_eq!(value["capabilities"]["streaming"], false);
     assert_eq!(value["capabilities"]["experimental_methods"], false);
+    assert_eq!(value["capabilities"]["persistent_goals"], false);
 }
 
 #[test]
@@ -289,6 +291,59 @@ fn initialize_params_experimental_opt_in_wire_shape() {
     assert!(params.capabilities.experimental_methods);
     let serialized = serde_json::to_value(&params).unwrap();
     assert_eq!(serialized["capabilities"]["experimental_methods"], true);
+}
+
+#[test]
+fn initialize_params_persistent_goal_opt_in_wire_shape() {
+    let raw = json!({
+        "protocol_version": "1.0",
+        "client_info": { "name": "goal-client", "version": "0.1" },
+        "capabilities": {
+            "streaming": true,
+            "experimental_methods": true,
+            "persistent_goals": true
+        }
+    });
+    let params: InitializeParams = serde_json::from_value(raw).unwrap();
+    assert!(params.capabilities.persistent_goals);
+}
+
+#[test]
+fn session_goal_set_distinguishes_missing_and_null_budget() {
+    let keep: SessionGoalSetParams = serde_json::from_value(json!({
+        "session_id": "session-1",
+        "expected_revision": 3
+    }))
+    .unwrap();
+    assert_eq!(keep.token_budget, None);
+
+    let clear: SessionGoalSetParams = serde_json::from_value(json!({
+        "session_id": "session-1",
+        "expected_revision": 3,
+        "token_budget": null
+    }))
+    .unwrap();
+    assert_eq!(clear.token_budget, Some(None));
+    assert_eq!(
+        serde_json::to_value(clear).unwrap()["token_budget"],
+        Value::Null
+    );
+}
+
+#[test]
+fn session_goal_continue_not_started_is_tagged() {
+    let result = SessionGoalContinueResult::NotStarted {
+        reason: SessionGoalNotStartedReason::StaleRevision,
+        goal: None,
+    };
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        json!({
+            "outcome": "not_started",
+            "reason": "stale_revision",
+            "goal": null
+        })
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +719,10 @@ fn method_constants_are_stable() {
         "session/set_permission_mode",
         "session/set_model",
         "session/set_effort",
+        "session/goal/get",
+        "session/goal/set",
+        "session/goal/clear",
+        "session/goal/continue",
         // Background
         "background/create",
         "background/list",
@@ -718,6 +777,10 @@ fn method_strings_pinned() {
     );
     assert_eq!(method::SESSION_SET_MODEL, "session/set_model");
     assert_eq!(method::SESSION_SET_EFFORT, "session/set_effort");
+    assert_eq!(method::SESSION_GOAL_GET, "session/goal/get");
+    assert_eq!(method::SESSION_GOAL_SET, "session/goal/set");
+    assert_eq!(method::SESSION_GOAL_CLEAR, "session/goal/clear");
+    assert_eq!(method::SESSION_GOAL_CONTINUE, "session/goal/continue");
     assert_eq!(method::TURN_SUBMIT, "turn/submit");
     assert_eq!(method::TURN_STEER, "turn/steer");
     assert_eq!(method::TURN_CANCEL, "turn/cancel");

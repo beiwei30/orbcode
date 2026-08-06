@@ -482,6 +482,8 @@ mod tests {
             session_allowed_tools: Vec::new(),
             session_disallowed_tools: Vec::new(),
             session_effort: None,
+            goal: None,
+            goal_transcript_records: Vec::new(),
             messages,
         }
     }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use orbcode_app_server_client::{AppClient, McpPromptResult};
+use orbcode_protocol::StreamEvent;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -17,6 +18,7 @@ use crate::state::TuiState;
 pub(crate) enum SlashCommandOutcome {
     Handled,
     PromptToSubmit(String),
+    GoalTurnStarted(mpsc::UnboundedReceiver<StreamEvent>),
     Exit,
 }
 

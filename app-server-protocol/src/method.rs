@@ -25,6 +25,10 @@ pub const SESSION_CONTROL_STATE: &str = "session/control_state";
 pub const SESSION_SET_PERMISSION_MODE: &str = "session/set_permission_mode";
 pub const SESSION_SET_MODEL: &str = "session/set_model";
 pub const SESSION_SET_EFFORT: &str = "session/set_effort";
+pub const SESSION_GOAL_GET: &str = "session/goal/get";
+pub const SESSION_GOAL_SET: &str = "session/goal/set";
+pub const SESSION_GOAL_CLEAR: &str = "session/goal/clear";
+pub const SESSION_GOAL_CONTINUE: &str = "session/goal/continue";
 
 // ---------------------------------------------------------------------------
 // Turn
@@ -311,6 +315,10 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         SESSION_SET_PERMISSION_MODE,
         SESSION_SET_MODEL,
         SESSION_SET_EFFORT,
+        SESSION_GOAL_GET,
+        SESSION_GOAL_SET,
+        SESSION_GOAL_CLEAR,
+        SESSION_GOAL_CONTINUE,
         // Background
         BACKGROUND_CREATE,
         BACKGROUND_LIST,
@@ -326,6 +334,17 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         WORKFLOW_START,
         WORKFLOW_START_DYNAMIC,
         WORKFLOW_RESUME,
+    ]
+}
+
+/// Experimental methods that additionally require the connection's dedicated
+/// `persistent_goals` capability bit.
+pub fn persistent_goal_client_request_methods() -> Vec<&'static str> {
+    vec![
+        SESSION_GOAL_GET,
+        SESSION_GOAL_SET,
+        SESSION_GOAL_CLEAR,
+        SESSION_GOAL_CONTINUE,
     ]
 }
 
@@ -425,11 +444,11 @@ mod tests {
 
     #[test]
     fn method_count_matches_expected() {
-        // Current count: 1 lifecycle + 19 session + 4 turn + 10 permission +
+        // Current count: 1 lifecycle + 23 session + 4 turn + 10 permission +
         // 25 settings + 5 context/usage + 17 mcp + 9 tools + 9 background +
         // 4 workflows + 3 auth + 9 diagnostics + 1 notification +
-        // 3 server requests = 119
-        assert_eq!(all_methods().len(), 119);
+        // 3 server requests = 123
+        assert_eq!(all_methods().len(), 123);
     }
 
     #[test]
@@ -538,7 +557,7 @@ mod tests {
     fn client_request_methods_count() {
         // Stable and experimental client methods are counted independently
         // below; this assertion locks their union.
-        assert_eq!(client_request_methods().len(), 115);
+        assert_eq!(client_request_methods().len(), 119);
     }
 
     #[test]
@@ -550,7 +569,20 @@ mod tests {
 
     #[test]
     fn experimental_client_request_methods_count() {
-        // 9 session + 9 background (including async cancellation) + 4 workflows.
-        assert_eq!(experimental_client_request_methods().len(), 22);
+        // 13 session + 9 background (including async cancellation) + 4 workflows.
+        assert_eq!(experimental_client_request_methods().len(), 26);
+    }
+
+    #[test]
+    fn persistent_goal_method_family_is_pinned() {
+        assert_eq!(
+            persistent_goal_client_request_methods(),
+            vec![
+                SESSION_GOAL_GET,
+                SESSION_GOAL_SET,
+                SESSION_GOAL_CLEAR,
+                SESSION_GOAL_CONTINUE,
+            ]
+        );
     }
 }

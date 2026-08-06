@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use orbcode_protocol::{EffortLevel, SessionRecord, TranscriptMessage};
+use orbcode_protocol::{
+    EffortLevel, SessionGoal, SessionGoalTurnTerminalKind, SessionRecord, TokenUsage,
+    TranscriptMessage,
+};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -17,6 +20,111 @@ use crate::{
 };
 
 impl TranscriptFileStore {
+    pub async fn append_goal_snapshot(&self, goal: &SessionGoal) -> Result<(), SessionStoreError> {
+        let cwd = self.cwd_for(&goal.session_id);
+        self.append_entries(&goal.session_id, vec![goal_transcript_entry(goal, &cwd)])
+            .await
+    }
+
+    pub async fn append_goal_cleared(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        revision: u64,
+    ) -> Result<(), SessionStoreError> {
+        let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let entry = goal_metadata_entry(
+            self.cwd_for(session_id),
+            json!({
+                "type": crate::transcript::GOAL_CLEARED_ENTRY_TYPE,
+                "goalId": goal_id,
+                "revision": revision,
+                "sessionId": session_id,
+                "timestamp": timestamp,
+            }),
+        );
+        self.append_entries(session_id, vec![entry]).await
+    }
+
+    pub async fn append_goal_turn_start(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        goal_revision: u64,
+        turn_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        let entry = goal_turn_start_entry(
+            self.cwd_for(session_id),
+            session_id,
+            goal_id,
+            goal_revision,
+            turn_id,
+        );
+        self.append_entries(session_id, vec![entry]).await
+    }
+
+    pub async fn append_goal_snapshot_and_turn_start(
+        &self,
+        goal: &SessionGoal,
+        turn_id: &str,
+    ) -> Result<(), SessionStoreError> {
+        let cwd = self.cwd_for(&goal.session_id);
+        let snapshot = goal_transcript_entry(goal, &cwd);
+        let start =
+            goal_turn_start_entry(cwd, &goal.session_id, &goal.goal_id, goal.revision, turn_id);
+        self.append_entries(&goal.session_id, vec![snapshot, start])
+            .await
+    }
+
+    pub async fn append_goal_turn_terminal(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        goal_revision: u64,
+        turn_id: &str,
+        terminal_kind: SessionGoalTurnTerminalKind,
+        usage: &TokenUsage,
+        elapsed_seconds: u64,
+    ) -> Result<(), SessionStoreError> {
+        let entry = goal_turn_terminal_entry(
+            self.cwd_for(session_id),
+            session_id,
+            goal_id,
+            goal_revision,
+            turn_id,
+            terminal_kind,
+            usage,
+            elapsed_seconds,
+        );
+        self.append_entries(session_id, vec![entry]).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn append_goal_turn_terminal_and_snapshot(
+        &self,
+        goal: &SessionGoal,
+        started_revision: u64,
+        turn_id: &str,
+        terminal_kind: SessionGoalTurnTerminalKind,
+        usage: &TokenUsage,
+        elapsed_seconds: u64,
+    ) -> Result<(), SessionStoreError> {
+        let cwd = self.cwd_for(&goal.session_id);
+        let terminal = goal_turn_terminal_entry(
+            cwd.clone(),
+            &goal.session_id,
+            &goal.goal_id,
+            started_revision,
+            turn_id,
+            terminal_kind,
+            usage,
+            elapsed_seconds,
+        );
+        let snapshot = goal_transcript_entry(goal, &cwd);
+        self.append_entries(&goal.session_id, vec![terminal, snapshot])
+            .await
+    }
+
     pub async fn append_custom_title_line(
         &self,
         session_id: &str,
@@ -90,7 +198,8 @@ impl TranscriptFileStore {
             return Ok(());
         }
         session.messages.pop();
-        if session.messages.is_empty() {
+        session.rewind_goal_state(session.messages.len());
+        if session.messages.is_empty() && session.goal_transcript_records.is_empty() {
             self.remove_session_file_if_exists(session_id).await?;
             return Ok(());
         }
@@ -250,7 +359,27 @@ impl TranscriptFileStore {
             });
             lines.push(serde_json::to_string(&entry)?);
         }
-        for message in &session.messages {
+        let retained_goal_records = session
+            .goal_transcript_records
+            .iter()
+            .map(|record| {
+                (
+                    record.after_message_count.min(session.messages.len()),
+                    record,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut goal_record_index = 0;
+        while retained_goal_records
+            .get(goal_record_index)
+            .is_some_and(|(after_message_count, _)| *after_message_count == 0)
+        {
+            lines.push(serde_json::to_string(
+                &retained_goal_records[goal_record_index].1.value,
+            )?);
+            goal_record_index += 1;
+        }
+        for (message_index, message) in session.messages.iter().enumerate() {
             for mut entry in transcript_entries(
                 &cwd,
                 &self.anthropic_model,
@@ -264,6 +393,20 @@ impl TranscriptFileStore {
                 lines.push(serde_json::to_string(&entry)?);
             }
             parent_uuid = Some(message.id.clone());
+            let after_message_count = message_index + 1;
+            while retained_goal_records.get(goal_record_index).is_some_and(
+                |(record_message_count, _)| *record_message_count == after_message_count,
+            ) {
+                lines.push(serde_json::to_string(
+                    &retained_goal_records[goal_record_index].1.value,
+                )?);
+                goal_record_index += 1;
+            }
+        }
+        if retained_goal_records.is_empty()
+            && let Some(goal) = session.goal.as_ref()
+        {
+            lines.push(serde_json::to_string(&goal_transcript_entry(goal, &cwd))?);
         }
         let mut payload = lines.join("\n");
         if !payload.is_empty() {
@@ -374,6 +517,92 @@ impl TranscriptFileStore {
     }
 }
 
+fn goal_transcript_entry(goal: &SessionGoal, cwd: &Path) -> Value {
+    goal_metadata_entry(
+        cwd.to_path_buf(),
+        json!({
+            "type": crate::transcript::GOAL_ENTRY_TYPE,
+            "goalId": goal.goal_id,
+            "revision": goal.revision,
+            "sessionId": goal.session_id,
+            "objective": goal.objective,
+            "status": goal.status,
+            "tokenBudget": goal.token_budget,
+            "tokensUsed": goal.tokens_used,
+            "elapsedSeconds": goal.elapsed_seconds,
+        "createdAt": goal.created_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        "updatedAt": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+            "stopReason": goal.stop_reason,
+            "lastGoalTurnId": goal.last_goal_turn_id,
+        "timestamp": goal.updated_at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        }),
+    )
+}
+
+fn goal_metadata_entry(cwd: PathBuf, mut entry: Value) -> Value {
+    if let Some(object) = entry.as_object_mut() {
+        object.insert("cwd".to_string(), Value::String(cwd.display().to_string()));
+        object.insert(
+            "entrypoint".to_string(),
+            Value::String(TRANSCRIPT_ENTRYPOINT.to_string()),
+        );
+        object.insert(
+            "version".to_string(),
+            Value::String(TRANSCRIPT_VERSION.to_string()),
+        );
+    }
+    entry
+}
+
+fn goal_turn_start_entry(
+    cwd: PathBuf,
+    session_id: &str,
+    goal_id: &str,
+    goal_revision: u64,
+    turn_id: &str,
+) -> Value {
+    let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    goal_metadata_entry(
+        cwd,
+        json!({
+            "type": crate::transcript::GOAL_TURN_START_ENTRY_TYPE,
+            "goalId": goal_id,
+            "goalRevision": goal_revision,
+            "turnId": turn_id,
+            "sessionId": session_id,
+            "timestamp": timestamp,
+        }),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn goal_turn_terminal_entry(
+    cwd: PathBuf,
+    session_id: &str,
+    goal_id: &str,
+    goal_revision: u64,
+    turn_id: &str,
+    terminal_kind: SessionGoalTurnTerminalKind,
+    usage: &TokenUsage,
+    elapsed_seconds: u64,
+) -> Value {
+    let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    goal_metadata_entry(
+        cwd,
+        json!({
+            "type": crate::transcript::GOAL_TURN_TERMINAL_ENTRY_TYPE,
+            "goalId": goal_id,
+            "goalRevision": goal_revision,
+            "turnId": turn_id,
+            "sessionId": session_id,
+            "terminalKind": terminal_kind,
+            "usage": usage,
+            "elapsedSeconds": elapsed_seconds,
+            "timestamp": timestamp,
+        }),
+    )
+}
+
 /// If the file does not currently end in a newline, append one so that a
 /// previously truncated final record cannot fuse with the next appended
 /// line. Returns the underlying io error verbatim — callers wrap it.
@@ -406,7 +635,7 @@ async fn ensure_trailing_newline(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbcode_protocol::{MessageRole, TranscriptBlock, TranscriptMessage};
+    use orbcode_protocol::{MessageRole, SessionGoalStatus, TranscriptBlock, TranscriptMessage};
 
     #[tokio::test]
     async fn append_message_line_writes_transcript_entries() {
@@ -795,6 +1024,8 @@ mod tests {
             session_allowed_tools: Vec::new(),
             session_disallowed_tools: Vec::new(),
             session_effort: None,
+            goal: None,
+            goal_transcript_records: Vec::new(),
             messages: Vec::new(),
         };
         session.push_message(TranscriptMessage::new(MessageRole::User, "hi"));
@@ -885,6 +1116,8 @@ mod tests {
             session_allowed_tools: Vec::new(),
             session_disallowed_tools: Vec::new(),
             session_effort: None,
+            goal: None,
+            goal_transcript_records: Vec::new(),
             messages: Vec::new(),
         };
         session.push_message(TranscriptMessage::new(MessageRole::User, "hello"));
@@ -902,5 +1135,257 @@ mod tests {
         assert!(!contents.contains("stale"));
         let entry: Value = serde_json::from_str(lines[0]).expect("parse transcript entry");
         assert_eq!(entry.get("type").and_then(Value::as_str), Some("user"));
+    }
+
+    #[tokio::test]
+    async fn goal_snapshot_load_and_full_rewrite_preserve_unknown_fields() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = TranscriptFileStore::new(
+            temp.path().to_path_buf(),
+            PathBuf::from("/tmp/project"),
+            "claude-sonnet-4".to_string(),
+        );
+        let path = temp.path().join("session-1.jsonl");
+        let user = json!({
+            "type": "user",
+            "uuid": "user-1",
+            "sessionId": "session-1",
+            "timestamp": "2026-08-05T10:00:00.000Z",
+            "message": { "role": "user", "content": "start" }
+        });
+        let goal = json!({
+            "type": crate::transcript::GOAL_ENTRY_TYPE,
+            "goalId": "goal-1",
+            "revision": 4,
+            "sessionId": "session-1",
+            "objective": "Finish persistent goals",
+            "status": "active",
+            "tokenBudget": 10000,
+            "tokensUsed": 125,
+            "elapsedSeconds": 9,
+            "createdAt": "2026-08-05T10:00:01.000Z",
+            "updatedAt": "2026-08-05T10:00:02.000Z",
+            "stopReason": null,
+            "lastGoalTurnId": "turn-3",
+            "timestamp": "2026-08-05T10:00:02.000Z",
+            "futureAccounting": { "provider": "future", "units": [1, 2, 3] }
+        });
+        tokio::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&user).unwrap(),
+                serde_json::to_string(&goal).unwrap()
+            ),
+        )
+        .await
+        .expect("write fixture");
+
+        let session = store.load_session("session-1").await.expect("load goal");
+        let loaded_goal = session.goal.as_ref().expect("goal hydrated");
+        assert_eq!(loaded_goal.goal_id, "goal-1");
+        assert_eq!(loaded_goal.revision, 4);
+        assert_eq!(loaded_goal.token_budget, Some(10_000));
+        assert_eq!(session.goal_transcript_records.len(), 1);
+
+        store
+            .persist_full_session(&session)
+            .await
+            .expect("full rewrite");
+        let rewritten = tokio::fs::read_to_string(&path)
+            .await
+            .expect("read rewrite");
+        let goal_after_rewrite = rewritten
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid jsonl"))
+            .find(|value| value["type"] == crate::transcript::GOAL_ENTRY_TYPE)
+            .expect("goal record retained");
+        assert_eq!(
+            goal_after_rewrite["futureAccounting"], goal["futureAccounting"],
+            "unknown goal fields must survive a full rewrite"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_goal_snapshot_is_preserved_without_overwriting_last_valid_goal() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = TranscriptFileStore::new(
+            temp.path().to_path_buf(),
+            PathBuf::from("/tmp/project"),
+            "claude-sonnet-4".to_string(),
+        );
+        let path = temp.path().join("session-1.jsonl");
+        let valid = json!({
+            "type": crate::transcript::GOAL_ENTRY_TYPE,
+            "goalId": "goal-valid",
+            "revision": 3,
+            "sessionId": "session-1",
+            "objective": "Keep the valid state",
+            "status": "paused",
+            "tokensUsed": 8,
+            "elapsedSeconds": 2,
+            "createdAt": "2026-08-05T10:00:00.000Z",
+            "updatedAt": "2026-08-05T10:00:01.000Z",
+            "timestamp": "2026-08-05T10:00:01.000Z"
+        });
+        let malformed = json!({
+            "type": crate::transcript::GOAL_ENTRY_TYPE,
+            "goalId": "goal-malformed",
+            "revision": "not-a-number",
+            "sessionId": "session-1",
+            "objective": 42,
+            "status": "future-status",
+            "timestamp": "2026-08-05T10:00:02.000Z",
+            "futureField": { "keep": true }
+        });
+        tokio::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&valid).unwrap(),
+                serde_json::to_string(&malformed).unwrap()
+            ),
+        )
+        .await
+        .expect("write transcript");
+
+        let session = store
+            .load_session("session-1")
+            .await
+            .expect("load transcript");
+        assert_eq!(
+            session.goal.as_ref().map(|goal| goal.goal_id.as_str()),
+            Some("goal-valid")
+        );
+        assert_eq!(session.goal_transcript_records.len(), 2);
+        assert!(matches!(
+            session.goal_transcript_records[1].state,
+            orbcode_protocol::SessionGoalTranscriptState::Unchanged
+        ));
+
+        store
+            .persist_full_session(&session)
+            .await
+            .expect("rewrite transcript");
+        let rewritten = tokio::fs::read_to_string(path).await.expect("read rewrite");
+        assert!(rewritten.contains("goal-malformed"));
+        assert!(rewritten.contains("futureField"));
+    }
+
+    #[tokio::test]
+    async fn goal_append_helpers_write_complete_checkpoint_family() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = TranscriptFileStore::new(
+            temp.path().to_path_buf(),
+            PathBuf::from("/tmp/project"),
+            "claude-sonnet-4".to_string(),
+        );
+        let created_at = chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let goal = SessionGoal {
+            goal_id: "goal-1".to_string(),
+            revision: 1,
+            session_id: "session-1".to_string(),
+            objective: "Checkpoint every terminal path".to_string(),
+            status: SessionGoalStatus::Active,
+            token_budget: Some(1000),
+            tokens_used: 0,
+            elapsed_seconds: 0,
+            created_at,
+            updated_at: created_at,
+            stop_reason: None,
+            last_goal_turn_id: None,
+        };
+        store
+            .append_goal_snapshot(&goal)
+            .await
+            .expect("append snapshot");
+        store
+            .append_goal_turn_start("session-1", "goal-1", 1, "turn-1")
+            .await
+            .expect("append start");
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        store
+            .append_goal_turn_terminal(
+                "session-1",
+                "goal-1",
+                1,
+                "turn-1",
+                SessionGoalTurnTerminalKind::Finished,
+                &usage,
+                2,
+            )
+            .await
+            .expect("append terminal");
+
+        let session = store.load_session("session-1").await.expect("load");
+        assert_eq!(
+            session.goal.as_ref().map(|goal| goal.status),
+            Some(SessionGoalStatus::Active),
+            "a matching terminal checkpoint prevents crash recovery pause"
+        );
+        assert_eq!(session.goal_transcript_records.len(), 3);
+
+        store
+            .append_goal_cleared("session-1", "goal-1", 2)
+            .await
+            .expect("append tombstone");
+        let cleared = store.load_session("session-1").await.expect("reload");
+        assert!(cleared.goal.is_none());
+        assert_eq!(cleared.goal_transcript_records.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn later_goal_tombstone_wins_over_snapshot() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = TranscriptFileStore::new(
+            temp.path().to_path_buf(),
+            PathBuf::from("/tmp/project"),
+            "claude-sonnet-4".to_string(),
+        );
+        let path = temp.path().join("session-1.jsonl");
+        let goal = json!({
+            "type": crate::transcript::GOAL_ENTRY_TYPE,
+            "goalId": "goal-1",
+            "revision": 1,
+            "sessionId": "session-1",
+            "objective": "Temporary goal",
+            "status": "active",
+            "tokensUsed": 0,
+            "elapsedSeconds": 0,
+            "createdAt": "2026-08-05T10:00:00.000Z",
+            "updatedAt": "2026-08-05T10:00:00.000Z",
+            "timestamp": "2026-08-05T10:00:00.000Z"
+        });
+        let cleared = json!({
+            "type": crate::transcript::GOAL_CLEARED_ENTRY_TYPE,
+            "sessionId": "session-1",
+            "goalId": "goal-1",
+            "revision": 2,
+            "timestamp": "2026-08-05T10:00:01.000Z"
+        });
+        tokio::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&goal).unwrap(),
+                serde_json::to_string(&cleared).unwrap()
+            ),
+        )
+        .await
+        .expect("write fixture");
+
+        let session = store.load_session("session-1").await.expect("load goal");
+        assert!(session.goal.is_none());
+        assert_eq!(session.goal_transcript_records.len(), 2);
+
+        store.persist_full_session(&session).await.expect("rewrite");
+        let rewritten = tokio::fs::read_to_string(path).await.expect("read rewrite");
+        assert!(rewritten.contains(crate::transcript::GOAL_CLEARED_ENTRY_TYPE));
     }
 }

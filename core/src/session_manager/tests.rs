@@ -14,6 +14,7 @@ mod compaction;
 mod compaction_regression;
 mod context_refresh;
 mod dynamic_workflow_tool;
+mod goal;
 mod hooks;
 mod output_styles;
 mod overview_history;

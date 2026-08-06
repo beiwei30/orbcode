@@ -59,7 +59,12 @@ pub fn classify_record_for_acp_replay(record: &TranscriptRecord) -> AcpReplayPol
         TranscriptRecordKind::Progress => {
             AcpReplayPolicy::replay("persisted progress can replay as tool_call_update raw output")
         }
-        TranscriptRecordKind::CustomTitle | TranscriptRecordKind::SessionContext => {
+        TranscriptRecordKind::CustomTitle
+        | TranscriptRecordKind::SessionContext
+        | TranscriptRecordKind::Goal
+        | TranscriptRecordKind::GoalCleared
+        | TranscriptRecordKind::GoalTurnStart
+        | TranscriptRecordKind::GoalTurnTerminal => {
             AcpReplayPolicy::omit("metadata is represented on session identity, not history replay")
         }
         TranscriptRecordKind::Unknown => match record.record_type.as_deref() {

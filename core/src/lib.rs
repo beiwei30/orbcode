@@ -50,8 +50,9 @@ pub use permissions::{
     suggested_bash_permission_rules,
 };
 pub use session_manager::{
-    ChildSessionOrphanCleanupResult, CompactDecision, SessionManager, WorkflowCommand,
-    WorkflowSource,
+    ChildSessionOrphanCleanupResult, CompactDecision, GoalContinuationOutcome, GoalError,
+    GoalNotStartedReason, GoalSetRequest, GoalUpdateAuthority, SessionManager, StartedGoalTurn,
+    WorkflowCommand, WorkflowSource, persistent_goal_tool_definitions, persistent_goal_tool_specs,
 };
 use thiserror::Error;
 

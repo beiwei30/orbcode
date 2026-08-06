@@ -98,6 +98,14 @@ impl ActiveTurnRegistry {
         self.active_turns.lock().await.contains_key(session_id)
     }
 
+    pub(crate) async fn active_turn_id(&self, session_id: &str) -> Option<Uuid> {
+        self.active_turns
+            .lock()
+            .await
+            .get(session_id)
+            .map(|active_turn| active_turn.turn_id)
+    }
+
     pub(crate) async fn interaction_context(
         &self,
         session_id: &str,

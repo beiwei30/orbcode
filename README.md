@@ -141,7 +141,8 @@ the throwaway-home and tracing patterns.
 
 | Feature | Maturity | Notes |
 | --- | --- | --- |
-| Interactive TUI | Beta | ratatui chat UI, 46 slash commands, model/permission/sandbox/session/rewind/memory pickers, diff view, transcript pager, themes, vim keybindings. |
+| Interactive TUI | Beta | ratatui chat UI, 47 slash commands, model/permission/sandbox/session/rewind/memory pickers, diff view, transcript pager, themes, vim keybindings. |
+| Persistent goals | Experimental | One transcript-backed goal per session with `/goal` management, token accounting, restart recovery, and supervised multi-turn continuation in local/remote TUI and ACP. Ordinary headless prompts remain single-turn. See [persistent goals](docs/persistent-goals.md). |
 | Headless prompt (`-p/--print`, `prompt`) | Stable | `--output-format text\|json\|stream-json`. |
 | `stream-json` duplex (`--input-format stream-json`) | Beta | NDJSON in and out with correlated SDK controls; see the [control matrix](#stream-json-controls). |
 | Background jobs | Stable | `prompt --bg` plus `ps`, `logs`, `attach`, `kill`. |
@@ -164,7 +165,8 @@ the throwaway-home and tracing patterns.
 ### Built-in tools
 
 25 tools ship in `ToolRegistry::foundation()`; `orbcode tools` prints the live
-list with its permission requirements.
+list with its permission requirements. A client that explicitly supervises a
+persistent goal also exposes three core-owned goal tools for that turn.
 
 | Group | Maturity | Provider-facing names |
 | --- | --- | --- |
@@ -175,6 +177,7 @@ list with its permission requirements.
 | Skills and discovery | Beta | `Skill`, `ToolSearch` |
 | Code intelligence | Experimental | `LSP` — heuristic queries over the workspace, not a real language-server client. |
 | Workflows | Experimental | `Workflow` — starts a generated dynamic workflow as a durable background task. |
+| Persistent goals | Experimental | `get_goal`, `create_goal`, `update_goal` — capability-scoped state tools; only complete/blocked are model-authority updates. |
 | Interactive questions | Experimental | `AskUserQuestion` — capability-gated per active turn. The local/remote TUI and opted-in duplex stream-json support 1–4 single/multi-select questions, Other text, notes, previews, and typed special/cancellation outcomes. Ordinary print/background turns keep it hidden; ACP declares only its stable option-only mapping, so it never enables the canonical provider schema. See [interactive questions](docs/interactive-questions.md). |
 | Deferred | Deferred | `PowerShell`, `Cron*`, `Monitor`, `Sleep`, `Browser`, `RemoteTrigger`, `Teams`, `Vault`, `ReviewArtifact`, `SyntheticOutput`, `Marketplace`, `PushNotification`, `ScheduleWakeup`, `EnterWorktree`, `ExitWorktree`. A registry invariant test keeps these out of both the catalog and provider requests until they are closed-loop. |
 
@@ -848,6 +851,7 @@ notes live in [CLAUDE.md](CLAUDE.md).
 | [CLAUDE.md](CLAUDE.md) | Architecture: crate layering, the request/turn flow, configuration and permission internals. |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability privately, and which boundaries are in scope. |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1. |
+| [docs/persistent-goals.md](docs/persistent-goals.md) | Experimental goal lifecycle, `/goal`, client support, restart and failure behavior. |
 
 Module-level doc comments carry the detail for individual subsystems — start at
 each crate's `lib.rs`, which re-exports and documents its public surface.

@@ -11,7 +11,7 @@
 //! backward-compatible. Mapping this raw schema onto the protocol-level
 //! `TranscriptMessage`/`TranscriptBlock` types lives in `transcript.rs`.
 
-use orbcode_protocol::TranscriptJsonField;
+use orbcode_protocol::{SessionGoal, SessionGoalStatus, TranscriptJsonField};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -19,7 +19,10 @@ use serde_json::Value;
 /// absent, present-null, and present-value separately.
 type PresentJsonValue = Option<Option<Value>>;
 
-use crate::transcript::{CUSTOM_TITLE_ENTRY_TYPE, SESSION_CONTEXT_ENTRY_TYPE};
+use crate::transcript::{
+    CUSTOM_TITLE_ENTRY_TYPE, GOAL_CLEARED_ENTRY_TYPE, GOAL_ENTRY_TYPE, GOAL_TURN_START_ENTRY_TYPE,
+    GOAL_TURN_TERMINAL_ENTRY_TYPE, SESSION_CONTEXT_ENTRY_TYPE,
+};
 
 /// The high-value record variants the loader maps explicitly. Anything else —
 /// including records with no `type` — classifies as [`TranscriptRecordKind::Unknown`]
@@ -32,6 +35,10 @@ pub enum TranscriptRecordKind {
     Progress,
     CustomTitle,
     SessionContext,
+    Goal,
+    GoalCleared,
+    GoalTurnStart,
+    GoalTurnTerminal,
     Unknown,
 }
 
@@ -115,6 +122,35 @@ pub struct TranscriptRecord {
         deserialize_with = "deserialize_present_value"
     )]
     pub session_effort: PresentJsonValue,
+
+    /// `goal` snapshot fields. Transcript keys are camelCase even though the
+    /// canonical app-server DTO uses snake_case.
+    #[serde(rename = "goalId", default)]
+    pub goal_id: Option<String>,
+    #[serde(default)]
+    pub revision: Option<u64>,
+    #[serde(default)]
+    pub objective: Option<String>,
+    #[serde(default)]
+    pub status: Option<SessionGoalStatus>,
+    #[serde(rename = "tokenBudget", default)]
+    pub token_budget: Option<u64>,
+    #[serde(rename = "tokensUsed", default)]
+    pub tokens_used: Option<u64>,
+    #[serde(rename = "elapsedSeconds", default)]
+    pub elapsed_seconds: Option<u64>,
+    #[serde(rename = "createdAt", default)]
+    pub created_at: Option<String>,
+    #[serde(rename = "updatedAt", default)]
+    pub updated_at: Option<String>,
+    #[serde(rename = "stopReason", default)]
+    pub stop_reason: Option<String>,
+    #[serde(rename = "lastGoalTurnId", default)]
+    pub last_goal_turn_id: Option<String>,
+    #[serde(rename = "goalRevision", default)]
+    pub goal_revision: Option<u64>,
+    #[serde(rename = "turnId", default)]
+    pub turn_id: Option<String>,
 }
 
 impl TranscriptRecord {
@@ -136,8 +172,35 @@ impl TranscriptRecord {
             Some(other) if other == SESSION_CONTEXT_ENTRY_TYPE => {
                 TranscriptRecordKind::SessionContext
             }
+            Some(other) if other == GOAL_ENTRY_TYPE => TranscriptRecordKind::Goal,
+            Some(other) if other == GOAL_CLEARED_ENTRY_TYPE => TranscriptRecordKind::GoalCleared,
+            Some(other) if other == GOAL_TURN_START_ENTRY_TYPE => {
+                TranscriptRecordKind::GoalTurnStart
+            }
+            Some(other) if other == GOAL_TURN_TERMINAL_ENTRY_TYPE => {
+                TranscriptRecordKind::GoalTurnTerminal
+            }
             _ => TranscriptRecordKind::Unknown,
         }
+    }
+
+    /// Decode a complete goal snapshot. Malformed historical snapshots remain
+    /// preserved as raw transcript records but do not replace valid state.
+    pub fn session_goal(&self) -> Option<SessionGoal> {
+        Some(SessionGoal {
+            goal_id: self.goal_id.clone()?,
+            revision: self.revision?,
+            session_id: self.session_id.clone()?,
+            objective: self.objective.clone()?,
+            status: self.status?,
+            token_budget: self.token_budget,
+            tokens_used: self.tokens_used.unwrap_or_default(),
+            elapsed_seconds: self.elapsed_seconds.unwrap_or_default(),
+            created_at: crate::transcript::parse_timestamp(self.created_at.as_deref()?)?,
+            updated_at: crate::transcript::parse_timestamp(self.updated_at.as_deref()?)?,
+            stop_reason: self.stop_reason.clone(),
+            last_goal_turn_id: self.last_goal_turn_id.clone(),
+        })
     }
 
     /// Tool-result metadata source with the original precedence: top-level

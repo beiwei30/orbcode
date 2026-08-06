@@ -574,6 +574,109 @@ async fn rewind_preserves_loaded_prompt_and_per_line_provenance() {
 }
 
 #[tokio::test]
+async fn rewind_and_fork_preserve_point_in_time_goal_state() {
+    let manager = test_manager().await;
+    let session_id = "goal-point-in-time-core";
+    let path = write_transcript_lines(
+        &manager,
+        session_id,
+        &[
+            json!({
+                "type": "user",
+                "uuid": "goal-user-1",
+                "parentUuid": null,
+                "sessionId": session_id,
+                "timestamp": "2026-08-05T12:00:00.000Z",
+                "message": {"role": "user", "content": "first"}
+            }),
+            json!({
+                "type": "goal",
+                "goalId": "goal-original",
+                "revision": 1,
+                "sessionId": session_id,
+                "objective": "Preserve the selected state",
+                "status": "active",
+                "tokenBudget": 1000,
+                "tokensUsed": 10,
+                "elapsedSeconds": 1,
+                "createdAt": "2026-08-05T12:00:01.000Z",
+                "updatedAt": "2026-08-05T12:00:01.000Z",
+                "timestamp": "2026-08-05T12:00:01.000Z"
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "goal-assistant-1",
+                "parentUuid": "goal-user-1",
+                "sessionId": session_id,
+                "timestamp": "2026-08-05T12:00:02.000Z",
+                "message": {"role": "assistant", "content": "first response"}
+            }),
+            json!({
+                "type": "goal",
+                "goalId": "goal-original",
+                "revision": 2,
+                "sessionId": session_id,
+                "objective": "Preserve the selected state",
+                "status": "blocked",
+                "tokenBudget": 1000,
+                "tokensUsed": 25,
+                "elapsedSeconds": 3,
+                "createdAt": "2026-08-05T12:00:01.000Z",
+                "updatedAt": "2026-08-05T12:00:03.000Z",
+                "stopReason": "waiting for input",
+                "timestamp": "2026-08-05T12:00:03.000Z"
+            }),
+            json!({
+                "type": "user",
+                "uuid": "goal-user-2",
+                "parentUuid": "goal-assistant-1",
+                "sessionId": session_id,
+                "timestamp": "2026-08-05T12:00:04.000Z",
+                "message": {"role": "user", "content": "discard"}
+            }),
+            json!({
+                "type": "goal-cleared",
+                "goalId": "goal-original",
+                "revision": 3,
+                "sessionId": session_id,
+                "timestamp": "2026-08-05T12:00:05.000Z"
+            }),
+        ],
+    )
+    .await;
+
+    let rewound = manager
+        .rewind_session(session_id, 2)
+        .await
+        .expect("rewind to blocked snapshot");
+    let rewound_goal = rewound.goal.as_ref().expect("goal restored at boundary");
+    assert_eq!(rewound_goal.revision, 2);
+    assert_eq!(
+        rewound_goal.status,
+        orbcode_protocol::SessionGoalStatus::Blocked
+    );
+    let rewritten = tokio::fs::read_to_string(&path).await.expect("read rewind");
+    assert!(!rewritten.contains("goal-cleared"));
+
+    let fork = manager
+        .fork_session(session_id, Some("goal fork".to_string()), None)
+        .await
+        .expect("fork goal session");
+    let fork_goal = fork.goal.as_ref().expect("forked goal");
+    assert_ne!(fork_goal.goal_id, rewound_goal.goal_id);
+    assert_eq!(fork_goal.session_id, fork.session_id);
+    assert_eq!(fork_goal.revision, 1);
+    assert_eq!(fork_goal.status, rewound_goal.status);
+    assert_eq!(fork_goal.tokens_used, 25);
+
+    let reloaded_fork = manager
+        .load_session(&fork.session_id)
+        .await
+        .expect("reload fork");
+    assert_eq!(reloaded_fork.goal, fork.goal);
+}
+
+#[tokio::test]
 async fn repair_keeps_loaded_provenance_and_decorates_only_synthetic_result() {
     let manager = test_manager().await;
     let session_id = "byte-fidelity-repair";
@@ -897,6 +1000,21 @@ async fn full_compaction_replaces_history_with_new_hint_decorated_record() {
                     "content": [{"type": "text", "text": "answer to summarize"}]
                 }
             }),
+            json!({
+                "type": "goal",
+                "goalId": "full-compact-goal",
+                "revision": 3,
+                "sessionId": session_id,
+                "objective": "Survive full compaction",
+                "status": "active",
+                "tokenBudget": 10000,
+                "tokensUsed": 321,
+                "elapsedSeconds": 12,
+                "createdAt": "2026-08-04T05:00:00.000Z",
+                "updatedAt": "2026-08-04T05:00:02.000Z",
+                "lastGoalTurnId": "full-compact-turn-2",
+                "timestamp": "2026-08-04T05:00:02.000Z"
+            }),
         ],
     )
     .await;
@@ -916,18 +1034,33 @@ async fn full_compaction_replaces_history_with_new_hint_decorated_record() {
         .await
         .expect("full compact");
     assert_eq!(result.session.messages.len(), 1);
+    assert_eq!(
+        result
+            .session
+            .goal
+            .as_ref()
+            .map(|goal| goal.goal_id.as_str()),
+        Some("full-compact-goal")
+    );
     assert!(result.session.messages[0].transcript_provenance.is_none());
     let rewritten = parsed_transcript_lines(
         &tokio::fs::read_to_string(path)
             .await
             .expect("read full compaction"),
     );
-    assert_eq!(rewritten.len(), 1);
+    assert_eq!(rewritten.len(), 2);
     assert_ne!(rewritten[0]["uuid"], "full-compact-user");
     assert_ne!(rewritten[0]["uuid"], "full-compact-assistant");
     assert!(rewritten[0].get("promptId").is_none());
     assert_eq!(rewritten[0]["gitBranch"], "full-compact-current");
     assert_eq!(rewritten[0]["provider"], "openai");
+    assert_eq!(rewritten[1]["type"], "goal");
+    assert_eq!(rewritten[1]["goalId"], "full-compact-goal");
+    let reloaded = manager
+        .load_session(session_id)
+        .await
+        .expect("reload compacted goal");
+    assert_eq!(reloaded.goal, result.session.goal);
 }
 
 #[tokio::test]

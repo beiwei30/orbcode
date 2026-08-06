@@ -8,7 +8,7 @@ use orbcode_app_server_protocol::{
     AskUserQuestionRequest, AskUserQuestionResponse, BootstrapParams, ClientMessage, ErrorCode,
     InitializeParams, InitializeResult, McpListServersResult, McpServerInput, McpTrustDecisionWire,
     McpTrustResponseParams, PermissionDecisionWire, PermissionResponseParams, ServerMessage,
-    method,
+    SessionGoalContinueResult, SessionGoalGetResult, SessionGoalSetParams, method,
 };
 use serde_json::Value;
 
@@ -167,6 +167,33 @@ fn contract_mcp_list_servers_result() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].id, "docs-server");
     assert_eq!(result[0].env["DOCS_TOKEN"], "<redacted>");
+}
+
+#[test]
+fn contract_session_goal_get_result() {
+    let result: SessionGoalGetResult = assert_roundtrip("session_goal_get_result.json");
+    let goal = result.goal.expect("fixture goal");
+    assert_eq!(goal.goal_id, "goal-123");
+    assert_eq!(goal.revision, 7);
+}
+
+#[test]
+fn contract_session_goal_set_params() {
+    let params: SessionGoalSetParams = assert_roundtrip("session_goal_set_params.json");
+    assert_eq!(params.expected_revision, Some(7));
+    assert_eq!(params.token_budget, Some(None));
+}
+
+#[test]
+fn contract_session_goal_continue_outcomes() {
+    let started: SessionGoalContinueResult = assert_roundtrip("session_goal_continue_started.json");
+    assert!(matches!(started, SessionGoalContinueResult::Started { .. }));
+    let not_started: SessionGoalContinueResult =
+        assert_roundtrip("session_goal_continue_not_started.json");
+    assert!(matches!(
+        not_started,
+        SessionGoalContinueResult::NotStarted { .. }
+    ));
 }
 
 // ---------------------------------------------------------------------------

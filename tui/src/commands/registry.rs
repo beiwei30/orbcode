@@ -9,6 +9,7 @@ use crate::commands::branch::BRANCH;
 use crate::commands::builtin_prompts::builtin_prompt_body;
 use crate::commands::dispatch::SlashCommandOutcome;
 use crate::commands::effort::run_effort_slash_command;
+use crate::commands::goal::GOAL;
 use crate::commands::persisted_system::run_persisted_system_slash_command;
 use crate::commands::review::REVIEW;
 use crate::commands::tui_local::latest_assistant_text;
@@ -44,6 +45,7 @@ fn build_command_registry() -> CommandRegistry {
     r.register(&["exit", "quit"], &EXIT);
     r.register(&["init"], &INIT);
     r.register(&["copy"], &COPY);
+    r.register(&["goal"], &GOAL);
     r.register(&["review"], &REVIEW);
 
     // --- TuiLocal wrapper commands ---

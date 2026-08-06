@@ -69,6 +69,7 @@ impl InteractiveQuestionCapabilities {
 pub struct TurnInteractionContext {
     pub owner_id: String,
     pub capabilities: InteractiveQuestionCapabilities,
+    pub persistent_goals: bool,
 }
 
 impl TurnInteractionContext {
@@ -80,7 +81,13 @@ impl TurnInteractionContext {
         Self {
             owner_id: owner_id.into(),
             capabilities: InteractiveQuestionCapabilities::full(),
+            persistent_goals: false,
         }
+    }
+
+    pub fn with_persistent_goals(mut self) -> Self {
+        self.persistent_goals = true;
+        self
     }
 }
 
@@ -247,6 +254,14 @@ impl InteractionRuntime {
 
     pub(crate) fn len(&self) -> usize {
         self.pending.lock().unwrap().len()
+    }
+
+    pub(crate) fn has_pending_session(&self, session_id: &str) -> bool {
+        self.pending
+            .lock()
+            .unwrap()
+            .values()
+            .any(|interaction| interaction.session_id == session_id)
     }
 }
 

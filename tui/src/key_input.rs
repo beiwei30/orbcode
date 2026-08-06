@@ -32,7 +32,7 @@ fn is_active_turn_immediate_slash_command(line: &str) -> bool {
     else {
         return false;
     };
-    matches!(command, "jobs" | "background")
+    matches!(command, "goal" | "jobs" | "background")
 }
 
 fn overlay_defers_ctrl_c_to_global_interrupt(overlay: &OverlayState) -> bool {
@@ -352,6 +352,12 @@ impl TuiState {
                                 self.queue_followup(prompt);
                                 self.set_status_line("Command queued for next turn.");
                             }
+                            Ok(SlashCommandOutcome::GoalTurnStarted(events)) => {
+                                drop(events);
+                                self.set_status_line(
+                                    "Goal turn could not attach while another turn is active.",
+                                );
+                            }
                             Ok(SlashCommandOutcome::Exit) => return Ok(false),
                             Err(error) => {
                                 self.set_status_line(format!("Command failed: {error}"));
@@ -428,6 +434,10 @@ impl TuiState {
                                         .submit_turn_stream(&self.session_id, prompt)
                                         .await?,
                                 );
+                            }
+                            Ok(SlashCommandOutcome::GoalTurnStarted(events)) => {
+                                self.remember_prompt_history(&line);
+                                *turn_events = Some(events);
                             }
                             Ok(SlashCommandOutcome::Exit) => {
                                 self.remember_prompt_history(&line);

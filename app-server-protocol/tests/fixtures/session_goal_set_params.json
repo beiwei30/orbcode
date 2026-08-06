@@ -1,0 +1,8 @@
+{
+  "session_id": "session-123",
+  "expected_revision": 7,
+  "replace": false,
+  "objective": "Finish and verify persistent goal support",
+  "status": "paused",
+  "token_budget": null
+}

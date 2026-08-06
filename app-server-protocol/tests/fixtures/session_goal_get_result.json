@@ -1,0 +1,15 @@
+{
+  "goal": {
+    "goal_id": "goal-123",
+    "revision": 7,
+    "session_id": "session-123",
+    "objective": "Finish persistent goal support",
+    "status": "active",
+    "token_budget": 50000,
+    "tokens_used": 1200,
+    "elapsed_seconds": 42,
+    "created_at": "2026-08-05T10:00:00Z",
+    "updated_at": "2026-08-05T10:05:00Z",
+    "last_goal_turn_id": "turn-6"
+  }
+}

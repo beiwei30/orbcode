@@ -224,6 +224,17 @@ pub(crate) const BUILTIN_SLASH_COMMANDS: &[SlashCommandSpec] = &[
         source_label: None,
     },
     SlashCommandSpec {
+        name: "goal",
+        aliases: &[],
+        description: "Show or manage this session's persistent goal",
+        argument_hint: Some("[create|edit|pause|resume|clear|budget]"),
+        source: SlashCommandSource::Local,
+        execution: SlashCommandExecution::TuiLocal(TuiLocalSlashCommand::Goal),
+        feedback: SlashCommandFeedback::DIRECT_DEFERRED,
+        hidden: false,
+        source_label: None,
+    },
+    SlashCommandSpec {
         name: "help",
         aliases: &["?"],
         description: "Show help and available commands",
