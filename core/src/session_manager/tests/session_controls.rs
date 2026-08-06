@@ -140,26 +140,36 @@ async fn active_turn_rejects_session_control_changes_without_mutation() {
 
 #[tokio::test]
 async fn explicit_session_mode_overrides_global_allow_all() {
-    let manager = test_manager().await;
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        provider_allow_network: Some(false),
+        ..AppConfigOverrides::default()
+    })
+    .await;
     let (session, _) = manager.start_or_resume(None).await.expect("session");
 
     manager.set_allow_all(true);
+    let global_permissions = manager.permission_context_for_session(&session.session_id);
     assert!(
-        manager
-            .permission_context_for_session(&session.session_id)
-            .allow_tools,
+        global_permissions.allow_tools,
         "an untouched session must honor the global SDK permission control"
+    );
+    assert!(
+        global_permissions.provider_allow_network,
+        "global allow-all must enable provider network access"
     );
 
     manager
         .set_session_permission_mode(&session.session_id, PermissionMode::Plan)
         .await
         .expect("set explicit session mode");
+    let session_permissions = manager.permission_context_for_session(&session.session_id);
     assert!(
-        !manager
-            .permission_context_for_session(&session.session_id)
-            .allow_tools,
+        !session_permissions.allow_tools,
         "an explicit session mode must remain isolated from global allow-all"
+    );
+    assert!(
+        !session_permissions.provider_allow_network,
+        "an explicit session mode must retain its configured provider network permission"
     );
 }
 

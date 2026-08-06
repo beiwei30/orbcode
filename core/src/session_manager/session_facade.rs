@@ -405,6 +405,7 @@ impl SessionManager {
             // process-global allow-all switch.
             permissions.allow_tools = config.allow_tools;
             permissions.allow_network = config.allow_network;
+            permissions.provider_allow_network = config.provider_allow_network;
         }
         permissions
     }
