@@ -353,10 +353,7 @@ impl TuiState {
                                 self.set_status_line("Command queued for next turn.");
                             }
                             Ok(SlashCommandOutcome::GoalTurnStarted(events)) => {
-                                drop(events);
-                                self.set_status_line(
-                                    "Goal turn could not attach while another turn is active.",
-                                );
+                                *turn_events = Some(events);
                             }
                             Ok(SlashCommandOutcome::Exit) => return Ok(false),
                             Err(error) => {

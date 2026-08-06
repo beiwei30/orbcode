@@ -244,3 +244,68 @@ async fn queued_followup_wins_before_automatic_goal_continuation() {
             .expect("cleanup check")
     );
 }
+
+#[tokio::test]
+async fn active_turn_goal_command_replaces_stale_event_stream() {
+    let (_server, client, mut state) = goal_tui("goal-stale-event-stream").await;
+    let session_id = state.session_id.clone();
+    let created = client
+        .set_goal(SessionGoalSetParams {
+            session_id: session_id.clone(),
+            expected_revision: None,
+            replace: false,
+            objective: Some("resume after the previous stream ends".to_string()),
+            status: Some(SessionGoalStatus::Active),
+            token_budget: Some(Some(10_000)),
+        })
+        .await
+        .expect("create active goal");
+    client
+        .set_goal(SessionGoalSetParams {
+            session_id: session_id.clone(),
+            expected_revision: Some(created.revision),
+            replace: false,
+            objective: None,
+            status: Some(SessionGoalStatus::Paused),
+            token_budget: None,
+        })
+        .await
+        .expect("pause goal");
+
+    state.input = "/goal resume".to_string();
+    state.input_cursor = state.input.len();
+    let (stale_tx, stale_rx) = mpsc::unbounded_channel();
+    let mut turn_events = Some(stale_rx);
+    let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
+
+    state
+        .handle_key(
+            &client,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut turn_events,
+            &local_command_tx,
+        )
+        .await
+        .expect("resume goal while stale stream is attached");
+
+    assert!(stale_tx.is_closed(), "stale receiver should be replaced");
+    drain_terminal(turn_events.take().expect("replacement goal stream")).await;
+
+    let current = client
+        .get_goal(&session_id)
+        .await
+        .expect("get resumed goal")
+        .expect("goal");
+    client
+        .set_goal(SessionGoalSetParams {
+            session_id: session_id.clone(),
+            expected_revision: Some(current.revision),
+            replace: false,
+            objective: None,
+            status: Some(SessionGoalStatus::Paused),
+            token_budget: None,
+        })
+        .await
+        .expect("pause resumed goal");
+    assert!(client.clear_goal(&session_id).await.expect("clear goal"));
+}
