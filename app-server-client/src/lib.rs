@@ -56,6 +56,19 @@ pub struct AppClient {
     server_request_rx: Mutex<Option<mpsc::Receiver<ServerRequestEnvelope>>>,
 }
 
+pub enum GoalContinuation {
+    Started {
+        subscription_id: String,
+        turn_id: String,
+        goal: SessionGoal,
+        events: mpsc::UnboundedReceiver<orbcode_protocol::StreamEvent>,
+    },
+    NotStarted {
+        reason: SessionGoalNotStartedReason,
+        goal: Option<SessionGoal>,
+    },
+}
+
 struct StreamRoute {
     tx: mpsc::UnboundedSender<orbcode_protocol::StreamEvent>,
     close_on_terminal_background_task: bool,
@@ -83,6 +96,7 @@ fn default_client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         streaming: true,
         experimental_methods: true,
+        persistent_goals: false,
         interactive_questions: None,
     }
 }
@@ -94,8 +108,31 @@ fn interactive_client_capabilities() -> ClientCapabilities {
     }
 }
 
+fn interactive_persistent_goal_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        persistent_goals: true,
+        interactive_questions: Some(InteractiveQuestionsCapability::full()),
+        ..default_client_capabilities()
+    }
+}
+
+fn persistent_goal_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        persistent_goals: true,
+        ..default_client_capabilities()
+    }
+}
+
 fn option_only_client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
+        interactive_questions: Some(InteractiveQuestionsCapability::option_only()),
+        ..default_client_capabilities()
+    }
+}
+
+fn option_only_persistent_goal_client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        persistent_goals: true,
         interactive_questions: Some(InteractiveQuestionsCapability::option_only()),
         ..default_client_capabilities()
     }
@@ -148,6 +185,48 @@ impl AppClient {
         Ok(client)
     }
 
+    /// Create an in-process interactive client that also explicitly owns
+    /// persistent-goal supervision. Intended for the TUI.
+    #[cfg(feature = "in-process")]
+    pub async fn new_interactive_persistent_goals(
+        app_server: AppServer,
+    ) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_persistent_goal_client_capabilities(),
+        )
+        .await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
+    /// Create an in-process client that explicitly opts into persistent goals
+    /// without advertising interactive-question rendering.
+    #[cfg(feature = "in-process")]
+    pub async fn new_persistent_goals(app_server: AppServer) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport_with_capabilities(
+            Box::new(transport),
+            persistent_goal_client_capabilities(),
+        )
+        .await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
     /// Create an in-process client with ACP's stable single-option selection
     /// subset. This is intentionally insufficient for provider tool exposure.
     #[cfg(feature = "in-process")]
@@ -156,6 +235,28 @@ impl AppClient {
         let client = Self::from_transport_with_capabilities(
             Box::new(transport),
             option_only_client_capabilities(),
+        )
+        .await?;
+        #[cfg(feature = "test-support")]
+        {
+            let mut client = client;
+            client.test_server = Some(app_server);
+            Ok(client)
+        }
+        #[cfg(not(feature = "test-support"))]
+        Ok(client)
+    }
+
+    /// Create an ACP-style option-only client that also explicitly supervises
+    /// persistent goal continuations.
+    #[cfg(feature = "in-process")]
+    pub async fn new_option_only_persistent_goals(
+        app_server: AppServer,
+    ) -> Result<Self, ClientError> {
+        let transport = InProcessTransport::new(app_server.clone());
+        let client = Self::from_transport_with_capabilities(
+            Box::new(transport),
+            option_only_persistent_goal_client_capabilities(),
         )
         .await?;
         #[cfg(feature = "test-support")]
@@ -222,6 +323,48 @@ impl AppClient {
         .await
     }
 
+    pub async fn connect_socket_interactive_persistent_goals(
+        path: &std::path::Path,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        #[cfg(not(unix))]
+        {
+            let _ = (path, auth_token);
+            return Err(ClientError::Transport(
+                "Unix socket transport is not supported on this platform".into(),
+            ));
+        }
+        #[cfg(unix)]
+        let transport = NdjsonTransport::connect(path, auth_token).await?;
+        #[cfg(unix)]
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_persistent_goal_client_capabilities(),
+        )
+        .await
+    }
+
+    pub async fn connect_socket_persistent_goals(
+        path: &std::path::Path,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        #[cfg(not(unix))]
+        {
+            let _ = (path, auth_token);
+            return Err(ClientError::Transport(
+                "Unix socket transport is not supported on this platform".into(),
+            ));
+        }
+        #[cfg(unix)]
+        let transport = NdjsonTransport::connect(path, auth_token).await?;
+        #[cfg(unix)]
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            persistent_goal_client_capabilities(),
+        )
+        .await
+    }
+
     /// Connect to a `orbcode serve --websocket <addr>` server.
     /// Authenticates with the token and sends `initialize` automatically.
     pub async fn connect_websocket(endpoint: &str, auth_token: &str) -> Result<Self, ClientError> {
@@ -239,6 +382,37 @@ impl AppClient {
             interactive_client_capabilities(),
         )
         .await
+    }
+
+    pub async fn connect_websocket_interactive_persistent_goals(
+        endpoint: &str,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        let transport = WebSocketTransport::connect(endpoint, auth_token).await?;
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            interactive_persistent_goal_client_capabilities(),
+        )
+        .await
+    }
+
+    pub async fn connect_websocket_persistent_goals(
+        endpoint: &str,
+        auth_token: &str,
+    ) -> Result<Self, ClientError> {
+        let transport = WebSocketTransport::connect(endpoint, auth_token).await?;
+        Self::from_transport_with_capabilities(
+            Box::new(transport),
+            persistent_goal_client_capabilities(),
+        )
+        .await
+    }
+
+    pub async fn from_transport_with_persistent_goals(
+        transport: Box<dyn ClientTransport>,
+    ) -> Result<Self, ClientError> {
+        Self::from_transport_with_capabilities(transport, persistent_goal_client_capabilities())
+            .await
     }
 
     /// Create a client from an already-constructed transport. The caller is
@@ -582,6 +756,84 @@ impl AppClient {
             })?),
         )
         .await
+    }
+
+    pub async fn get_goal(&self, session_id: &str) -> Result<Option<SessionGoal>, ClientError> {
+        let result: SessionGoalGetResult = self
+            .request_typed(
+                method::SESSION_GOAL_GET,
+                Some(serde_json::to_value(SessionIdParams {
+                    session_id: session_id.to_string(),
+                })?),
+            )
+            .await?;
+        Ok(result.goal)
+    }
+
+    pub async fn set_goal(&self, params: SessionGoalSetParams) -> Result<SessionGoal, ClientError> {
+        let result: SessionGoalSetResult = self
+            .request_typed(
+                method::SESSION_GOAL_SET,
+                Some(serde_json::to_value(params)?),
+            )
+            .await?;
+        Ok(result.goal)
+    }
+
+    pub async fn clear_goal(&self, session_id: &str) -> Result<bool, ClientError> {
+        let result: SessionGoalClearResult = self
+            .request_typed(
+                method::SESSION_GOAL_CLEAR,
+                Some(serde_json::to_value(SessionIdParams {
+                    session_id: session_id.to_string(),
+                })?),
+            )
+            .await?;
+        Ok(result.cleared)
+    }
+
+    pub async fn continue_goal(
+        &self,
+        session_id: &str,
+        goal_id: &str,
+        expected_revision: u64,
+    ) -> Result<GoalContinuation, ClientError> {
+        let result: SessionGoalContinueResult = self
+            .request_typed(
+                method::SESSION_GOAL_CONTINUE,
+                Some(serde_json::to_value(SessionGoalContinueParams {
+                    session_id: session_id.to_string(),
+                    goal_id: goal_id.to_string(),
+                    expected_revision,
+                })?),
+            )
+            .await?;
+        match result {
+            SessionGoalContinueResult::NotStarted { reason, goal } => {
+                Ok(GoalContinuation::NotStarted { reason, goal })
+            }
+            SessionGoalContinueResult::Started {
+                subscription_id,
+                turn_id,
+                goal,
+            } => {
+                let (tx, events) = mpsc::unbounded_channel();
+                register_stream_route(
+                    &self.stream_routes,
+                    &self.pending_stream_events,
+                    subscription_id.clone(),
+                    tx,
+                    false,
+                )
+                .await;
+                Ok(GoalContinuation::Started {
+                    subscription_id,
+                    turn_id,
+                    goal,
+                    events,
+                })
+            }
+        }
     }
 
     /// Record a system message in a session transcript.
@@ -2237,17 +2489,17 @@ mod tests {
     use orbcode_app_server_protocol::{
         EditorModeSetting, ErrorCode, ModelSelectionSource, NoData, PermissionMode,
         PermissionRuleEffect, PermissionRuleKind, PermissionRuleTargetScope, RuntimeModelOverride,
-        SettingSource, ThemeSetting, method,
+        SessionGoalNotStartedReason, SessionGoalSetParams, SettingSource, ThemeSetting, method,
     };
     use orbcode_config::{AppConfigOverrides, sanitize_path};
-    use orbcode_protocol::{BackgroundTaskViewStatus, StreamEvent};
+    use orbcode_protocol::{BackgroundTaskViewStatus, SessionGoalStatus, StreamEvent};
     use orbcode_tools::{
         BackgroundTaskRecord, BackgroundTaskStatus, background_log_path, register_progress_stream,
         task_record_to_view, unregister_progress_stream, write_background_task_record,
     };
     use serde_json::json;
 
-    use super::{AppClient, ClientError};
+    use super::{AppClient, ClientError, GoalContinuation};
 
     fn test_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -3214,6 +3466,195 @@ mod tests {
         (client, session_id)
     }
 
+    async fn goal_clients_with_mock(label: &str, scenario: &str) -> (AppClient, AppClient, String) {
+        let home = test_path(&format!("{label}-home"));
+        let cwd = test_path(&format!("{label}-cwd"));
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let app = orbcode_app_server::AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                env_overrides: mock_overrides(scenario),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+        let first = AppClient::new_persistent_goals(app.clone())
+            .await
+            .expect("first goal client");
+        let second = AppClient::new_persistent_goals(app)
+            .await
+            .expect("second goal client");
+        let state = first.bootstrap(None).await.expect("bootstrap");
+        (first, second, state.session.session_id)
+    }
+
+    #[tokio::test]
+    async fn goal_app_client_crud_tools_and_race_use_typed_protocol() {
+        let (first, second, session_id) =
+            goal_clients_with_mock("persistent-goal", "success").await;
+        let tools = first.list_tools().await.expect("list capable tools");
+        for name in ["get_goal", "create_goal", "update_goal"] {
+            assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
+        }
+
+        let goal = first
+            .set_goal(SessionGoalSetParams {
+                session_id: session_id.clone(),
+                expected_revision: None,
+                replace: false,
+                objective: Some("finish through AppClient".to_string()),
+                status: None,
+                token_budget: Some(Some(10_000)),
+            })
+            .await
+            .expect("create goal");
+        assert_eq!(
+            second
+                .get_goal(&session_id)
+                .await
+                .expect("reconnect get goal"),
+            Some(goal.clone())
+        );
+
+        let (left, right) = tokio::join!(
+            first.continue_goal(&session_id, &goal.goal_id, goal.revision),
+            second.continue_goal(&session_id, &goal.goal_id, goal.revision)
+        );
+        let mut started = None;
+        let mut stopped_reason = None;
+        for outcome in [
+            left.expect("first continue"),
+            right.expect("second continue"),
+        ] {
+            match outcome {
+                GoalContinuation::Started { events, .. } => started = Some(events),
+                GoalContinuation::NotStarted { reason, .. } => stopped_reason = Some(reason),
+            }
+        }
+        assert!(matches!(
+            stopped_reason,
+            Some(
+                SessionGoalNotStartedReason::StaleRevision
+                    | SessionGoalNotStartedReason::ActiveTurn
+            )
+        ));
+        let mut events = started.expect("one continuation started");
+        let terminal = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.recv().await {
+                if event.is_terminal() {
+                    return event;
+                }
+            }
+            panic!("goal stream closed before terminal")
+        })
+        .await
+        .expect("goal terminal");
+        assert!(matches!(terminal, StreamEvent::TurnFinished { .. }));
+
+        let checkpoint = first
+            .get_goal(&session_id)
+            .await
+            .expect("get checkpoint")
+            .expect("goal remains");
+        assert_eq!(checkpoint.status, SessionGoalStatus::Active);
+        assert!(checkpoint.tokens_used > 0);
+        assert!(first.clear_goal(&session_id).await.expect("clear goal"));
+        assert!(
+            !second
+                .clear_goal(&session_id)
+                .await
+                .expect("clear absent goal")
+        );
+    }
+
+    #[tokio::test]
+    async fn default_app_client_cannot_call_goal_methods_or_list_goal_tools() {
+        let (client, session_id) = client_with_mock("legacy-goal-client", "success").await;
+        let tools = client.list_tools().await.expect("list tools");
+        assert!(tools.iter().all(|tool| {
+            !matches!(
+                tool.name.as_str(),
+                "get_goal" | "create_goal" | "update_goal"
+            )
+        }));
+        let error = client
+            .get_goal(&session_id)
+            .await
+            .expect_err("goal method requires capability");
+        assert!(matches!(
+            error,
+            ClientError::Protocol(ref protocol) if protocol.code == ErrorCode::MethodNotFound
+        ));
+    }
+
+    #[tokio::test]
+    async fn goal_client_disconnect_pauses_owned_turn_for_reconnect() {
+        let (first, second, session_id) =
+            goal_clients_with_mock("persistent-goal-disconnect", "hang").await;
+        let goal = first
+            .set_goal(SessionGoalSetParams {
+                session_id: session_id.clone(),
+                expected_revision: None,
+                replace: false,
+                objective: Some("pause when transport disappears".to_string()),
+                status: Some(SessionGoalStatus::Active),
+                token_budget: None,
+            })
+            .await
+            .expect("create goal");
+        let continuation = first
+            .continue_goal(&session_id, &goal.goal_id, goal.revision)
+            .await
+            .expect("continue goal");
+        let GoalContinuation::Started { mut events, .. } = continuation else {
+            panic!("goal should start")
+        };
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while let Some(event) = events.recv().await {
+                if matches!(event, StreamEvent::UserMessage { .. }) {
+                    return;
+                }
+            }
+            panic!("goal stream closed before provider start")
+        })
+        .await
+        .expect("provider start");
+
+        drop(first);
+        drop(events);
+        let paused = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let current = second
+                    .get_goal(&session_id)
+                    .await
+                    .expect("reconnect get")
+                    .expect("goal remains");
+                if current.status == SessionGoalStatus::Paused {
+                    return current;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("disconnect pauses goal");
+        assert!(
+            paused
+                .stop_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("cancel"))
+        );
+        assert!(second.clear_goal(&session_id).await.expect("clear goal"));
+        assert!(
+            !second
+                .cancel_turn(&session_id)
+                .await
+                .expect("cleanup check")
+        );
+    }
+
     // =========================================================================
     // 12. submit_turn + stream event delivery (P0-1)
     // =========================================================================
@@ -3925,8 +4366,17 @@ mod tests {
         let default = super::default_client_capabilities();
         assert!(default.interactive_questions.is_none());
         let interactive = super::interactive_client_capabilities();
+        assert!(!interactive.persistent_goals);
         assert!(
             interactive
+                .interactive_questions
+                .as_ref()
+                .is_some_and(|capability| capability.fully_supported())
+        );
+        let goal_supervisor = super::interactive_persistent_goal_client_capabilities();
+        assert!(goal_supervisor.persistent_goals);
+        assert!(
+            goal_supervisor
                 .interactive_questions
                 .as_ref()
                 .is_some_and(|capability| capability.fully_supported())

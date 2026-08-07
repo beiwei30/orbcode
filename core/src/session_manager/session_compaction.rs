@@ -168,6 +168,8 @@ impl SessionManager {
             session_allowed_tools: source.session_allowed_tools.clone(),
             session_disallowed_tools: source.session_disallowed_tools.clone(),
             session_effort: source.session_effort,
+            goal: source.goal.clone(),
+            goal_transcript_records: Vec::new(),
             messages: Vec::new(),
         };
         let compacted_content = summary;
@@ -243,6 +245,8 @@ impl SessionManager {
             session_allowed_tools: source.session_allowed_tools.clone(),
             session_disallowed_tools: source.session_disallowed_tools.clone(),
             session_effort: source.session_effort,
+            goal: source.goal.clone(),
+            goal_transcript_records: source.goal_transcript_records.clone(),
             messages: prefix,
         };
         let (summary, provider_generated, fallback_reason, usage) = self
@@ -263,6 +267,8 @@ impl SessionManager {
             session_allowed_tools: source.session_allowed_tools.clone(),
             session_disallowed_tools: source.session_disallowed_tools.clone(),
             session_effort: source.session_effort,
+            goal: source.goal.clone(),
+            goal_transcript_records: Vec::new(),
             messages: Vec::new(),
         };
         compacted.push_message(

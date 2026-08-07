@@ -385,6 +385,15 @@ mod session_provider_request;
 
 mod session_transcript;
 
+mod session_goal;
+pub use session_goal::{
+    GoalContinuationOutcome, GoalError, GoalNotStartedReason, GoalSetRequest, GoalUpdateAuthority,
+    StartedGoalTurn,
+};
+
+pub(crate) mod session_goal_tools;
+pub use session_goal_tools::{persistent_goal_tool_definitions, persistent_goal_tool_specs};
+
 mod session_facade;
 
 impl SessionManager {
@@ -737,6 +746,8 @@ impl SessionManager {
                 session_allowed_tools: Vec::new(),
                 session_disallowed_tools: Vec::new(),
                 session_effort: None,
+                goal: None,
+                goal_transcript_records: Vec::new(),
                 messages: Vec::new(),
             });
 

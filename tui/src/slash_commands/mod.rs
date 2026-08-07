@@ -139,6 +139,7 @@ pub(crate) enum TuiLocalSlashCommand {
     Effort,
     Files,
     Fork,
+    Goal,
     Help,
     Keybindings,
     Login,

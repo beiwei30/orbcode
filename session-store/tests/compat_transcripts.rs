@@ -35,6 +35,93 @@ fn decode_transcript_fixture(name: &str) -> SessionRecord {
         .unwrap_or_else(|| panic!("transcript fixture '{name}' decoded to no session"))
 }
 
+#[test]
+fn compat_goal_lifecycle_snapshot_and_tombstone_are_ordered_metadata() {
+    let session = decode_transcript_fixture("goal_lifecycle");
+    assert!(session.goal.is_none(), "the later tombstone must win");
+    assert_eq!(session.messages.len(), 2);
+    assert_eq!(session.goal_transcript_records.len(), 5);
+    assert_eq!(
+        session
+            .goal_transcript_records
+            .iter()
+            .map(|record| record.after_message_count)
+            .collect::<Vec<_>>(),
+        vec![1, 1, 2, 2, 2]
+    );
+    assert_eq!(
+        session.goal_transcript_records[0].value["futureAccounting"]["version"],
+        2
+    );
+}
+
+#[test]
+fn compat_goal_point_in_time_fixture_pins_rewind_boundaries() {
+    let session = decode_transcript_fixture("goal_point_in_time");
+    assert!(
+        session.goal.is_none(),
+        "final tombstone wins at full length"
+    );
+    assert_eq!(session.messages.len(), 3);
+    assert_eq!(
+        session
+            .goal_transcript_records
+            .iter()
+            .map(|record| record.after_message_count)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+
+    let mut at_first_boundary = session.clone();
+    at_first_boundary.messages.truncate(1);
+    at_first_boundary.rewind_goal_state(1);
+    let first_goal = at_first_boundary.goal.expect("first snapshot visible");
+    assert_eq!(first_goal.revision, 1);
+    assert_eq!(first_goal.objective, "State at the first boundary");
+
+    let mut at_second_boundary = session;
+    at_second_boundary.messages.truncate(2);
+    at_second_boundary.rewind_goal_state(2);
+    let second_goal = at_second_boundary.goal.expect("second snapshot visible");
+    assert_eq!(second_goal.revision, 2);
+    assert_eq!(
+        second_goal.status,
+        orbcode_protocol::SessionGoalStatus::Blocked
+    );
+}
+
+#[test]
+fn compat_goal_interrupted_fixture_pins_unterminated_start() {
+    let mut session = decode_transcript_fixture("goal_interrupted");
+    let goal = session.goal.as_ref().expect("snapshot decodes");
+    assert_eq!(goal.goal_id, "goal-interrupt-1");
+    assert_eq!(goal.status, orbcode_protocol::SessionGoalStatus::Paused);
+    assert_eq!(goal.revision, 5);
+    assert_eq!(
+        goal.stop_reason.as_deref(),
+        Some("interrupted before terminal checkpoint")
+    );
+    assert_eq!(session.goal_transcript_records.len(), 2);
+    assert_eq!(
+        session.goal_transcript_records[1].value["type"],
+        "goal-turn-start"
+    );
+    session.rewind_goal_state(session.messages.len());
+    assert_eq!(
+        session.goal.as_ref().map(|goal| goal.status),
+        Some(orbcode_protocol::SessionGoalStatus::Paused),
+        "point-in-time folding must not reactivate a crash-recovered goal"
+    );
+}
+
+#[test]
+fn compat_old_transcript_hydrates_without_goal() {
+    let session = decode_transcript_fixture("simple_text_chat");
+    assert!(session.goal.is_none());
+    assert!(session.goal_transcript_records.is_empty());
+    assert_eq!(session.messages.len(), 4);
+}
+
 /// Ordered `(uuid, parentUuid)` pairs for every record the loader turns into a
 /// transcript message (user / assistant / system), read straight from the raw
 /// fixture so we can verify the parent chain independently of the decoder.

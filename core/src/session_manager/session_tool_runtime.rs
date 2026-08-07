@@ -17,6 +17,7 @@ use orbcode_tools::{
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::session_goal_tools::persistent_goal_tool_spec;
 use super::{LiveToolProgressReporter, SessionManager};
 use crate::{
     CoreError,
@@ -337,6 +338,16 @@ impl SessionManager {
         tool_name: &str,
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<ToolLookupOutcome, CoreError> {
+        if let Some(spec) = persistent_goal_tool_spec(tool_name) {
+            let capable = self
+                .active_turns
+                .interaction_context(session_id)
+                .await
+                .is_some_and(|(_, interaction)| interaction.persistent_goals);
+            if capable {
+                return Ok(ToolLookupOutcome::Found(spec));
+            }
+        }
         if let Some(spec) = self.tools.spec(tool_name).cloned() {
             return Ok(ToolLookupOutcome::Found(spec));
         }
@@ -911,6 +922,41 @@ impl ToolRuntimeHost for SessionManager {
         Ok(completion.outcome)
     }
 
+    async fn run_persistent_goal_tool(
+        &self,
+        session_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<ToolUseOutcome, CoreError> {
+        let completion = self
+            .invoke_persistent_goal_tool_and_buffer_result(
+                session_id,
+                tool_use_id,
+                tool_name,
+                tool_input,
+            )
+            .await;
+        self.append_tool_result(
+            session_id,
+            tool_use_id,
+            completion.result.content,
+            completion.result.is_error,
+            completion.result.metadata,
+            tx,
+        )
+        .await?;
+        self.emit_tool_use_completed(
+            session_id,
+            tool_use_id,
+            tool_name,
+            completion.result.completion_kind,
+            tx,
+        );
+        Ok(completion.outcome)
+    }
+
     async fn run_agent_tool_buffered(
         &self,
         session_id: &str,
@@ -942,6 +988,23 @@ impl ToolRuntimeHost for SessionManager {
     ) -> Result<BufferedToolUseCompletion, CoreError> {
         self.invoke_workflow_tool_and_buffer_result(session_id, tool_use_id, tool_input, Some(tx))
             .await
+    }
+
+    async fn run_persistent_goal_tool_buffered(
+        &self,
+        session_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+    ) -> Result<BufferedToolUseCompletion, CoreError> {
+        Ok(self
+            .invoke_persistent_goal_tool_and_buffer_result(
+                session_id,
+                tool_use_id,
+                tool_name,
+                tool_input,
+            )
+            .await)
     }
 
     async fn append_tool_result(

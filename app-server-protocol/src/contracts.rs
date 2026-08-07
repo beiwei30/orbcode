@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use orbcode_protocol::{
-    BackgroundTaskView, EffortLevel, ProviderId, SessionRecord, SessionSummary, WorkflowCommand,
+    BackgroundTaskView, EffortLevel, ProviderId, SessionGoal, SessionGoalStatus, SessionRecord,
+    SessionSummary, WorkflowCommand,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,91 @@ pub struct NoData;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SessionIdParams {
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoalGetResult {
+    pub goal: Option<SessionGoal>,
+}
+
+/// Create or mutate the current session goal.
+///
+/// Existing-goal mutations require `expected_revision`. `replace` is the
+/// explicit user-authority operation for replacing a terminal goal; model
+/// tools never set it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoalSetParams {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
+    pub expected_revision: Option<u64>,
+    #[serde(default)]
+    pub replace: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<SessionGoalStatus>,
+    /// Outer `None` keeps the current value; `Some(None)` clears the budget.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_option"
+    )]
+    #[schemars(range(min = 1))]
+    pub token_budget: Option<Option<u64>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoalSetResult {
+    pub goal: SessionGoal,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoalClearResult {
+    pub cleared: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoalContinueParams {
+    pub session_id: String,
+    pub goal_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionGoalNotStartedReason {
+    Missing,
+    StaleRevision,
+    Inactive,
+    UsageLimited,
+    BudgetLimited,
+    PendingUserInput,
+    ActiveTurn,
+    ClientNotCapable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SessionGoalContinueResult {
+    Started {
+        subscription_id: String,
+        turn_id: String,
+        goal: SessionGoal,
+    },
+    NotStarted {
+        reason: SessionGoalNotStartedReason,
+        goal: Option<SessionGoal>,
+    },
+}
+
+fn deserialize_present_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

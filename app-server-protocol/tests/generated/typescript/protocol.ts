@@ -69,6 +69,7 @@ export interface InitializeResult {
 export type ClientCapabilities = {
   streaming?: boolean;
   experimental_methods?: boolean;
+  persistent_goals?: boolean;
   interactive_questions?: InteractiveQuestionsCapability | null;
 };
 
@@ -247,6 +248,70 @@ export type NoData = null;
 export interface SessionIdParams {
   session_id: string;
 }
+
+/** Canonical persistent-goal state shared by transcripts and every client. */
+export type SessionGoal = {
+  goal_id: string;
+  revision: number;
+  session_id: string;
+  objective: string;
+  status: SessionGoalStatus;
+  token_budget?: number | null;
+  tokens_used?: number;
+  elapsed_seconds?: number;
+  created_at: string;
+  updated_at: string;
+  stop_reason?: string | null;
+  last_goal_turn_id?: string | null;
+};
+
+/** Lifecycle state for the single persistent goal owned by a session. */
+export type SessionGoalStatus = "active" | "paused" | "blocked" | "usage_limited" | "budget_limited" | "complete";
+
+export type SessionGoalGetResult = {
+  goal?: SessionGoal | null;
+};
+
+/** Create or mutate the current session goal.
+
+Existing-goal mutations require `expected_revision`. `replace` is the
+explicit user-authority operation for replacing a terminal goal; model
+tools never set it. */
+export type SessionGoalSetParams = {
+  session_id: string;
+  expected_revision?: number | null;
+  replace?: boolean;
+  objective?: string | null;
+  status?: SessionGoalStatus | null;
+  token_budget?: number | null;
+};
+
+export interface SessionGoalSetResult {
+  goal: SessionGoal;
+}
+
+export interface SessionGoalClearResult {
+  cleared: boolean;
+}
+
+export interface SessionGoalContinueParams {
+  session_id: string;
+  goal_id: string;
+  expected_revision: number;
+}
+
+export type SessionGoalNotStartedReason = "missing" | "stale_revision" | "inactive" | "usage_limited" | "budget_limited" | "pending_user_input" | "active_turn" | "client_not_capable";
+
+export type SessionGoalContinueResult = {
+  subscription_id: string;
+  turn_id: string;
+  goal: SessionGoal;
+  outcome: "started";
+} | {
+  reason: SessionGoalNotStartedReason;
+  goal?: SessionGoal | null;
+  outcome: "not_started";
+};
 
 export interface SetSessionPermissionModeParams {
   session_id: string;
@@ -1463,6 +1528,10 @@ export const EXPERIMENTAL_METHODS = [
   "session/set_permission_mode",
   "session/set_model",
   "session/set_effort",
+  "session/goal/get",
+  "session/goal/set",
+  "session/goal/clear",
+  "session/goal/continue",
   "background/create",
   "background/list",
   "background/detail",

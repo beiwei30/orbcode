@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -7,6 +8,79 @@ use crate::provider::{EffortLevel, ProviderId};
 use crate::usage::TokenUsage;
 
 pub type SessionId = String;
+
+/// Lifecycle state for the single persistent goal owned by a session.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionGoalStatus {
+    Active,
+    Paused,
+    Blocked,
+    UsageLimited,
+    BudgetLimited,
+    Complete,
+}
+
+/// Persisted classification of a supervised goal turn's terminal event.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionGoalTurnTerminalKind {
+    Finished,
+    Cancelled,
+    Error,
+    UsageLimited,
+    BudgetLimited,
+    Interrupted,
+}
+
+/// Canonical persistent-goal state shared by transcripts and every client.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SessionGoal {
+    pub goal_id: String,
+    #[schemars(range(min = 1))]
+    pub revision: u64,
+    pub session_id: SessionId,
+    pub objective: String,
+    pub status: SessionGoalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
+    pub token_budget: Option<u64>,
+    #[serde(default)]
+    pub tokens_used: u64,
+    #[serde(default)]
+    pub elapsed_seconds: u64,
+    #[schemars(with = "String")]
+    pub created_at: DateTime<Utc>,
+    #[schemars(with = "String")]
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_goal_turn_id: Option<String>,
+}
+
+/// Raw goal metadata retained solely to preserve transcript ordering and
+/// forward-compatible fields during a full rewrite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionGoalTranscriptRecord {
+    pub after_message_count: usize,
+    pub value: Value,
+    pub state: SessionGoalTranscriptState,
+}
+
+/// Effect of one raw goal transcript record on point-in-time goal state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionGoalTranscriptState {
+    Unchanged,
+    Set(SessionGoal),
+    Recovered {
+        original: SessionGoal,
+        recovered: Box<SessionGoal>,
+        turn_id: String,
+    },
+    Cleared,
+}
 
 fn is_false(v: &bool) -> bool {
     !v
@@ -409,6 +483,12 @@ pub struct SessionRecord {
     pub session_disallowed_tools: Vec<String>,
     #[serde(default)]
     pub session_effort: Option<EffortLevel>,
+    #[serde(default)]
+    pub goal: Option<SessionGoal>,
+    /// Transcript-only provenance; never appears in the public session wire
+    /// shape. The session store owns its interpretation.
+    #[serde(skip)]
+    pub goal_transcript_records: Vec<SessionGoalTranscriptRecord>,
     pub messages: Vec<TranscriptMessage>,
 }
 
@@ -435,6 +515,8 @@ impl SessionRecord {
             session_allowed_tools: Vec::new(),
             session_disallowed_tools: Vec::new(),
             session_effort: None,
+            goal: None,
+            goal_transcript_records: Vec::new(),
             messages: Vec::new(),
         }
     }
@@ -445,6 +527,27 @@ impl SessionRecord {
         }
         self.updated_at = message.created_at;
         self.messages.push(message);
+    }
+
+    /// Truncate goal metadata to the state visible after `keep_messages`
+    /// decoded messages and recompute the current goal from retained records.
+    pub fn rewind_goal_state(&mut self, keep_messages: usize) {
+        if self.goal_transcript_records.is_empty() {
+            return;
+        }
+        self.goal_transcript_records
+            .retain(|record| record.after_message_count <= keep_messages);
+        self.goal = None;
+        for record in &self.goal_transcript_records {
+            match &record.state {
+                SessionGoalTranscriptState::Unchanged => {}
+                SessionGoalTranscriptState::Set(goal) => self.goal = Some(goal.clone()),
+                SessionGoalTranscriptState::Recovered { recovered, .. } => {
+                    self.goal = Some(recovered.as_ref().clone());
+                }
+                SessionGoalTranscriptState::Cleared => self.goal = None,
+            }
+        }
     }
 
     /// The user-visible title: the custom title if set, otherwise the auto title.
@@ -808,6 +911,29 @@ mod tests {
     use super::*;
     use crate::usage::TokenUsage;
     use serde_json::json;
+
+    #[test]
+    fn session_goal_uses_canonical_wire_names_and_defaults() {
+        let value = json!({
+            "goal_id": "goal-1",
+            "revision": 2,
+            "session_id": "session-1",
+            "objective": "Finish the task",
+            "status": "active",
+            "created_at": "2026-08-05T10:00:00Z",
+            "updated_at": "2026-08-05T10:00:01Z"
+        });
+        let goal: SessionGoal = serde_json::from_value(value).expect("decode goal");
+        assert_eq!(goal.tokens_used, 0);
+        assert_eq!(goal.elapsed_seconds, 0);
+        assert_eq!(goal.token_budget, None);
+        assert_eq!(goal.status, SessionGoalStatus::Active);
+
+        let serialized = serde_json::to_value(goal).expect("encode goal");
+        assert_eq!(serialized["goal_id"], "goal-1");
+        assert!(serialized.get("token_budget").is_none());
+        assert_eq!(serialized["tokens_used"], 0);
+    }
 
     #[test]
     fn tool_result_content_keeps_public_string_wire_shape() {

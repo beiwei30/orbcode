@@ -6,6 +6,7 @@ use orbcode_protocol::{ProviderId, TranscriptMessage, TurnContext, token_count_w
 use orbcode_tools::InteractionToolVisibility;
 
 use super::SessionManager;
+use super::persistent_goal_tool_definitions;
 use crate::{
     CoreError,
     config_provider::AppConfigProviderRequestExt,
@@ -56,7 +57,12 @@ impl SessionManager {
             .interaction_context(session_id)
             .await
             .is_some_and(|(_, interaction)| interaction.capabilities.fully_supported());
-        let tools = self
+        let persistent_goals = self
+            .active_turns
+            .interaction_context(session_id)
+            .await
+            .is_some_and(|(_, interaction)| interaction.persistent_goals);
+        let mut tools = self
             .tools
             .provider_definitions_with_mcp_for_session_and_interactions(
                 expose_tools,
@@ -69,6 +75,13 @@ impl SessionManager {
             .into_iter()
             .filter(|tool| permissions.tool_visible(&tool.name))
             .collect::<Vec<_>>();
+        if persistent_goals {
+            tools.extend(
+                persistent_goal_tool_definitions()
+                    .into_iter()
+                    .filter(|tool| permissions.tool_visible(&tool.name)),
+            );
+        }
         let mut system_prompt = build_system_prompt(&context);
         if let Some(section) = self.active_output_style().system_prompt_section() {
             system_prompt.push_str(&section);

@@ -30,6 +30,7 @@ unicode-width.workspace = true
 orbcode-app-server = { path = "../app-server" }
 orbcode-app-server-client = { path = "../app-server-client", features = ["test-support"] }
 orbcode-mcp = { path = "../mcp" }
+orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
 chrono.workspace = true
 tempfile.workspace = true
 vt100.workspace = true

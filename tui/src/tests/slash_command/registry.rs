@@ -1,6 +1,20 @@
 use crate::tests::support::*;
 
 #[test]
+fn goal_slash_suggestion_is_registered() {
+    assert_eq!(
+        slash_command_suggestions("/go")
+            .first()
+            .map(|command| command.name),
+        Some("goal")
+    );
+    assert_eq!(
+        exact_slash_command("/goal").map(|command| command.name),
+        Some("goal")
+    );
+}
+
+#[test]
 fn slash_command_suggestions_filter_and_prioritize_fuzzy_matches() {
     let suggestions = slash_command_suggestions("/al");
     assert_eq!(
@@ -33,6 +47,12 @@ fn slash_command_suggestions_filter_and_prioritize_fuzzy_matches() {
         slash_command_suggestions("/di")
             .iter()
             .any(|command| command.name == "diff")
+    );
+    assert_eq!(
+        slash_command_suggestions("/go")
+            .first()
+            .map(|command| command.name),
+        Some("goal")
     );
     assert!(
         slash_command_suggestions("/ctx")
@@ -695,13 +715,14 @@ fn add_dir_completion_scrollbar_tracks_directory_viewport() {
 }
 
 #[test]
-fn render_slash_command_help_includes_allow_all() {
+fn render_slash_command_help_includes_allow_all_and_goal() {
     let help = render_slash_command_help();
     assert!(help.contains("/allow-all on|off"));
     assert!(help.contains("/clear"));
     assert!(help.contains("/context"));
     assert!(help.contains("/doctor"));
     assert!(help.contains("/instructions"));
+    assert!(help.contains("/goal [create|edit|pause|resume|clear|budget]"));
     assert!(help.contains("/memory"));
     assert!(help.contains("/permissions"));
     assert!(help.contains("aliases: allowed-tools"));
