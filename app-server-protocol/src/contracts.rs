@@ -90,13 +90,13 @@ pub struct SessionForkParams {
     pub note: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(transparent)]
 pub struct SessionListResult(pub Vec<SessionSummary>);
 
 impl_list_result!(SessionListResult, SessionSummary);
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(transparent)]
 pub struct SessionForkResult(pub SessionRecord);
 

@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -5,7 +6,7 @@ use crate::session::{MessageRole, TranscriptBlock, TranscriptMessage};
 
 const ROUGH_PROVIDER_TOOL_RESULT_MAX_CHARS: usize = 100_000;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub struct ServerToolUseUsage {
     #[serde(default, deserialize_with = "deserialize_u32_or_zero")]
     pub web_search_requests: u32,
@@ -13,7 +14,7 @@ pub struct ServerToolUseUsage {
     pub web_fetch_requests: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub struct CacheCreationUsage {
     #[serde(default, deserialize_with = "deserialize_u32_or_zero")]
     pub ephemeral_1h_input_tokens: u32,
@@ -21,7 +22,7 @@ pub struct CacheCreationUsage {
     pub ephemeral_5m_input_tokens: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub struct UsageIteration {
     #[serde(default, deserialize_with = "deserialize_u32_or_zero")]
     pub input_tokens: u32,
@@ -29,7 +30,7 @@ pub struct UsageIteration {
     pub output_tokens: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub struct TokenUsage {
     #[serde(default, deserialize_with = "deserialize_u32_or_zero")]
     pub input_tokens: u32,

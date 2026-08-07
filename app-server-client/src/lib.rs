@@ -1,28 +1,38 @@
 //! Protocol-preserving async client facade for AppServer.
 //!
-//! `AppClient` provides a high-level, strongly-typed API that mirrors the
-//! public surface of [`orbcode_app_server::AppServer`]. Internally it delegates
-//! through an [`InProcessTransport`] which routes every call through the full
-//! protocol path via [`orbcode_app_server::message_processor::MessageProcessor`].
+//! `AppClient` provides a high-level, strongly-typed API over the canonical
+//! app-server protocol. It can delegate to the in-process adapter, Unix socket,
+//! WebSocket, or an owned child-stdio transport without changing its domain
+//! methods.
 //!
 //! All requests are serialised into protocol DTOs, processed by the
 //! MessageProcessor (including the initialize handshake), and the responses
 //! are deserialised back into typed Rust values. This ensures in-process
 //! callers exercise the same contract as socket and WebSocket transports.
 
+mod child_stdio_transport;
 mod error;
 #[cfg(feature = "in-process")]
 mod in_process;
 #[cfg(unix)]
 mod ndjson_transport;
+mod ssh_remote;
 mod transport;
 mod websocket_transport;
 
+pub use child_stdio_transport::{
+    ChildExitDiagnostics, ChildExitReason, ChildStdioHandle, ChildStdioTransport,
+    ChildStdioTransportConfig, ChildTermination,
+};
 pub use error::ClientError;
 #[cfg(feature = "in-process")]
 pub use in_process::InProcessTransport;
 #[cfg(unix)]
 pub use ndjson_transport::NdjsonTransport;
+pub use ssh_remote::{
+    SshOption, SshOptionParseError, SshRemoteConfig, SshRemoteConnection, SshRemoteError,
+    spawn_ssh_transport,
+};
 pub use transport::ClientTransport;
 pub use websocket_transport::WebSocketTransport;
 
@@ -99,6 +109,7 @@ fn interactive_client_capabilities() -> ClientCapabilities {
     }
 }
 
+#[cfg(feature = "in-process")]
 fn option_only_client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         interactive_questions: Some(InteractiveQuestionsCapability::option_only()),

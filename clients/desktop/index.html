@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbcode Desktop</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#composer">Skip to composer</a>
+    <div class="app-frame">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Orbcode Desktop</p>
+          <div class="connection-line">
+            <span id="origin-badge" class="origin-badge">Not connected</span>
+            <span id="status" role="status" aria-live="polite">Disconnected</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button id="reconnect" class="secondary" type="button" hidden>Reconnect</button>
+          <button id="disconnect" class="secondary" type="button" disabled>Disconnect</button>
+        </div>
+      </header>
+
+      <p id="development-warning" class="warning" role="alert" hidden>
+        Development binary override is active. This executable is not from the signed bundle.
+      </p>
+
+      <section id="connection-panel" class="connection-panel" aria-labelledby="connection-heading">
+        <div class="section-heading">
+          <p class="eyebrow">Connection</p>
+          <h1 id="connection-heading">Choose where Orbcode runs</h1>
+          <p>Local and SSH sessions use the same generated protocol client.</p>
+        </div>
+        <div class="connection-grid">
+          <form id="local-form" class="connection-card">
+            <h2>Local</h2>
+            <p>Run the bundled Orbcode helper on this Mac.</p>
+            <label for="local-cwd">Working directory</label>
+            <input id="local-cwd" autocomplete="off" spellcheck="false" placeholder="Optional absolute path" />
+            <button id="connect-local" type="submit">Connect locally</button>
+          </form>
+
+          <form id="ssh-form" class="connection-card">
+            <h2>SSH</h2>
+            <p>Use system SSH configuration, host verification, and agent credentials.</p>
+            <label for="ssh-profile">Saved profile</label>
+            <select id="ssh-profile">
+              <option value="">No saved profile</option>
+            </select>
+            <div class="profile-actions">
+              <button id="save-ssh-profile" class="secondary" type="button">Save profile</button>
+              <button id="delete-ssh-profile" class="secondary" type="button" disabled>Remove</button>
+            </div>
+            <label for="ssh-target">Target</label>
+            <input id="ssh-target" autocomplete="off" spellcheck="false" placeholder="user@host" required />
+            <label for="ssh-cwd">Remote working directory</label>
+            <input id="ssh-cwd" autocomplete="off" spellcheck="false" placeholder="Optional absolute path" />
+            <details>
+              <summary>Advanced remote settings</summary>
+              <label for="ssh-orbcode-path">Remote Orbcode path</label>
+              <input id="ssh-orbcode-path" autocomplete="off" spellcheck="false" placeholder="orbcode" />
+            </details>
+            <p class="profile-note">Profiles contain only target and paths. SSH keys, passwords, tokens, and provider credentials are never copied.</p>
+            <button id="connect-ssh" type="submit">Connect with SSH</button>
+          </form>
+        </div>
+      </section>
+
+      <div id="workspace" class="workspace" hidden>
+        <aside class="sidebar" aria-labelledby="sessions-heading">
+          <div class="sidebar-heading">
+            <h2 id="sessions-heading">Sessions</h2>
+            <button id="new-session" class="icon-button" type="button" aria-label="New session">+</button>
+          </div>
+          <nav id="session-list" class="session-list" aria-label="Sessions"></nav>
+          <div class="session-actions" aria-label="Active session actions">
+            <button id="rename-session" class="secondary" type="button">Rename</button>
+            <button id="fork-session" class="secondary" type="button">Fork</button>
+            <button id="delete-session" class="danger" type="button">Delete</button>
+          </div>
+        </aside>
+
+        <main class="conversation" aria-labelledby="conversation-heading">
+          <div class="conversation-header">
+            <div>
+              <p id="conversation-origin" class="eyebrow"></p>
+              <h1 id="conversation-heading">New session</h1>
+              <p id="conversation-cwd" class="muted"></p>
+            </div>
+            <details class="controls-panel">
+              <summary>Session controls</summary>
+              <div class="controls-grid">
+                <label for="model-control">Model</label>
+                <select id="model-control"></select>
+                <label for="effort-control">Effort</label>
+                <select id="effort-control"></select>
+                <label for="permission-control">Permission mode</label>
+                <select id="permission-control"></select>
+                <label for="output-style-control">Output style</label>
+                <select id="output-style-control"></select>
+                <label class="toggle-row" for="sandbox-control">
+                  <span>Sandbox</span>
+                  <input id="sandbox-control" type="checkbox" />
+                </label>
+                <p id="settings-lock-note" class="lock-note" aria-live="polite"></p>
+              </div>
+            </details>
+          </div>
+
+          <section id="transcript" class="transcript" role="log" aria-label="Session transcript"></section>
+          <div id="stream-status" class="sr-only" aria-live="polite"></div>
+
+          <form id="composer-form" class="composer">
+            <label class="sr-only" for="composer">Message Orbcode</label>
+            <textarea id="composer" rows="3" placeholder="Ask Orbcode to work in this repository…"></textarea>
+            <div class="composer-actions">
+              <span class="muted">⌘↵ send · Esc returns focus</span>
+              <button id="cancel-turn" class="secondary" type="button" hidden>Cancel</button>
+              <button id="submit-turn" type="submit">Send</button>
+            </div>
+          </form>
+        </main>
+      </div>
+
+      <footer class="diagnostics">
+        <p id="diagnostic" role="alert" aria-live="assertive"></p>
+      </footer>
+    </div>
+
+    <dialog id="request-dialog" aria-labelledby="request-title" aria-describedby="request-origin request-detail">
+      <form id="request-form" method="dialog">
+        <p class="eyebrow">Action required</p>
+        <h2 id="request-title"></h2>
+        <p id="request-origin" class="request-origin"></p>
+        <div id="request-detail" class="request-detail"></div>
+        <div id="request-fields"></div>
+        <div id="request-actions" class="dialog-actions"></div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

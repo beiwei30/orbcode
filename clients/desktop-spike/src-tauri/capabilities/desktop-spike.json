@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-spike",
+  "description": "Allow the packaged main window to run only the fixed child initialize probe.",
+  "windows": ["main"],
+  "permissions": ["allow-run-initialize-probe"]
+}

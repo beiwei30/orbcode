@@ -1,10 +1,13 @@
 use std::fmt;
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 
 use crate::provider::ProviderId;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
 #[non_exhaustive]
 pub enum BackgroundTaskViewKind {
     BackgroundJob,
@@ -24,7 +27,9 @@ impl fmt::Display for BackgroundTaskViewKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
 #[non_exhaustive]
 pub enum BackgroundTaskViewStatus {
     Queued,
@@ -68,8 +73,9 @@ impl fmt::Display for BackgroundTaskViewStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct BackgroundTaskProgressEvent {
+    #[schemars(with = "String")]
     pub timestamp: DateTime<Utc>,
     pub event: String,
     pub step_key: Option<String>,
@@ -80,7 +86,9 @@ pub struct BackgroundTaskProgressEvent {
     pub child_session_id: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
 #[non_exhaustive]
 pub enum WorkflowStepViewStatus {
     Pending,
@@ -103,7 +111,7 @@ impl fmt::Display for WorkflowStepViewStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct WorkflowStepView {
     pub step_key: String,
     pub parent_key: Option<String>,
@@ -111,7 +119,9 @@ pub struct WorkflowStepView {
     pub kind: String,
     pub label: String,
     pub status: WorkflowStepViewStatus,
+    #[schemars(with = "Option<String>")]
     pub started_at: Option<DateTime<Utc>>,
+    #[schemars(with = "Option<String>")]
     pub finished_at: Option<DateTime<Utc>>,
     pub output: Option<String>,
     pub error: Option<String>,
@@ -119,7 +129,7 @@ pub struct WorkflowStepView {
     pub child_session_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct BackgroundTaskView {
     pub task_id: String,
     pub session_id: String,
@@ -129,9 +139,13 @@ pub struct BackgroundTaskView {
     pub description: String,
     pub cwd: String,
 
+    #[schemars(with = "String")]
     pub created_at: DateTime<Utc>,
+    #[schemars(with = "String")]
     pub updated_at: DateTime<Utc>,
+    #[schemars(with = "Option<String>")]
     pub started_at: Option<DateTime<Utc>>,
+    #[schemars(with = "Option<String>")]
     pub finished_at: Option<DateTime<Utc>>,
 
     pub pid: Option<u32>,

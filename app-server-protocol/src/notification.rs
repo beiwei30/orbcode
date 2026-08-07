@@ -8,7 +8,7 @@ pub use orbcode_protocol::StreamEvent;
 /// notifications. Wraps a single [`StreamEvent`] from the protocol crate
 /// together with the `subscription_id` that identifies the turn subscription
 /// that produced it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StreamEventNotification {
     /// Opaque identifier for the turn subscription that produced this event.
     /// Clients use this to correlate events to the `submit_turn` call that

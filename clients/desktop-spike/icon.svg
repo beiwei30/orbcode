@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Orbcode desktop spike icon">
+  <defs>
+    <linearGradient id="background" x1="64" y1="64" x2="448" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#174f7d" />
+      <stop offset="1" stop-color="#102b42" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)" />
+  <circle cx="256" cy="256" r="142" fill="none" stroke="#dcebf8" stroke-width="44" />
+  <circle cx="370" cy="170" r="38" fill="#eea929" />
+</svg>

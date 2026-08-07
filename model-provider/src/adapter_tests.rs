@@ -1189,6 +1189,27 @@ async fn mock_provider_retry_then_success_fails_n_times_then_succeeds() {
 }
 
 #[tokio::test]
+async fn mock_provider_tool_then_success_is_finite_per_session() {
+    let request = provider_test_request(
+        "mock://anthropic?scenario=tool_then_success&key=bash&command=echo+desktop".to_string(),
+    );
+    let first = provider_for(ProviderId::Anthropic)
+        .generate(&request)
+        .await
+        .expect("first round emits a tool");
+    assert!(first.blocks.iter().any(|block| matches!(
+        block,
+        orbcode_protocol::TranscriptBlock::ToolUse { name, .. } if name == "bash"
+    )));
+
+    let second = provider_for(ProviderId::Anthropic)
+        .generate(&request)
+        .await
+        .expect("second round succeeds");
+    assert!(second.content.contains("mock provider response"));
+}
+
+#[tokio::test]
 async fn mock_provider_count_tokens_is_a_noop() {
     let request = provider_test_request("mock://anthropic?scenario=retryable".to_string());
     let count = provider_for(ProviderId::Anthropic)

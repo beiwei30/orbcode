@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -12,7 +13,7 @@ fn is_false(v: &bool) -> bool {
     !v
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MessageRole {
@@ -261,7 +262,7 @@ fn anthropic_tool_result_member(value: &Value) -> Value {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TranscriptBlock {
@@ -280,6 +281,7 @@ pub enum TranscriptBlock {
     },
     ToolResult {
         tool_use_id: String,
+        #[schemars(with = "String")]
         content: ToolResultContent,
         is_error: bool,
         #[serde(default)]
@@ -287,7 +289,7 @@ pub enum TranscriptBlock {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TranscriptMessage {
     pub id: String,
     pub role: MessageRole,
@@ -298,6 +300,7 @@ pub struct TranscriptMessage {
     pub stop_reason: Option<String>,
     #[serde(default)]
     pub usage: Option<TokenUsage>,
+    #[schemars(with = "String")]
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_synthetic: bool,
@@ -385,13 +388,15 @@ impl TranscriptMessage {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SessionRecord {
     pub session_id: SessionId,
     pub title: Option<String>,
     #[serde(default)]
     pub custom_title: Option<String>,
+    #[schemars(with = "String")]
     pub created_at: DateTime<Utc>,
+    #[schemars(with = "String")]
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -496,14 +501,16 @@ impl SessionRecord {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SessionSummary {
     pub session_id: SessionId,
     pub title: Option<String>,
     #[serde(default)]
     pub custom_title: Option<String>,
     pub message_count: usize,
+    #[schemars(with = "String")]
     pub created_at: DateTime<Utc>,
+    #[schemars(with = "String")]
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -587,7 +594,7 @@ pub fn unique_display_titles(summaries: &[SessionSummary]) -> Vec<Option<String>
         .collect()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SessionStatus {
@@ -598,7 +605,7 @@ pub enum SessionStatus {
     Corrupt { reason: String },
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TurnContext {
     pub cwd: String,
     #[serde(default)]
@@ -667,7 +674,7 @@ impl TurnContext {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MemorySourceKind {
@@ -694,7 +701,7 @@ impl MemorySourceKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MemorySourceStatus {
@@ -715,7 +722,7 @@ impl MemorySourceStatus {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct MemorySource {
     pub kind: MemorySourceKind,
     pub label: String,
@@ -732,7 +739,7 @@ pub struct MemorySource {
     pub content: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct AdditionalDirectoryInfo {
     pub path: String,
     #[serde(default)]
@@ -743,7 +750,7 @@ pub struct AdditionalDirectoryInfo {
     pub repo_root: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WorktreeState {

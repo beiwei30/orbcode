@@ -10,7 +10,7 @@ use crate::{
     PermissionMode, StatusAuthOverview, ThemeSetting, TokenWarningOptions,
 };
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BootstrapState {
     pub session: SessionRecord,
     pub bootstrap_event: StreamEvent,
@@ -42,7 +42,7 @@ pub struct AcpLoadReplayPreflight {
     pub blockers: Vec<String>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct AcpDeleteSessionParams {
     pub session_id: String,
     pub cwd: PathBuf,
@@ -75,20 +75,26 @@ pub struct SessionModelOption {
     pub current: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct McpSlashSuggestionCatalog {
     pub servers: Vec<McpServerSlashSuggestion>,
     pub tools: Vec<McpToolSlashSuggestion>,
     pub resources: Vec<McpResourceSlashSuggestion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct McpServerSlashSuggestion {
     pub id: String,
     pub summary: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct McpToolSlashSuggestion {
     pub server_id: String,
     pub name: String,
@@ -96,7 +102,9 @@ pub struct McpToolSlashSuggestion {
     pub description: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct McpResourceSlashSuggestion {
     pub server_id: String,
     pub uri: String,

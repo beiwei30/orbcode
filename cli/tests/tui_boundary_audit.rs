@@ -87,6 +87,13 @@ fn remote_cli_returns_before_local_core_construction() {
         remote_pos < local_core_pos,
         "remote TUI must connect before any local AppServer/core construction"
     );
+    let ssh_launcher_pos = main
+        .find("SshRemoteConnection::connect")
+        .expect("SSH remote launcher branch");
+    assert!(
+        ssh_launcher_pos < local_core_pos,
+        "SSH remote TUI must launch before any local AppServer/core construction"
+    );
 }
 
 #[test]

@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-host",
+  "description": "Allow the packaged main window to control one canonical child-protocol connection.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-connect-local",
+    "allow-connect-ssh",
+    "allow-protocol-send",
+    "allow-disconnect",
+    "allow-connection-status"
+  ]
+}

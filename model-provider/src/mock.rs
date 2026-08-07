@@ -25,6 +25,9 @@
 //!   `key=<tool_name>` to set the tool name (default `bash`) and
 //!   `command=<cmd>` to override the bash command input, or `input=<json>` to
 //!   override the full tool input.
+//! - `tool_then_success`: emits the configured tool once per session and a
+//!   successful text response on the next provider round. This gives UI and
+//!   transport E2E tests a finite approve path.
 //! - `many_deltas`: a stream that produces `attempts` (default 2000) text
 //!   deltas in rapid succession. Useful for saturating bounded channels in
 //!   slow-consumer / backpressure tests.
@@ -148,6 +151,24 @@ pub(crate) async fn stream_mock(
                 scenario.input.as_deref(),
             )
             .await
+        }
+        "tool_then_success" => {
+            let counter_key = format!("tool_then_success-{}", request.session_id);
+            if attempt_counter(&counter_key) == 1 {
+                let tool_name = scenario.key.unwrap_or_else(|| "bash".to_string());
+                stream_tool_use(
+                    provider,
+                    request,
+                    sink,
+                    cancellation,
+                    &tool_name,
+                    scenario.command.as_deref(),
+                    scenario.input.as_deref(),
+                )
+                .await
+            } else {
+                stream_success(provider, request, sink, cancellation).await
+            }
         }
         "many_deltas" => {
             stream_many_deltas(provider, request, sink, cancellation, scenario.attempts).await

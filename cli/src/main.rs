@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Result, bail};
 use clap::Parser;
 use orbcode_app_server::{AppServer, SessionStatus};
-use orbcode_app_server_client::AppClient;
+use orbcode_app_server_client::{AppClient, SshRemoteConfig, SshRemoteConnection};
 
 mod acp_sdk;
 mod args;
@@ -94,7 +94,33 @@ async fn main() -> Result<()> {
     let overrides = global_options.as_overrides()?;
     let command = cli.command.unwrap_or(Command::Tui);
 
-    if let Command::Remote { endpoint, token } = command {
+    if let Command::Remote {
+        endpoint,
+        token,
+        ssh,
+        remote_cwd,
+        remote_orbcode,
+        ssh_options,
+    } = command
+    {
+        if let Some(target) = ssh {
+            let mut config = SshRemoteConfig::new(target);
+            config.remote_cwd = remote_cwd;
+            if let Some(path) = remote_orbcode {
+                config.remote_orbcode_path = path;
+            }
+            config.options = ssh_options;
+            let connection = SshRemoteConnection::connect(config).await?;
+            let (remote_client, ssh_child) = connection.into_parts();
+            let tui_result = orbcode_tui::run_tui(Arc::new(remote_client), None).await;
+            let shutdown_result = ssh_child.shutdown().await;
+            tui_result?;
+            shutdown_result.map_err(|error| anyhow::anyhow!("SSH child shutdown: {error}"))?;
+            return Ok(());
+        }
+
+        let endpoint = endpoint.expect("clap requires endpoint unless --ssh is present");
+        let token = token.expect("clap requires --token for endpoint remote mode");
         let remote_client = Arc::new(connect_remote_client(&endpoint, &token, true).await?);
         orbcode_tui::run_tui(remote_client, None).await?;
         return Ok(());

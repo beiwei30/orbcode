@@ -89,6 +89,247 @@ export type BootstrapParams = {
   read_only?: boolean;
 };
 
+export type BootstrapState = {
+  session: SessionRecord;
+  bootstrap_event: StreamEvent;
+  prompt_history: string[];
+  available_tool_count: number;
+  configured_mcp_server_count: number;
+  enabled_mcp_capability_count: number;
+  home_dir: string;
+  cwd: string;
+  model_display_name: string;
+  context_window_options: ContextWindowOptions;
+  max_output_token_options: MaxOutputTokenOptions;
+  token_warning_options: TokenWarningOptions;
+  theme: ThemeSetting;
+  editor_mode: EditorModeSetting;
+  default_provider: ProviderId;
+  fallback_provider?: ProviderId | null;
+  max_retries: number;
+  permissions: PermissionContext;
+  mcp_slash_suggestions: McpSlashSuggestionCatalog;
+  statusline_command?: string | null;
+  statusline_refresh_interval_secs: number;
+};
+
+export type SessionListResult = SessionSummary[];
+
+export type SessionForkResult = {
+  session_id: string;
+  title?: string | null;
+  custom_title?: string | null;
+  created_at: string;
+  updated_at: string;
+  cwd?: string | null;
+  git_branch?: string | null;
+  model?: string | null;
+  provider?: ProviderId | null;
+  additional_directories?: string[];
+  session_allowed_tools?: string[];
+  session_disallowed_tools?: string[];
+  session_effort?: EffortLevel | null;
+  messages: TranscriptMessage[];
+};
+
+/** Canonical session-scoped controls consumed by headless clients and edge
+adapters. Values are resolved by app-server; adapters only project them into
+their protocol-specific shapes. */
+export type SessionControlState = {
+  session_id: string;
+  permission_mode: PermissionMode;
+  model_options: SessionModelOption[];
+  effort_level?: string | null;
+  effort_options: string[];
+};
+
+export interface SetSessionPermissionModeParams {
+  session_id: string;
+  mode: PermissionMode;
+}
+
+export type SetSessionModelParams = {
+  session_id: string;
+  model?: string | null;
+};
+
+export type SetSessionEffortParams = {
+  session_id: string;
+  effort?: string | null;
+};
+
+export interface AcpDeleteSessionParams {
+  session_id: string;
+  cwd: string;
+}
+
+export type StreamEvent = {
+  summary: SessionSummary;
+  event: "session_started";
+} | {
+  summary: SessionSummary;
+  event: "session_loaded";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  fallback_provider?: ProviderId | null;
+  context: TurnContext;
+  event: "request_started";
+} | {
+  message: TranscriptMessage;
+  event: "user_message";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  fallback_from?: ProviderId | null;
+  event: "assistant_message_started";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  event: "thinking_started";
+} | {
+  session_id: string;
+  delta: string;
+  event: "thinking_delta";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  event: "thinking_completed";
+} | {
+  session_id: string;
+  delta: string;
+  event: "assistant_delta";
+} | {
+  request: PermissionRequest;
+  event: "permission_requested";
+} | {
+  session_id: string;
+  request_id: string;
+  kind: PermissionResolutionKind;
+  event: "permission_resolved";
+} | {
+  request: McpTrustApprovalRequest;
+  event: "mcp_trust_approval_requested";
+} | {
+  session_id: string;
+  request_id: string;
+  kind: McpTrustResolutionKind;
+  event: "mcp_trust_approval_resolved";
+} | {
+  session_id: string;
+  tool_use_id: string;
+  tool_name: string;
+  tool_input?: string;
+  event: "tool_use_started";
+} | {
+  session_id: string;
+  tool_use_id: string;
+  tool_name: string;
+  progress: unknown;
+  event: "tool_progress";
+} | {
+  session_id: string;
+  hook_event_name: string;
+  progress: unknown;
+  event: "hook_progress";
+} | {
+  session_id: string;
+  hook_event_name: string;
+  message: string;
+  is_error: boolean;
+  event: "hook_notice";
+} | {
+  session_id: string;
+  tool_use_id: string;
+  tool_name: string;
+  kind: ToolUseCompletionKind;
+  event: "tool_use_completed";
+} | {
+  message: TranscriptMessage;
+  provider: ProviderId;
+  fallback_from?: ProviderId | null;
+  usage: TokenUsage;
+  event: "assistant_message_completed";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  fallback_provider: ProviderId;
+  reason: string;
+  event: "assistant_message_discarded";
+} | {
+  session_id: string;
+  duration_ms: number;
+  summary?: string | null;
+  original_message_count: number;
+  compacted_message_count: number;
+  provider_generated: boolean;
+  fallback_reason?: string | null;
+  event: "context_compacted";
+} | {
+  session_id: string;
+  kind: TurnCancellationKind;
+  partial?: TranscriptMessage | null;
+  usage?: TokenUsage | null;
+  event: "turn_cancelled";
+} | {
+  session_id: string;
+  provider: ProviderId;
+  fallback_from?: ProviderId | null;
+  usage: TokenUsage;
+  event: "turn_finished";
+} | {
+  session_id: string;
+  outcome: BudgetOutcome;
+  blocked: boolean;
+  total_usd: number;
+  max_budget_usd: number;
+  pricing_known: boolean;
+  event: "budget";
+} | {
+  session_id?: string;
+  turn_id?: string | null;
+  tool_use_id?: string;
+  request_id: string;
+  deadline?: string | null;
+  questions?: AskUserQuestionSpec[];
+  question?: string;
+  options?: string[];
+  event: "ask_user_question_requested";
+} | {
+  request_id: string;
+  outcome?: AskUserResponseOutcome | null;
+  answer?: string | null;
+  event: "ask_user_question_resolved";
+} | {
+  session_id: string;
+  task_id: string;
+  status: string;
+  command?: string | null;
+  exit_code?: number | null;
+  signal?: number | null;
+  event: "local_task_progress";
+} | {
+  session_id: string;
+  task: BackgroundTaskView;
+  event: "background_task_updated";
+} | {
+  session_id?: string | null;
+  provider?: ProviderId | null;
+  category?: StreamErrorCategory | null;
+  message: string;
+  suggestion?: string | null;
+  event: "error";
+};
+
+/** Payload for [`method::NOTIFICATION_STREAM_EVENT`](crate::method::NOTIFICATION_STREAM_EVENT)
+notifications. Wraps a single [`StreamEvent`] from the protocol crate
+together with the `subscription_id` that identifies the turn subscription
+that produced it. */
+export interface StreamEventNotification {
+  subscription_id: string;
+  event: StreamEvent;
+}
+
 /** Secret-bearing input accepted by MCP upsert and session bootstrap methods. */
 export type McpServerInput = {
   id: string;
@@ -778,6 +1019,13 @@ export interface HookDiscovery {
   warnings: HookDiscoveryWarning[];
 }
 
+export type AdditionalDirectoryInfo = {
+  path: string;
+  has_claude_md?: boolean;
+  git_branch?: string | null;
+  repo_root?: string | null;
+};
+
 export interface AdvancedCapabilityOverview {
   name: string;
   summary: string;
@@ -881,11 +1129,69 @@ export interface AuthStatusEntry {
   active: boolean;
 }
 
+export type BackgroundTaskProgressEvent = {
+  timestamp: string;
+  event: string;
+  step_key?: string | null;
+  kind?: string | null;
+  message?: string | null;
+  output?: string | null;
+  child_session_id?: string | null;
+};
+
+export type BackgroundTaskView = {
+  task_id: string;
+  session_id: string;
+  kind: BackgroundTaskViewKind;
+  status: BackgroundTaskViewStatus;
+  description: string;
+  cwd: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  pid?: number | null;
+  exit_code?: number | null;
+  signal?: number | null;
+  error?: string | null;
+  model?: string | null;
+  provider?: ProviderId | null;
+  permission_mode?: string | null;
+  agent_type?: string | null;
+  child_session_id?: string | null;
+  cancellation_reason?: string | null;
+  label?: string | null;
+  log_tail?: unknown | null;
+  progress_events?: unknown | null;
+  workflow_steps?: unknown | null;
+};
+
+export type BackgroundTaskViewKind = "BackgroundJob" | "LocalAgent" | "LocalShell" | "Workflow";
+
+export type BackgroundTaskViewStatus = "Queued" | "PermissionPending" | "Running" | "Interrupting" | "Completed" | "Failed" | "Cancelled" | "Orphaned" | "Unknown";
+
+/** Outcome of a pre-request `maxBudgetUsd` check. `Exceeded` means the
+accumulated cost has reached or passed the cap; `UnknownPricing` means some
+accumulated usage came from an unpriced model so the running total
+understates real spend. */
+export type BudgetOutcome = "exceeded" | "unknown_pricing";
+
+export interface CacheCreationUsage {
+  ephemeral_1h_input_tokens?: number;
+  ephemeral_5m_input_tokens?: number;
+}
+
 /** Identifies the connecting client. */
 export interface ClientInfo {
   name: string;
   version: string;
 }
+
+export type ContextWindowOptions = {
+  disable_1m_context: boolean;
+  max_context_tokens_override?: number | null;
+  auto_compact_window_override?: number | null;
+};
 
 export type DiscoveredHook = {
   event: string;
@@ -895,6 +1201,10 @@ export type DiscoveredHook = {
   trusted: boolean;
   validation: HookValidationStatus;
 };
+
+export type EditorModeSetting = "Normal" | "Vim";
+
+export type EffortLevel = "low" | "medium" | "high" | "max";
 
 export interface HookDiscoveryWarning {
   provenance: HookProvenance;
@@ -922,6 +1232,10 @@ export type HookProvenance = "built_in" | {
 
 export type HookValidationStatus = "valid" | {
   invalid: string;
+};
+
+export type MaxOutputTokenOptions = {
+  max_output_tokens_override?: number | null;
 };
 
 export type McpAnnotations = {
@@ -1020,6 +1334,13 @@ export interface McpPromptMessage {
   content: McpContent;
 }
 
+export interface McpResourceSlashSuggestion {
+  server_id: string;
+  uri: string;
+  name: string;
+  description: string;
+}
+
 export type McpResourceSummary = {
   uri: string;
   name: string;
@@ -1028,6 +1349,11 @@ export type McpResourceSummary = {
   annotations?: McpAnnotations | null;
 };
 
+export interface McpServerSlashSuggestion {
+  id: string;
+  summary: string;
+}
+
 export type McpServerSource = McpPluginSource & {
   kind: "plugin";
 };
@@ -1035,6 +1361,19 @@ export type McpServerSource = McpPluginSource & {
 export type McpServerStatus = "disabled" | "starting" | "ready" | "failed" | "unauthorized" | "restarting" | "stopped";
 
 export type McpServerTrust = "unknown" | "trusted" | "denied";
+
+export interface McpSlashSuggestionCatalog {
+  servers: McpServerSlashSuggestion[];
+  tools: McpToolSlashSuggestion[];
+  resources: McpResourceSlashSuggestion[];
+}
+
+export interface McpToolSlashSuggestion {
+  server_id: string;
+  name: string;
+  provider_name: string;
+  description: string;
+}
 
 export interface McpToolSpec {
   name: string;
@@ -1046,6 +1385,33 @@ export interface McpToolSpec {
 This is a wire DTO. Runtime transport behavior remains owned by
 `orbcode-mcp` and is converted at the app-server boundary. */
 export type McpTransport = "stdio" | "http" | "https" | "streamable_http" | "web_socket";
+
+export interface McpTrustApprovalRequest {
+  request_id: string;
+  session_id: string;
+  server_id: string;
+  tool_name: string;
+}
+
+export type McpTrustResolutionKind = "trusted" | "denied" | "interrupted";
+
+export type MemorySource = {
+  kind: MemorySourceKind;
+  label: string;
+  path?: string | null;
+  status: MemorySourceStatus;
+  writable: boolean;
+  trust_boundary?: string | null;
+  scope?: string | null;
+  skipped_reason?: string | null;
+  content?: string | null;
+};
+
+export type MemorySourceKind = "managed" | "user" | "project" | "local" | "team" | "agent" | "skill";
+
+export type MemorySourceStatus = "loaded" | "empty" | "missing" | "skipped";
+
+export type MessageRole = "system" | "user" | "assistant";
 
 export type ModelOptionOverview = {
   value?: string | null;
@@ -1061,11 +1427,28 @@ export interface OutputStyleOptionOverview {
   current: boolean;
 }
 
+/** Protocol-owned permission mode used by session-scoped client controls. */
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
+
+export interface PermissionRequest {
+  request_id: string;
+  session_id: string;
+  tool_use_id: string;
+  tool_name: string;
+  tool_input: string;
+  requires_tools_permission: boolean;
+  requires_network_permission: boolean;
+}
+
+export type PermissionResolutionKind = "approved" | "denied" | "interrupted";
+
 export type PermissionRuleOverview = {
   raw: string;
   tool_name: string;
   rule_content?: string | null;
 };
+
+export type ProviderId = "anthropic" | "openai" | "gemini" | "grok";
 
 export interface ProviderRequestDebugOverview {
   provider: string;
@@ -1115,6 +1498,60 @@ export interface ServerRequestResponse {
   result: ResponseResult;
 }
 
+export interface ServerToolUseUsage {
+  web_search_requests?: number;
+  web_fetch_requests?: number;
+}
+
+export type SessionModelOption = {
+  value?: string | null;
+  label: string;
+  description: string;
+  current: boolean;
+};
+
+export type SessionRecord = {
+  session_id: string;
+  title?: string | null;
+  custom_title?: string | null;
+  created_at: string;
+  updated_at: string;
+  cwd?: string | null;
+  git_branch?: string | null;
+  model?: string | null;
+  provider?: ProviderId | null;
+  additional_directories?: string[];
+  session_allowed_tools?: string[];
+  session_disallowed_tools?: string[];
+  session_effort?: EffortLevel | null;
+  messages: TranscriptMessage[];
+};
+
+export type SessionStatus = {
+  kind: "available";
+} | {
+  reason: string;
+  kind: "corrupt";
+};
+
+export type SessionSummary = {
+  session_id: string;
+  title?: string | null;
+  custom_title?: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+  cwd?: string | null;
+  git_branch?: string | null;
+  model?: string | null;
+  provider?: ProviderId | null;
+  transcript_path?: string | null;
+  status?: SessionStatus;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  duration_secs?: number | null;
+};
+
 export type SkillDefinition = {
   name: string;
   description?: string | null;
@@ -1137,12 +1574,35 @@ export type SkillSource = "User" | "Project" | "Bundled" | {
   };
 };
 
+export type StreamErrorCategory = "auth" | "rate_limit" | "overload" | "network" | "invalid_request" | "prompt_too_long" | "max_output" | "server_error" | "account_suspended" | "unsupported_provider" | "interrupted" | "retry_exhausted" | "other";
+
 export interface TaskOverview {
   id: string;
   subject: string;
   description: string;
   status: string;
 }
+
+export type ThemeSetting = "Auto" | "Dark" | "Light" | "DarkDaltonized" | "LightDaltonized" | "DarkAnsi" | "LightAnsi";
+
+export type TokenUsage = {
+  input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  output_tokens?: number;
+  server_tool_use?: ServerToolUseUsage;
+  service_tier?: string | null;
+  cache_creation?: CacheCreationUsage;
+  iterations?: UsageIteration[];
+  speed?: string | null;
+  total_tokens?: number;
+};
+
+export type TokenWarningOptions = {
+  auto_compact_enabled: boolean;
+  auto_compact_percent_override?: number | null;
+  blocking_limit_override?: number | null;
+};
 
 export type ToolOverview = {
   name: string;
@@ -1152,6 +1612,83 @@ export type ToolOverview = {
   provider_hidden: boolean;
   unavailable_reason?: string | null;
 };
+
+export type ToolUseCompletionKind = "success" | "execution_failed" | "permission_denied" | "interrupted" | "cancelled" | "unknown_tool";
+
+export type TranscriptBlock = {
+  text: string;
+  kind: "text";
+} | {
+  text: string;
+  signature?: string | null;
+  kind: "thinking";
+} | {
+  id: string;
+  name: string;
+  input: string;
+  kind: "tool_use";
+} | {
+  tool_use_id: string;
+  content: string;
+  is_error: boolean;
+  metadata?: string | null;
+  kind: "tool_result";
+};
+
+export type TranscriptMessage = {
+  id: string;
+  role: MessageRole;
+  content: string;
+  blocks?: TranscriptBlock[];
+  stop_reason?: string | null;
+  usage?: TokenUsage | null;
+  created_at: string;
+  is_synthetic?: boolean;
+};
+
+export type TurnCancellationKind = "before_response" | "assistant_streaming" | "tool_stage";
+
+export type TurnContext = {
+  cwd: string;
+  additional_directories?: string[];
+  additional_directory_details?: AdditionalDirectoryInfo[];
+  repo_root?: string | null;
+  cwd_relative_to_repo?: string | null;
+  current_date: string;
+  git_branch?: string | null;
+  git_default_branch?: string | null;
+  git_user?: string | null;
+  git_status?: string | null;
+  git_recent_commits?: string | null;
+  git_remote?: string | null;
+  git_worktree_state?: WorktreeState | null;
+  trusted_project?: boolean | null;
+  memory_sources?: MemorySource[];
+  claude_md?: string | null;
+};
+
+export interface UsageIteration {
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+export type WorkflowStepView = {
+  step_key: string;
+  parent_key?: string | null;
+  depth: number;
+  kind: string;
+  label: string;
+  status: WorkflowStepViewStatus;
+  started_at?: string | null;
+  finished_at?: string | null;
+  output?: string | null;
+  error?: string | null;
+  child_session_id?: string | null;
+};
+
+export type WorkflowStepViewStatus = "Pending" | "Running" | "Completed" | "Failed" | "Cancelled";
+
+export type WorktreeState = "normal" | "detached" | "linked";
 
 // Method constants
 export const STABLE_METHODS = [
