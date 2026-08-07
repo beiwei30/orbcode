@@ -1,6 +1,6 @@
 use anyhow::Result;
-use orbcode_app_server_client::AppClient;
-use orbcode_protocol::StreamEvent;
+use orbcode_app_server_client::{AppClient, GoalContinuation};
+use orbcode_protocol::{SessionGoalStatus, StreamEvent};
 use tokio::sync::mpsc;
 
 use crate::state::TuiState;
@@ -79,6 +79,33 @@ impl TuiState {
                 .await?,
         );
         self.set_status_line("Starting queued follow-up...");
+        Ok(())
+    }
+
+    pub(crate) async fn continue_goal_if_idle(
+        &mut self,
+        app_server: &AppClient,
+        turn_events: &mut Option<mpsc::UnboundedReceiver<StreamEvent>>,
+    ) -> Result<()> {
+        if turn_events.is_some() || !self.queued_followups.is_empty() {
+            return Ok(());
+        }
+        let Some(goal) = app_server.get_goal(&self.session_id).await? else {
+            return Ok(());
+        };
+        if goal.status != SessionGoalStatus::Active {
+            return Ok(());
+        }
+        match app_server
+            .continue_goal(&self.session_id, &goal.goal_id, goal.revision)
+            .await?
+        {
+            GoalContinuation::Started { events, .. } => {
+                *turn_events = Some(events);
+                self.set_status_line("Continuing persistent goal...");
+            }
+            GoalContinuation::NotStarted { .. } => {}
+        }
         Ok(())
     }
 }

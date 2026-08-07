@@ -17,6 +17,7 @@ pub(crate) mod builtin_prompts;
 pub(crate) mod compact;
 pub(crate) mod dispatch;
 pub(crate) mod effort;
+pub(crate) mod goal;
 pub(crate) mod local_output;
 pub(crate) mod permissions;
 pub(crate) mod persisted_system;

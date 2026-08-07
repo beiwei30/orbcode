@@ -102,6 +102,7 @@ async fn e2e_ask_user_question_hidden_for_partial_capability() {
                     single_select: true,
                     ..Default::default()
                 },
+                persistent_goals: false,
             },
         )
         .await

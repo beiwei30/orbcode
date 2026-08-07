@@ -1,3 +1,4 @@
+use chrono::Utc;
 use orbcode_protocol::{
     MessageRole, SessionRecord, StreamEvent, ToolUseCompletionKind, TranscriptMessage,
 };
@@ -171,6 +172,16 @@ impl SessionManager {
                 |title| format!("{title} (fork)"),
             )
         }));
+        if let Some(mut goal) = source.goal.clone() {
+            let now = super::datetime_from_millis(Utc::now().timestamp_millis());
+            goal.goal_id = uuid::Uuid::new_v4().to_string();
+            goal.revision = 1;
+            goal.session_id = fork.session_id.clone();
+            goal.created_at = now;
+            goal.updated_at = now;
+            goal.last_goal_turn_id = None;
+            fork.goal = Some(goal);
+        }
 
         for message in source.messages {
             fork.push_message(TranscriptMessage::from_parts(
@@ -213,6 +224,7 @@ impl SessionManager {
         let mut source = self.load_session(session_id).await?;
         let keep = keep_messages.min(source.messages.len());
         source.messages.truncate(keep);
+        source.rewind_goal_state(keep);
         if let Some(last) = source.messages.last() {
             source.updated_at = last.created_at;
         }
@@ -225,7 +237,7 @@ impl SessionManager {
 
     /// Return (creating if needed) the per-session lock that serializes
     /// transcript appends. See [`SessionManager::transcript_append_locks`].
-    async fn transcript_append_lock(
+    pub(super) async fn transcript_append_lock(
         &self,
         session_id: &str,
     ) -> std::sync::Arc<tokio::sync::Mutex<()>> {

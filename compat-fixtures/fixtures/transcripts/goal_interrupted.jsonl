@@ -1,0 +1,3 @@
+{"type":"user","uuid":"goal-interrupt-user-1","parentUuid":null,"sessionId":"goal-interrupted","timestamp":"2026-08-05T11:00:00.000Z","cwd":"/tmp/project","message":{"role":"user","content":"Keep working until done"}}
+{"type":"goal","goalId":"goal-interrupt-1","revision":4,"sessionId":"goal-interrupted","objective":"Recover safely after a crash","status":"active","tokensUsed":100,"elapsedSeconds":12,"createdAt":"2026-08-05T11:00:01.000Z","updatedAt":"2026-08-05T11:00:01.000Z","stopReason":null,"lastGoalTurnId":"goal-interrupt-turn-4","timestamp":"2026-08-05T11:00:01.000Z"}
+{"type":"goal-turn-start","goalId":"goal-interrupt-1","goalRevision":4,"turnId":"goal-interrupt-turn-4","sessionId":"goal-interrupted","timestamp":"2026-08-05T11:00:02.000Z"}

@@ -3,7 +3,7 @@ mod background;
 mod diagnostics;
 mod mcp;
 pub(crate) mod permissions;
-mod sessions;
+pub(crate) mod sessions;
 mod settings;
 mod tools;
 pub(crate) mod turns;
@@ -63,6 +63,13 @@ impl AppServer {
             }
             method::SESSION_SET_MODEL => self.handle_session_set_model(params).await,
             method::SESSION_SET_EFFORT => self.handle_session_set_effort(params).await,
+            method::SESSION_GOAL_GET => self.handle_session_goal_get(params).await,
+            method::SESSION_GOAL_SET => self.handle_session_goal_set(params).await,
+            method::SESSION_GOAL_CLEAR => self.handle_session_goal_clear(params).await,
+            method::SESSION_GOAL_CONTINUE => {
+                self.handle_session_goal_continue_without_client(params)
+                    .await
+            }
             // Turn
             method::TURN_SUBMIT => self.handle_turn_submit(params).await,
             method::TURN_STEER => self.handle_turn_steer(params).await,
@@ -266,6 +273,21 @@ pub(crate) fn core_error(err: CoreError) -> ResponseResult {
     ResponseResult::Error(ProtocolError {
         code,
         message,
+        data: None,
+    })
+}
+
+pub(crate) fn goal_error(err: orbcode_core::GoalError) -> ResponseResult {
+    if let orbcode_core::GoalError::Core(core) = err {
+        return core_error(core);
+    }
+    let code = match err {
+        orbcode_core::GoalError::SessionNotFound(_) => ErrorCode::SessionNotFound,
+        _ => ErrorCode::InvalidParams,
+    };
+    ResponseResult::Error(ProtocolError {
+        code,
+        message: err.to_string(),
         data: None,
     })
 }

@@ -127,15 +127,20 @@ async fn main() -> Result<()> {
     }
 
     let app_server = AppServer::new(cwd, overrides).await?;
-    let interactive_client = matches!(
+    let goal_supervising_client = matches!(
         &command,
         Command::Tui | Command::Resume { .. } | Command::Fork { tui: true, .. }
-    ) || (print_mode
-        && matches!(input_format, CliInputFormat::StreamJson)
-        && matches!(output_format, CliOutputFormat::StreamJson));
+    );
+    let interactive_client = goal_supervising_client
+        || (print_mode
+            && matches!(input_format, CliInputFormat::StreamJson)
+            && matches!(output_format, CliOutputFormat::StreamJson));
     let client = Arc::new(
         match &command {
-            Command::Acp => AppClient::new_option_only(app_server.clone()).await,
+            Command::Acp => AppClient::new_option_only_persistent_goals(app_server.clone()).await,
+            _ if goal_supervising_client => {
+                AppClient::new_interactive_persistent_goals(app_server.clone()).await
+            }
             _ if interactive_client => AppClient::new_interactive(app_server.clone()).await,
             _ => AppClient::new(app_server.clone()).await,
         }
@@ -382,7 +387,7 @@ async fn connect_remote_client(
 ) -> Result<AppClient> {
     if is_websocket_endpoint(endpoint) {
         let client = if interactive {
-            AppClient::connect_websocket_interactive(endpoint, token).await
+            AppClient::connect_websocket_interactive_persistent_goals(endpoint, token).await
         } else {
             AppClient::connect_websocket(endpoint, token).await
         };
@@ -398,7 +403,11 @@ async fn connect_remote_client(
         #[cfg(unix)]
         {
             let client = if interactive {
-                AppClient::connect_socket_interactive(std::path::Path::new(endpoint), token).await
+                AppClient::connect_socket_interactive_persistent_goals(
+                    std::path::Path::new(endpoint),
+                    token,
+                )
+                .await
             } else {
                 AppClient::connect_socket(std::path::Path::new(endpoint), token).await
             };
@@ -494,6 +503,155 @@ mod tests {
         assert_eq!(
             context_compacted_log_line(7, 4, 2, false, Some("missing provider")),
             "context compacted in 7 ms (4 -> 2 messages, local fallback): missing provider"
+        );
+    }
+}
+
+#[cfg(test)]
+mod persistent_goal_acp_tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use orbcode_app_server::{AppConfigOverrides, AppServer};
+    use orbcode_app_server_client::{AppClient, SessionGoalSetParams};
+    use orbcode_app_server_protocol::StreamEvent;
+    use orbcode_protocol::SessionGoalStatus;
+    use tokio::sync::mpsc;
+
+    fn test_path(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "orbcode-acp-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    fn mock_overrides(scenario: &str) -> HashMap<String, String> {
+        let mut env = orbcode_app_server::sealed_provider_env_overrides();
+        env.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            format!("mock://anthropic?scenario={scenario}"),
+        );
+        env.insert("ANTHROPIC_API_KEY".to_string(), "test-key".to_string());
+        env
+    }
+
+    async fn drain_terminal(mut events: mpsc::UnboundedReceiver<StreamEvent>) -> StreamEvent {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            while let Some(event) = events.recv().await {
+                if event.is_terminal() {
+                    return event;
+                }
+            }
+            panic!("ACP goal stream closed before terminal event");
+        })
+        .await
+        .expect("ACP goal terminal timeout")
+    }
+
+    #[tokio::test]
+    async fn acp_goal_helper_uses_successive_subscriptions_and_cancel_pauses() {
+        let home = test_path("goal-home");
+        let cwd = test_path("goal-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("create home");
+        tokio::fs::create_dir_all(&cwd).await.expect("create cwd");
+        let server = AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                env_overrides: mock_overrides("success"),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("create app server");
+        let client = AppClient::new_option_only_persistent_goals(server.clone())
+            .await
+            .expect("create ACP goal client");
+        let bootstrap = client.bootstrap(None).await.expect("bootstrap");
+        let session_id = bootstrap.session.session_id;
+        let goal = client
+            .set_goal(SessionGoalSetParams {
+                session_id: session_id.clone(),
+                expected_revision: None,
+                replace: false,
+                objective: Some("finish through ACP".to_string()),
+                status: Some(SessionGoalStatus::Active),
+                token_budget: Some(Some(10_000)),
+            })
+            .await
+            .expect("create goal");
+
+        let tools = client.list_tools().await.expect("list ACP tools");
+        assert!(tools.iter().any(|tool| tool.name == "get_goal"));
+        let first = crate::acp_sdk::continue_active_goal_for_test(&client, &session_id)
+            .await
+            .expect("continue first ACP goal turn")
+            .expect("first ACP goal stream");
+        assert!(matches!(
+            drain_terminal(first).await,
+            StreamEvent::TurnFinished { .. }
+        ));
+        let after_first = client
+            .get_goal(&session_id)
+            .await
+            .expect("get goal after first turn")
+            .expect("goal remains");
+        assert_eq!(after_first.status, SessionGoalStatus::Active);
+        assert_ne!(after_first.revision, goal.revision);
+
+        let second = crate::acp_sdk::continue_active_goal_for_test(&client, &session_id)
+            .await
+            .expect("continue second ACP goal turn")
+            .expect("second ACP goal stream");
+        assert!(
+            client
+                .cancel_turn(&session_id)
+                .await
+                .expect("cancel ACP goal")
+        );
+        assert!(matches!(
+            drain_terminal(second).await,
+            StreamEvent::TurnCancelled { .. }
+        ));
+        let paused = client
+            .get_goal(&session_id)
+            .await
+            .expect("get cancelled goal")
+            .expect("cancelled goal remains");
+        assert_eq!(paused.status, SessionGoalStatus::Paused);
+
+        let reconnected = AppClient::new_option_only_persistent_goals(server)
+            .await
+            .expect("reconnect ACP goal client");
+        assert_eq!(
+            reconnected
+                .get_goal(&session_id)
+                .await
+                .expect("load persisted ACP goal"),
+            Some(paused)
+        );
+        assert!(
+            crate::acp_sdk::continue_active_goal_for_test(&reconnected, &session_id)
+                .await
+                .expect("paused goal check")
+                .is_none()
+        );
+        assert!(
+            reconnected
+                .clear_goal(&session_id)
+                .await
+                .expect("clear ACP test goal")
+        );
+        assert!(
+            !client
+                .cancel_turn(&session_id)
+                .await
+                .expect("cleanup check")
         );
     }
 }

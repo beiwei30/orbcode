@@ -381,6 +381,163 @@ async fn do_initialize(f: &mut TransportFixture) {
     assert_eq!(resp["result"]["status"], "success");
 }
 
+async fn do_initialize_with_persistent_goals(f: &mut TransportFixture) {
+    f.send(&json!({
+        "type": "request",
+        "id": "init-goal",
+        "method": "initialize",
+        "params": {
+            "protocol_version": "1.0",
+            "client_info": { "name": "goal-conformance-test", "version": "0.1" },
+            "capabilities": {
+                "streaming": true,
+                "experimental_methods": true,
+                "persistent_goals": true
+            }
+        }
+    }))
+    .await;
+
+    let resp = f
+        .recv(Duration::from_secs(5))
+        .await
+        .expect("goal init response");
+    assert_eq!(resp["id"], "init-goal");
+    assert_eq!(resp["result"]["status"], "success");
+}
+
+async fn recv_response(f: &mut TransportFixture, id: &str, observed: &mut Vec<Value>) -> Value {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(!remaining.is_zero(), "timed out waiting for response {id}");
+        let message = f.recv(remaining).await.expect("transport message");
+        if message["type"] == "response" && message["id"] == id {
+            return message;
+        }
+        observed.push(message);
+    }
+}
+
+async fn assert_persistent_goal_conformance(f: &mut TransportFixture, transport_name: &str) {
+    do_initialize_with_persistent_goals(f).await;
+    let session_id = do_bootstrap(f).await;
+    let mut observed = Vec::new();
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-set",
+        "method": "session/goal/set",
+        "params": {
+            "session_id": session_id,
+            "objective": format!("verify {transport_name} goal transport"),
+            "status": "active",
+            "token_budget": 10000
+        }
+    }))
+    .await;
+    let set = recv_response(f, "goal-set", &mut observed).await;
+    assert_eq!(set["result"]["status"], "success");
+    let goal = &set["result"]["data"]["goal"];
+    let goal_id = goal["goal_id"].as_str().expect("goal id").to_string();
+    let revision = goal["revision"].as_u64().expect("goal revision");
+    assert_eq!(goal["status"], "active");
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-get",
+        "method": "session/goal/get",
+        "params": { "session_id": session_id }
+    }))
+    .await;
+    let get = recv_response(f, "goal-get", &mut observed).await;
+    assert_eq!(get["result"]["data"]["goal"]["goal_id"], goal_id);
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-tools",
+        "method": "tools/list"
+    }))
+    .await;
+    let tools = recv_response(f, "goal-tools", &mut observed).await;
+    let tool_names = tools["result"]["data"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<Vec<_>>();
+    for name in ["get_goal", "create_goal", "update_goal"] {
+        assert!(
+            tool_names.contains(&name),
+            "[{transport_name}] missing goal tool {name}"
+        );
+    }
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-continue",
+        "method": "session/goal/continue",
+        "params": {
+            "session_id": session_id,
+            "goal_id": goal_id,
+            "expected_revision": revision
+        }
+    }))
+    .await;
+    let started = recv_response(f, "goal-continue", &mut observed).await;
+    assert_eq!(started["result"]["status"], "success");
+    assert_eq!(started["result"]["data"]["outcome"], "started");
+    let subscription_id = started["result"]["data"]["subscription_id"]
+        .as_str()
+        .expect("goal subscription id")
+        .to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut saw_terminal = observed.iter().any(|message| {
+        message["type"] == "notification"
+            && message["method"] == "stream/event"
+            && message["params"]["subscription_id"] == subscription_id
+            && message["params"]["event"]["event"] == "turn_finished"
+    });
+    while !saw_terminal {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "[{transport_name}] goal terminal timeout"
+        );
+        let message = f.recv(remaining).await.expect("goal stream event");
+        saw_terminal = message["type"] == "notification"
+            && message["method"] == "stream/event"
+            && message["params"]["subscription_id"] == subscription_id
+            && message["params"]["event"]["event"] == "turn_finished";
+    }
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-checkpoint",
+        "method": "session/goal/get",
+        "params": { "session_id": session_id }
+    }))
+    .await;
+    let checkpoint = recv_response(f, "goal-checkpoint", &mut observed).await;
+    assert_eq!(checkpoint["result"]["data"]["goal"]["status"], "active");
+    assert!(
+        checkpoint["result"]["data"]["goal"]["tokens_used"]
+            .as_u64()
+            .is_some_and(|tokens| tokens > 0)
+    );
+
+    f.send(&json!({
+        "type": "request",
+        "id": "goal-clear",
+        "method": "session/goal/clear",
+        "params": { "session_id": session_id }
+    }))
+    .await;
+    let clear = recv_response(f, "goal-clear", &mut observed).await;
+    assert_eq!(clear["result"]["data"]["cleared"], true);
+}
+
 async fn do_bootstrap(f: &mut TransportFixture) -> String {
     f.send(&json!({
         "type": "request",
@@ -417,6 +574,30 @@ async fn do_submit_turn(f: &mut TransportFixture, session_id: &str) {
 // =========================================================================
 // CONFORMANCE TESTS: Initialize + session/list
 // =========================================================================
+
+#[tokio::test]
+async fn stdio_persistent_goal_conformance() {
+    let app = app_with_mock_url("stdio-goal", "mock://anthropic?scenario=success").await;
+    let mut f = spawn_stdio(app).await;
+    assert_persistent_goal_conformance(&mut f, "stdio").await;
+    f.shutdown().await;
+}
+
+#[tokio::test]
+async fn socket_persistent_goal_conformance() {
+    let app = app_with_mock_url("socket-goal", "mock://anthropic?scenario=success").await;
+    let mut f = spawn_socket(app, "goal").await;
+    assert_persistent_goal_conformance(&mut f, "socket").await;
+    f.shutdown().await;
+}
+
+#[tokio::test]
+async fn websocket_persistent_goal_conformance() {
+    let app = app_with_mock_url("websocket-goal", "mock://anthropic?scenario=success").await;
+    let mut f = spawn_websocket(app).await;
+    assert_persistent_goal_conformance(&mut f, "websocket").await;
+    f.shutdown().await;
+}
 
 #[tokio::test]
 async fn stdio_initialize_and_session_list() {

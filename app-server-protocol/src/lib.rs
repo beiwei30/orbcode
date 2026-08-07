@@ -69,8 +69,8 @@ pub use orbcode_protocol::{
     AskUserResponseOutcome, AskUserValidationCode, AskUserValidationError, BillingBasis,
     CompactDecision, CompactSessionResult, ContextDiagnosticsReport, ContextTokenSource,
     ContextUsageOverview, CostOverview, EffortLevel, McpTrustApprovalRequest, PermissionRequest,
-    ProviderRequestDebugSnapshot, StatsActivityDay, StatsOverview, StreamEvent, TurnContext,
-    UsageOverview, WorkflowCommand, WorkflowSource,
+    ProviderRequestDebugSnapshot, SessionGoal, SessionGoalStatus, StatsActivityDay, StatsOverview,
+    StreamEvent, TurnContext, UsageOverview, WorkflowCommand, WorkflowSource,
 };
 
 pub fn format_cost(cost: f64) -> String {

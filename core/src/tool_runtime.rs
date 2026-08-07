@@ -153,6 +153,15 @@ pub(crate) trait ToolRuntimeHost {
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<ToolUseOutcome, CoreError>;
 
+    async fn run_persistent_goal_tool(
+        &self,
+        session_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<ToolUseOutcome, CoreError>;
+
     async fn run_agent_tool_buffered(
         &self,
         session_id: &str,
@@ -170,6 +179,14 @@ pub(crate) trait ToolRuntimeHost {
         tool_use_id: &str,
         tool_input: &str,
         tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<BufferedToolUseCompletion, CoreError>;
+
+    async fn run_persistent_goal_tool_buffered(
+        &self,
+        session_id: &str,
+        tool_use_id: &str,
+        tool_name: &str,
+        tool_input: &str,
     ) -> Result<BufferedToolUseCompletion, CoreError>;
 
     async fn append_tool_result(
@@ -491,6 +508,12 @@ where
                 .run_workflow_tool(session_id, tool_use_id, tool_input, tx)
                 .await;
         }
+        if crate::session_manager::session_goal_tools::is_persistent_goal_tool(tool_name) {
+            return self
+                .host
+                .run_persistent_goal_tool(session_id, tool_use_id, tool_name, tool_input, tx)
+                .await;
+        }
 
         match self
             .host
@@ -673,6 +696,17 @@ where
             return self
                 .host
                 .run_workflow_tool_buffered(session_id, &tool_use_id, &tool_input, tx)
+                .await;
+        }
+        if crate::session_manager::session_goal_tools::is_persistent_goal_tool(&tool_name) {
+            return self
+                .host
+                .run_persistent_goal_tool_buffered(
+                    session_id,
+                    &tool_use_id,
+                    &tool_name,
+                    &tool_input,
+                )
                 .await;
         }
 

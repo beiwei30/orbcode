@@ -230,8 +230,10 @@ fn acp_accepts_a_preconstructed_app_client() {
         "ACP must receive the canonical client instead of constructing or retaining AppServer"
     );
     assert!(
-        main.contains("Command::Acp => AppClient::new_option_only(app_server.clone()).await"),
-        "the CLI composition root must declare ACP's option-only interaction capability"
+        main.contains(
+            "Command::Acp => AppClient::new_option_only_persistent_goals(app_server.clone()).await"
+        ),
+        "the CLI composition root must declare ACP's option-only persistent-goal capability"
     );
     assert!(
         !source.contains("AppClient::new(app_server)"),

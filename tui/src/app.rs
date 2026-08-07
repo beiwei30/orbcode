@@ -441,6 +441,9 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
                     state
                         .submit_queued_followups_if_idle(&client, &mut turn_events)
                         .await?;
+                    state
+                        .continue_goal_if_idle(&client, &mut turn_events)
+                        .await?;
                 }
                 maybe_background_task_event = background_task_event_rx.recv(), if !stream_paused => {
                     handle_background_task_event_batch(
@@ -468,6 +471,9 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
             }
         }
 
+        if turn_events.is_some() {
+            state.interrupt_active_turn(&client, &mut turn_events).await;
+        }
         Ok(())
     }
     .await;

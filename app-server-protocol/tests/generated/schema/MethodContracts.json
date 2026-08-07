@@ -877,6 +877,17 @@
             ],
             "default": null
           },
+          "goal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SessionGoal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "messages": {
             "type": "array",
             "items": {
@@ -907,6 +918,88 @@
           "medium",
           "high",
           "max"
+        ]
+      },
+      "SessionGoal": {
+        "description": "Canonical persistent-goal state shared by transcripts and every client.",
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 1
+          },
+          "tokens_used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_goal_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal_id",
+          "revision",
+          "session_id",
+          "objective",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
         ]
       },
       "TranscriptMessage": {
@@ -5728,6 +5821,17 @@
         ],
         "default": null
       },
+      "goal": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SessionGoal"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
       "messages": {
         "type": "array",
         "items": {
@@ -5758,6 +5862,88 @@
           "medium",
           "high",
           "max"
+        ]
+      },
+      "SessionGoal": {
+        "description": "Canonical persistent-goal state shared by transcripts and every client.",
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 1
+          },
+          "tokens_used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_goal_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal_id",
+          "revision",
+          "session_id",
+          "objective",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
         ]
       },
       "TranscriptMessage": {
@@ -6037,6 +6223,473 @@
             "default": 0
           }
         }
+      }
+    }
+  },
+  "SessionGoalClearResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalClearResult",
+    "type": "object",
+    "properties": {
+      "cleared": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "cleared"
+    ]
+  },
+  "SessionGoalContinueParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalContinueParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "goal_id": {
+        "type": "string"
+      },
+      "expected_revision": {
+        "type": "integer",
+        "format": "uint64",
+        "minimum": 1
+      }
+    },
+    "required": [
+      "session_id",
+      "goal_id",
+      "expected_revision"
+    ]
+  },
+  "SessionGoalContinueResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalContinueResult",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "subscription_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "goal": {
+            "$ref": "#/$defs/SessionGoal"
+          },
+          "outcome": {
+            "type": "string",
+            "const": "started"
+          }
+        },
+        "required": [
+          "outcome",
+          "subscription_id",
+          "turn_id",
+          "goal"
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "$ref": "#/$defs/SessionGoalNotStartedReason"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SessionGoal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "const": "not_started"
+          }
+        },
+        "required": [
+          "outcome",
+          "reason"
+        ]
+      }
+    ],
+    "$defs": {
+      "SessionGoal": {
+        "description": "Canonical persistent-goal state shared by transcripts and every client.",
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 1
+          },
+          "tokens_used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_goal_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal_id",
+          "revision",
+          "session_id",
+          "objective",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
+        ]
+      },
+      "SessionGoalNotStartedReason": {
+        "type": "string",
+        "enum": [
+          "missing",
+          "stale_revision",
+          "inactive",
+          "usage_limited",
+          "budget_limited",
+          "pending_user_input",
+          "active_turn",
+          "client_not_capable"
+        ]
+      }
+    }
+  },
+  "SessionGoalGetResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalGetResult",
+    "type": "object",
+    "properties": {
+      "goal": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SessionGoal"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "$defs": {
+      "SessionGoal": {
+        "description": "Canonical persistent-goal state shared by transcripts and every client.",
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 1
+          },
+          "tokens_used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_goal_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal_id",
+          "revision",
+          "session_id",
+          "objective",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
+        ]
+      }
+    }
+  },
+  "SessionGoalNotStartedReason": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalNotStartedReason",
+    "type": "string",
+    "enum": [
+      "missing",
+      "stale_revision",
+      "inactive",
+      "usage_limited",
+      "budget_limited",
+      "pending_user_input",
+      "active_turn",
+      "client_not_capable"
+    ]
+  },
+  "SessionGoalSetParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalSetParams",
+    "description": "Create or mutate the current session goal.\n\nExisting-goal mutations require `expected_revision`. `replace` is the\nexplicit user-authority operation for replacing a terminal goal; model\ntools never set it.",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "expected_revision": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 1
+      },
+      "replace": {
+        "type": "boolean",
+        "default": false
+      },
+      "objective": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "token_budget": {
+        "description": "Outer `None` keeps the current value; `Some(None)` clears the budget.",
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 1
+      }
+    },
+    "required": [
+      "session_id"
+    ],
+    "$defs": {
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
+        ]
+      }
+    }
+  },
+  "SessionGoalSetResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SessionGoalSetResult",
+    "type": "object",
+    "properties": {
+      "goal": {
+        "$ref": "#/$defs/SessionGoal"
+      }
+    },
+    "required": [
+      "goal"
+    ],
+    "$defs": {
+      "SessionGoal": {
+        "description": "Canonical persistent-goal state shared by transcripts and every client.",
+        "type": "object",
+        "properties": {
+          "goal_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/SessionGoalStatus"
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 1
+          },
+          "tokens_used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "stop_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_goal_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal_id",
+          "revision",
+          "session_id",
+          "objective",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionGoalStatus": {
+        "description": "Lifecycle state for the single persistent goal owned by a session.",
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "blocked",
+          "usage_limited",
+          "budget_limited",
+          "complete"
+        ]
       }
     }
   },

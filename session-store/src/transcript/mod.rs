@@ -2,7 +2,10 @@ mod blocks;
 mod progress;
 
 use chrono::{DateTime, Utc};
-use orbcode_protocol::{EffortLevel, MessageRole, ProviderId, SessionRecord};
+use orbcode_protocol::{
+    EffortLevel, MessageRole, ProviderId, SessionGoalStatus, SessionGoalTranscriptRecord,
+    SessionGoalTranscriptState, SessionRecord,
+};
 use serde_json::Value;
 
 use crate::transcript_schema::{TranscriptRecord, TranscriptRecordKind};
@@ -12,6 +15,10 @@ use progress::{collect_progress_records, gc_pre_compact_messages};
 
 pub const CUSTOM_TITLE_ENTRY_TYPE: &str = "custom-title";
 pub const SESSION_CONTEXT_ENTRY_TYPE: &str = "session-context";
+pub const GOAL_ENTRY_TYPE: &str = "goal";
+pub const GOAL_CLEARED_ENTRY_TYPE: &str = "goal-cleared";
+pub const GOAL_TURN_START_ENTRY_TYPE: &str = "goal-turn-start";
+pub const GOAL_TURN_TERMINAL_ENTRY_TYPE: &str = "goal-turn-terminal";
 
 /// `entrypoint` stamped on every transcript record we write. The TypeScript CLI
 /// writes `"cli"` here; we deliberately differ, because transcripts share
@@ -99,20 +106,124 @@ fn build_session_record(session_id: String, parsed_lines: Vec<Value>) -> Option<
         session_allowed_tools: Vec::new(),
         session_disallowed_tools: Vec::new(),
         session_effort: None,
+        goal: None,
+        goal_transcript_records: Vec::new(),
         messages: Vec::new(),
     };
     let progress_by_parent_tool_use_id = collect_progress_records(&parsed_lines);
 
     let mut saw_message = false;
     let mut saw_context = false;
+    let mut saw_goal_record = false;
     let mut latest_metadata_timestamp: Option<DateTime<Utc>> = None;
     let mut latest_metadata_cwd: Option<String> = None;
+    let mut open_goal_turns = Vec::new();
     for value in parsed_lines {
         let Some(record) = TranscriptRecord::from_value(&value) else {
+            if is_raw_goal_record(&value) {
+                saw_goal_record = true;
+                session
+                    .goal_transcript_records
+                    .push(SessionGoalTranscriptRecord {
+                        after_message_count: session.messages.len(),
+                        value: value.clone(),
+                        state: SessionGoalTranscriptState::Unchanged,
+                    });
+                merge_latest_timestamp(
+                    &mut latest_metadata_timestamp,
+                    value.get("timestamp").and_then(Value::as_str),
+                );
+                merge_latest_cwd(
+                    &mut latest_metadata_cwd,
+                    value.get("cwd").and_then(Value::as_str),
+                );
+            }
             continue;
         };
 
         match record.kind() {
+            TranscriptRecordKind::Goal => {
+                saw_goal_record = true;
+                let decoded_goal = record.session_goal();
+                if let Some(goal) = decoded_goal.as_ref() {
+                    session.goal = Some(goal.clone());
+                }
+                session
+                    .goal_transcript_records
+                    .push(SessionGoalTranscriptRecord {
+                        after_message_count: session.messages.len(),
+                        value: value.clone(),
+                        state: decoded_goal.map_or(
+                            SessionGoalTranscriptState::Unchanged,
+                            SessionGoalTranscriptState::Set,
+                        ),
+                    });
+                merge_latest_timestamp(&mut latest_metadata_timestamp, record.timestamp.as_deref());
+                merge_latest_cwd(&mut latest_metadata_cwd, record.cwd.as_deref());
+            }
+            TranscriptRecordKind::GoalCleared => {
+                saw_goal_record = true;
+                session.goal = None;
+                session
+                    .goal_transcript_records
+                    .push(SessionGoalTranscriptRecord {
+                        after_message_count: session.messages.len(),
+                        value: value.clone(),
+                        state: SessionGoalTranscriptState::Cleared,
+                    });
+                merge_latest_timestamp(&mut latest_metadata_timestamp, record.timestamp.as_deref());
+                merge_latest_cwd(&mut latest_metadata_cwd, record.cwd.as_deref());
+            }
+            TranscriptRecordKind::GoalTurnStart => {
+                saw_goal_record = true;
+                if let (Some(goal_id), Some(goal_revision), Some(turn_id)) = (
+                    record.goal_id.as_deref(),
+                    record.goal_revision,
+                    record.turn_id.as_deref(),
+                ) {
+                    open_goal_turns.retain(|(open_goal_id, _, open_turn_id, _)| {
+                        open_goal_id != goal_id || open_turn_id != turn_id
+                    });
+                    open_goal_turns.push((
+                        goal_id.to_string(),
+                        goal_revision,
+                        turn_id.to_string(),
+                        record.timestamp.as_deref().and_then(parse_timestamp),
+                    ));
+                }
+                session
+                    .goal_transcript_records
+                    .push(SessionGoalTranscriptRecord {
+                        after_message_count: session.messages.len(),
+                        value: value.clone(),
+                        state: SessionGoalTranscriptState::Unchanged,
+                    });
+                merge_latest_timestamp(&mut latest_metadata_timestamp, record.timestamp.as_deref());
+                merge_latest_cwd(&mut latest_metadata_cwd, record.cwd.as_deref());
+            }
+            TranscriptRecordKind::GoalTurnTerminal => {
+                saw_goal_record = true;
+                if let (Some(goal_id), Some(turn_id)) =
+                    (record.goal_id.as_deref(), record.turn_id.as_deref())
+                    && let Some(index) =
+                        open_goal_turns
+                            .iter()
+                            .rposition(|(open_goal_id, _, open_turn_id, _)| {
+                                open_goal_id == goal_id && open_turn_id == turn_id
+                            })
+                {
+                    open_goal_turns.remove(index);
+                }
+                session
+                    .goal_transcript_records
+                    .push(SessionGoalTranscriptRecord {
+                        after_message_count: session.messages.len(),
+                        value: value.clone(),
+                        state: SessionGoalTranscriptState::Unchanged,
+                    });
+                merge_latest_timestamp(&mut latest_metadata_timestamp, record.timestamp.as_deref());
+                merge_latest_cwd(&mut latest_metadata_cwd, record.cwd.as_deref());
+            }
             TranscriptRecordKind::CustomTitle => {
                 if let Some(title) = record.custom_title.as_deref().or(record.title.as_deref()) {
                     let trimmed = title.trim();
@@ -191,7 +302,46 @@ fn build_session_record(session_id: String, parsed_lines: Vec<Value>) -> Option<
 
     gc_pre_compact_messages(&mut session.messages);
 
-    if session.messages.is_empty() && session.custom_title.is_none() && !saw_context {
+    if let Some(goal) = session.goal.as_mut()
+        && goal.status == SessionGoalStatus::Active
+        && let Some((_, _, turn_id, started_at)) =
+            open_goal_turns
+                .iter()
+                .rev()
+                .find(|(goal_id, goal_revision, _, _)| {
+                    goal_id == &goal.goal_id && *goal_revision == goal.revision
+                })
+    {
+        let original = goal.clone();
+        goal.status = SessionGoalStatus::Paused;
+        goal.revision = goal.revision.saturating_add(1);
+        goal.stop_reason = Some("interrupted before terminal checkpoint".to_string());
+        goal.last_goal_turn_id = Some(turn_id.clone());
+        if let Some(started_at) = started_at {
+            goal.updated_at = goal.updated_at.max(*started_at);
+        }
+        let recovered = goal.clone();
+        if let Some(snapshot) = session.goal_transcript_records.iter_mut().rev().find(
+            |record| {
+                matches!(
+                    &record.state,
+                    SessionGoalTranscriptState::Set(snapshot) if snapshot.goal_id == recovered.goal_id
+                )
+            },
+        ) {
+            snapshot.state = SessionGoalTranscriptState::Recovered {
+                original,
+                recovered: Box::new(recovered),
+                turn_id: turn_id.clone(),
+            };
+        }
+    }
+
+    if session.messages.is_empty()
+        && session.custom_title.is_none()
+        && !saw_context
+        && !saw_goal_record
+    {
         return None;
     }
 
@@ -208,6 +358,18 @@ fn build_session_record(session_id: String, parsed_lines: Vec<Value>) -> Option<
     }
 
     Some(session)
+}
+
+fn is_raw_goal_record(value: &Value) -> bool {
+    matches!(
+        value.get("type").and_then(Value::as_str),
+        Some(
+            GOAL_ENTRY_TYPE
+                | GOAL_CLEARED_ENTRY_TYPE
+                | GOAL_TURN_START_ENTRY_TYPE
+                | GOAL_TURN_TERMINAL_ENTRY_TYPE
+        )
+    )
 }
 
 fn string_array(values: &[Value]) -> Vec<String> {

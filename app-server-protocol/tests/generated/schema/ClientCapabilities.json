@@ -12,6 +12,11 @@
       "type": "boolean",
       "default": false
     },
+    "persistent_goals": {
+      "description": "Opts this connection into the experimental persistent-goal method\nfamily. `experimental_methods` must also be enabled.",
+      "type": "boolean",
+      "default": false
+    },
     "interactive_questions": {
       "description": "Interactive question behaviors this connection can complete. Missing\nmeans the capability is off.",
       "anyOf": [

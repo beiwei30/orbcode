@@ -538,7 +538,7 @@ pub(super) async fn run_prompt_task(
     responder: agent_client_protocol::Responder<PromptResponse>,
     connection: ConnectionTo<Client>,
 ) -> Result<()> {
-    let mut event_rx = match state.client.submit_turn_stream(&session_id, prompt).await {
+    let event_rx = match state.client.submit_turn_stream(&session_id, prompt).await {
         Ok(rx) => rx,
         Err(err) => {
             finish_prompt_generation(&state, &session_id, prompt_generation).await;
@@ -547,7 +547,8 @@ pub(super) async fn run_prompt_task(
         }
     };
 
-    let response = super::prompt_response_loop(&session_id, &mut event_rx, connection).await;
+    let response =
+        super::goal_aware_prompt_response_loop(&state, &session_id, event_rx, connection).await;
     finish_prompt_generation(&state, &session_id, prompt_generation).await;
 
     match response {

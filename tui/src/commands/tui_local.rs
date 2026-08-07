@@ -36,6 +36,9 @@ impl TuiState {
             TuiLocalSlashCommand::Branch => {
                 unreachable!("handled by extracted BranchCommand")
             }
+            TuiLocalSlashCommand::Goal => {
+                unreachable!("handled by extracted GoalCommand")
+            }
             TuiLocalSlashCommand::AddDir => {
                 if args.is_empty() {
                     self.overlay = Some(OverlayState::AddDirPicker(AddDirPickerState::new(
