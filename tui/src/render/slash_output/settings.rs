@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use orbcode_app_server_client::{
     AgentDefinition, AgentLoadWarning, AuthOverview, HookDiscovery, PermissionOverview,
-    PlanOverview, PolicyOverview, SkillDefinition, StatusAuthOverview, StatusOverview,
-    WorkspaceDiff,
+    PermissionRuleKind, PlanOverview, PolicyOverview, SkillDefinition, StatusAuthOverview,
+    StatusOverview, WorkspaceDiff,
 };
 #[cfg(test)]
 use orbcode_app_server_client::{MemoryFileOverview, MemoryOverview};
@@ -229,26 +229,25 @@ fn render_auth_entries<'a>(
 
 pub(crate) fn render_permission_overview(overview: &PermissionOverview) -> String {
     let permissions = &overview.permissions;
+    let configured_allow = overview.configured_rules(PermissionRuleKind::Allow);
+    let startup_allow = overview.startup_rules(PermissionRuleKind::Allow);
+    let edited_allow = overview.runtime_added_rules(PermissionRuleKind::Allow);
+    let session_allow = overview.session_rules(PermissionRuleKind::Allow);
+    let configured_deny = overview.configured_rules(PermissionRuleKind::Deny);
+    let startup_deny = overview.startup_rules(PermissionRuleKind::Deny);
+    let edited_deny = overview.runtime_added_rules(PermissionRuleKind::Deny);
+    let session_deny = overview.session_rules(PermissionRuleKind::Deny);
     let allow_layers = [
-        (
-            &overview.settings_allowed_rules[..],
-            "configured · settings",
-        ),
-        (&overview.startup_allowed_rules[..], "configured · env/CLI"),
-        (
-            &overview.edited_allowed_rules[..],
-            "configured · settings edit",
-        ),
-        (&overview.runtime_allowed_rules[..], "session"),
+        (&configured_allow[..], "configured · settings"),
+        (&startup_allow[..], "configured · env/CLI"),
+        (&edited_allow[..], "configured · settings edit"),
+        (&session_allow[..], "session"),
     ];
     let deny_layers = [
-        (&overview.settings_denied_rules[..], "configured · settings"),
-        (&overview.startup_denied_rules[..], "configured · env/CLI"),
-        (
-            &overview.edited_denied_rules[..],
-            "configured · settings edit",
-        ),
-        (&overview.runtime_denied_rules[..], "session"),
+        (&configured_deny[..], "configured · settings"),
+        (&startup_deny[..], "configured · env/CLI"),
+        (&edited_deny[..], "configured · settings edit"),
+        (&session_deny[..], "session"),
     ];
     let mut lines = vec![
         "Permissions:".to_string(),

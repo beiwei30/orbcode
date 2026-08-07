@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use orbcode_app_server_protocol::{ModelChangeResult, ThinkingBudgetResult};
+use orbcode_app_server_protocol::ThinkingBudgetResult;
 use orbcode_config::{
     EditorModeSetting, ModelOption, OutputStyleOption, ProviderModelResolution,
     ResolvedKeybindings, SandboxLocalSettings, SandboxSettingsUpdate, ThemeSetting,
@@ -222,10 +222,13 @@ impl AppServer {
             .collect()
     }
 
-    pub async fn set_model_override(&self, model: Option<String>) -> Result<String, CoreError> {
+    pub async fn set_persisted_model_setting(
+        &self,
+        model: Option<String>,
+    ) -> Result<String, CoreError> {
         self.ensure_setting_mutable("model")?;
         let model = self.validate_model_override(model)?;
-        self.sessions.set_model_override(model).await?;
+        self.sessions.set_persisted_model_setting(model).await?;
         Ok(self.sessions.model_display_name())
     }
 
@@ -261,24 +264,6 @@ impl AppServer {
             )));
         }
         Ok(Some(trimmed.to_string()))
-    }
-
-    /// Change the model through the same validated resolver used by the TUI,
-    /// returning the effective state observed by the next provider request.
-    pub async fn set_session_model_override(
-        &self,
-        session_id: &str,
-        model: Option<String>,
-    ) -> Result<ModelChangeResult, CoreError> {
-        self.ensure_active_session(session_id)?;
-        self.set_model_override(model).await?;
-        let config = self.sessions.effective_config();
-        let resolution = config.provider_model_resolution(config.default_provider);
-        Ok(ModelChangeResult {
-            provider: config.default_provider,
-            model: resolution.request_model,
-            display_name: resolution.display_name,
-        })
     }
 
     /// Set or clear a numeric thinking budget for subsequent provider requests.
@@ -536,7 +521,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_model_override_updates_status_and_options() {
+    async fn persisted_model_update_refreshes_state_without_masking_environment() {
         let home = test_path("model-home");
         let cwd = test_path("model-cwd");
         tokio::fs::create_dir_all(&home).await.expect("home");
@@ -583,7 +568,7 @@ mod tests {
         assert!(initial_options[4].current);
 
         let display = app
-            .set_model_override(Some("sonnet".to_string()))
+            .set_persisted_model_setting(Some("sonnet".to_string()))
             .await
             .expect("set model");
         assert_eq!(display, "glm-4.7");
@@ -595,25 +580,39 @@ mod tests {
         let overview = app.status_overview("session").await.expect("status");
         assert_eq!(overview.model_display_name, "glm-4.7");
         assert_eq!(overview.model_name, "glm-4.7");
-        assert_eq!(
-            overview.model_capabilities,
-            vec!["thinking".to_string(), "interleaved_thinking".to_string()]
-        );
+        // The explicit top-level environment model remains effective after the
+        // persisted write. Because it is a custom model id rather than a
+        // family alias, family capability metadata does not apply to it.
+        assert!(overview.model_capabilities.is_empty());
         assert_eq!(overview.small_fast_model_display_name, "glm-4.7");
         assert!(app.provider_model_resolutions().iter().any(|resolution| {
             resolution.provider == ProviderId::Anthropic
                 && resolution.request_model == "glm-4.7"
                 && resolution.capabilities == overview.model_capabilities
         }));
-        assert!(
-            app.model_options()
-                .iter()
-                .any(|option| option.value.as_deref() == Some("sonnet") && option.current)
+        let selection = app.sessions.effective_config().effective_model_selection();
+        assert_eq!(selection.persisted.value.as_deref(), Some("sonnet"));
+        assert_eq!(
+            selection.persisted.source,
+            Some(orbcode_config::SettingOrigin::User)
+        );
+        assert_eq!(
+            selection.runtime_override,
+            orbcode_config::RuntimeModelOverride::Inherit
+        );
+        assert_eq!(
+            selection.source,
+            orbcode_config::ModelSelectionSource::Environment
         );
         assert!(
             app.model_options()
                 .iter()
-                .any(|option| option.value.as_deref() == Some("glm-4.7") && !option.current)
+                .any(|option| option.value.as_deref() == Some("sonnet") && !option.current)
+        );
+        assert!(
+            app.model_options()
+                .iter()
+                .any(|option| option.value.as_deref() == Some("glm-4.7") && option.current)
         );
         assert!(
             app.model_options()
@@ -621,18 +620,93 @@ mod tests {
                 .any(|option| option.value.as_deref() == Some("opus") && !option.current)
         );
 
-        let display = app.set_model_override(None).await.expect("clear model");
+        let display = app
+            .set_persisted_model_setting(None)
+            .await
+            .expect("clear model");
         assert_eq!(display, "glm-4.7");
         let settings = tokio::fs::read_to_string(home.join("settings.json"))
             .await
             .expect("read settings");
         assert!(!settings.contains(r#""model""#), "{settings}");
         let default_options = app.model_options();
-        assert!(default_options[0].current);
+        assert!(!default_options[0].current);
         assert!(
             default_options
                 .iter()
-                .any(|option| option.value.as_deref() == Some("glm-4.7") && !option.current)
+                .any(|option| option.value.as_deref() == Some("glm-4.7") && option.current)
+        );
+    }
+
+    #[tokio::test]
+    async fn session_model_override_is_isolated_and_never_mutates_settings() {
+        let home = test_path("session-model-home");
+        let cwd = test_path("session-model-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let original = r#"{"model":"haiku","unknown":{"keep":true}}"#;
+        tokio::fs::write(home.join("settings.json"), original)
+            .await
+            .expect("settings");
+
+        let app = AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home.clone()),
+                env_overrides: orbcode_config::sealed_provider_env_overrides(),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+        let first = app.bootstrap(None).await.expect("first session").session;
+        let second = app.bootstrap(None).await.expect("second session").session;
+
+        let changed = app
+            .set_session_model(&first.session_id, Some("sonnet".to_string()))
+            .await
+            .expect("set first session model");
+        assert_eq!(changed.model_selection.provider, ProviderId::Anthropic);
+        assert_eq!(
+            app.sessions
+                .effective_config_for_session(&first.session_id)
+                .provider_model_setting()
+                .as_deref(),
+            Some("sonnet")
+        );
+        assert_eq!(
+            app.sessions
+                .effective_config_for_session(&second.session_id)
+                .provider_model_setting()
+                .as_deref(),
+            Some("haiku")
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(home.join("settings.json"))
+                .await
+                .expect("read unchanged settings"),
+            original
+        );
+
+        app.set_session_model_override(
+            &first.session_id,
+            orbcode_app_server_protocol::RuntimeModelOverride::Inherit,
+        )
+        .await
+        .expect("clear first session model");
+        assert_eq!(
+            app.sessions
+                .effective_config_for_session(&first.session_id)
+                .provider_model_setting()
+                .as_deref(),
+            Some("haiku")
+        );
+        assert_eq!(
+            app.sessions
+                .effective_config_for_session(&second.session_id)
+                .provider_model_setting()
+                .as_deref(),
+            Some("haiku")
         );
     }
 

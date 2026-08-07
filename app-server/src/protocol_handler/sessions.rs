@@ -6,7 +6,7 @@ use orbcode_app_server_protocol::{
 };
 use serde_json::Value;
 
-use super::{core_error, success, try_parse};
+use super::{core_error, invalid_params, success, try_parse};
 use crate::AppServer;
 
 impl AppServer {
@@ -169,7 +169,14 @@ impl AppServer {
 
     pub(super) async fn handle_session_set_model(&self, params: Option<Value>) -> ResponseResult {
         let p: SetSessionModelParams = try_parse!(params);
-        match self.set_session_model(&p.session_id, p.model).await {
+        let selection = match p.selection() {
+            Ok(selection) => selection,
+            Err(message) => return invalid_params(message),
+        };
+        match self
+            .set_session_model_override(&p.session_id, selection)
+            .await
+        {
             Ok(state) => success(state),
             Err(e) => core_error(e),
         }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use orbcode_config::PermissionMode;
+use orbcode_app_server_protocol::PermissionMode;
 use orbcode_protocol::{
     MessageRole, ProviderId, StreamEvent, TokenUsage, ToolUseCompletionKind, TranscriptBlock,
     TranscriptMessage,

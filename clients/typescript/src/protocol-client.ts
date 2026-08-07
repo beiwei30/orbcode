@@ -14,11 +14,14 @@ import type {
   BootstrapParams,
   BootstrapState,
   ClientMessage,
+  EditorModeResult,
+  EditorModeSetting,
   InitializeResult,
   McpTrustDecisionWire,
   OutputStyleOptionsResult,
   OutputStyleResult,
   PermissionDecisionWire,
+  PermissionOverview,
   ResponseResult,
   SandboxLocalSettings,
   SandboxSettingsUpdate,
@@ -32,6 +35,8 @@ import type {
   SetSessionModelParams,
   SetSessionPermissionModeParams,
   SettingLockedResult,
+  ThemeResult,
+  ThemeSetting,
   TurnCancelResult,
   TurnSubmitParams,
   TurnSubmitResult,
@@ -223,6 +228,10 @@ export class ProtocolClient {
     return this.requestData<SessionListResult>("session/list");
   }
 
+  async permissionOverview(): Promise<PermissionOverview> {
+    return this.requestData<PermissionOverview>("permission/overview");
+  }
+
   async bootstrap(params: BootstrapParams = {}): Promise<BootstrapState> {
     return this.requestData<BootstrapState>("session/bootstrap", params);
   }
@@ -256,8 +265,30 @@ export class ProtocolClient {
 
   async setSessionModel(
     params: SetSessionModelParams,
+  ): Promise<SessionControlState>;
+  async setSessionModel(
+    sessionId: string,
+    model: string | null,
+  ): Promise<SessionControlState>;
+  async setSessionModel(
+    paramsOrSessionId: SetSessionModelParams | string,
+    model?: string | null,
   ): Promise<SessionControlState> {
+    const params: SetSessionModelParams =
+      typeof paramsOrSessionId === "string"
+        ? { session_id: paramsOrSessionId, model: model ?? null }
+        : paramsOrSessionId;
     return this.requestData<SessionControlState>("session/set_model", params);
+  }
+
+  async clearSessionModelOverride(
+    sessionId: string,
+  ): Promise<SessionControlState> {
+    return this.setSessionModel({
+      session_id: sessionId,
+      model: null,
+      inherit: true,
+    });
   }
 
   async setSessionEffort(
@@ -312,6 +343,24 @@ export class ProtocolClient {
       { key },
     );
     return result.locked;
+  }
+
+  async theme(): Promise<ThemeResult> {
+    return this.requestData<ThemeResult>("settings/theme");
+  }
+
+  async setTheme(theme: ThemeSetting): Promise<ThemeResult> {
+    return this.requestData<ThemeResult>("settings/set_theme", { theme });
+  }
+
+  async editorMode(): Promise<EditorModeResult> {
+    return this.requestData<EditorModeResult>("settings/editor_mode");
+  }
+
+  async setEditorMode(mode: EditorModeSetting): Promise<EditorModeResult> {
+    return this.requestData<EditorModeResult>("settings/set_editor_mode", {
+      mode,
+    });
   }
 
   async respondToPermission(

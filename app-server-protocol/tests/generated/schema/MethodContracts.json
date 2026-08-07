@@ -680,6 +680,7 @@
   "BootstrapState": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "BootstrapState",
+    "description": "Client-owned appearance and editing preferences. Bootstrap uses the legacy\nPascalCase wire spelling through field adapters while typed settings\nmethods use each enum's canonical settings spelling.",
     "type": "object",
     "properties": {
       "session": {
@@ -728,22 +729,18 @@
         "$ref": "#/$defs/TokenWarningOptions"
       },
       "theme": {
-        "$ref": "#/$defs/ThemeSetting"
+        "type": "string"
       },
       "editor_mode": {
-        "$ref": "#/$defs/EditorModeSetting"
+        "type": "string"
       },
       "default_provider": {
-        "$ref": "#/$defs/ProviderId"
+        "type": "string"
       },
       "fallback_provider": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/ProviderId"
-          },
-          {
-            "type": "null"
-          }
+        "type": [
+          "string",
+          "null"
         ]
       },
       "max_retries": {
@@ -3085,25 +3082,6 @@
           "auto_compact_enabled"
         ]
       },
-      "ThemeSetting": {
-        "type": "string",
-        "enum": [
-          "Auto",
-          "Dark",
-          "Light",
-          "DarkDaltonized",
-          "LightDaltonized",
-          "DarkAnsi",
-          "LightAnsi"
-        ]
-      },
-      "EditorModeSetting": {
-        "type": "string",
-        "enum": [
-          "Normal",
-          "Vim"
-        ]
-      },
       "PermissionContext": {
         "description": "Data-only view of the effective permission context.\n\nPermission evaluation and structured bash/path matching remain internal to\ncore and config; this DTO exposes only the values clients render.",
         "type": "object",
@@ -3411,12 +3389,21 @@
     "type": "object",
     "properties": {
       "mode": {
-        "type": "string"
+        "$ref": "#/$defs/EditorModeSetting"
       }
     },
     "required": [
       "mode"
-    ]
+    ],
+    "$defs": {
+      "EditorModeSetting": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "vim"
+        ]
+      }
+    }
   },
   "EditorModeResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3424,12 +3411,21 @@
     "type": "object",
     "properties": {
       "editor_mode": {
-        "type": "string"
+        "$ref": "#/$defs/EditorModeSetting"
       }
     },
     "required": [
       "editor_mode"
-    ]
+    ],
+    "$defs": {
+      "EditorModeSetting": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "vim"
+        ]
+      }
+    }
   },
   "EffortParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4772,12 +4768,26 @@
     "type": "object",
     "properties": {
       "mode": {
-        "type": "string"
+        "$ref": "#/$defs/PermissionMode"
       }
     },
     "required": [
       "mode"
-    ]
+    ],
+    "$defs": {
+      "PermissionMode": {
+        "description": "Protocol-owned permission mode used by session-scoped client controls.",
+        "type": "string",
+        "enum": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "dontAsk",
+          "plan",
+          "auto"
+        ]
+      }
+    }
   },
   "PermissionRuleParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4785,7 +4795,7 @@
     "type": "object",
     "properties": {
       "kind": {
-        "type": "string"
+        "$ref": "#/$defs/PermissionRuleKind"
       },
       "rule": {
         "type": "string"
@@ -4794,7 +4804,16 @@
     "required": [
       "kind",
       "rule"
-    ]
+    ],
+    "$defs": {
+      "PermissionRuleKind": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      }
+    }
   },
   "PermissionRuleUpdateResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4809,13 +4828,168 @@
       },
       "changed": {
         "type": "boolean"
+      },
+      "kind": {
+        "$ref": "#/$defs/PermissionRuleKind"
+      },
+      "target": {
+        "$ref": "#/$defs/PermissionRuleTargetScope"
+      },
+      "source": {
+        "$ref": "#/$defs/SettingSource"
+      },
+      "effective_rules": {
+        "$ref": "#/$defs/EffectivePermissionRules"
       }
     },
     "required": [
       "path",
       "rule",
-      "changed"
-    ]
+      "changed",
+      "kind",
+      "target",
+      "source",
+      "effective_rules"
+    ],
+    "$defs": {
+      "PermissionRuleKind": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      },
+      "PermissionRuleTargetScope": {
+        "description": "Storage scope for a permission-rule mutation. The endpoint-specific\nparameter DTOs expose this before app-server opens either storage path.",
+        "type": "string",
+        "enum": [
+          "settings",
+          "session"
+        ]
+      },
+      "SettingSource": {
+        "type": "string",
+        "enum": [
+          "defaults",
+          "user",
+          "project",
+          "local",
+          "managed",
+          "cli",
+          "environment",
+          "session"
+        ]
+      },
+      "EffectivePermissionRules": {
+        "description": "Source-preserving permission projection. Matching remains owned by config's\nstructured parser; this DTO only describes effective rule provenance.",
+        "type": "object",
+        "properties": {
+          "managed": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SourcedPermissionRuleGroup"
+            }
+          },
+          "startup": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          },
+          "session": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          },
+          "runtime_added": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          },
+          "remembered": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          },
+          "settings_locked": {
+            "type": "boolean"
+          },
+          "allow_managed_permission_rules_only": {
+            "type": "boolean"
+          },
+          "precedence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/PermissionRuleEffect"
+            }
+          }
+        },
+        "required": [
+          "managed",
+          "settings",
+          "startup",
+          "session",
+          "runtime_added",
+          "remembered",
+          "settings_locked",
+          "allow_managed_permission_rules_only",
+          "precedence"
+        ]
+      },
+      "PermissionRuleGroup": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "allow",
+          "deny",
+          "ask"
+        ]
+      },
+      "SourcedPermissionRuleGroup": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/$defs/SettingSource"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "mutable": {
+            "type": "boolean"
+          },
+          "rules": {
+            "$ref": "#/$defs/PermissionRuleGroup"
+          }
+        },
+        "required": [
+          "source",
+          "active",
+          "mutable",
+          "rules"
+        ]
+      },
+      "PermissionRuleEffect": {
+        "type": "string",
+        "enum": [
+          "deny",
+          "ask",
+          "allow"
+        ]
+      }
+    }
   },
   "PermissionSetModeParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4823,12 +4997,26 @@
     "type": "object",
     "properties": {
       "mode": {
-        "type": "string"
+        "$ref": "#/$defs/PermissionMode"
       }
     },
     "required": [
       "mode"
-    ]
+    ],
+    "$defs": {
+      "PermissionMode": {
+        "description": "Protocol-owned permission mode used by session-scoped client controls.",
+        "type": "string",
+        "enum": [
+          "default",
+          "acceptEdits",
+          "bypassPermissions",
+          "dontAsk",
+          "plan",
+          "auto"
+        ]
+      }
+    }
   },
   "PreUserInstructionsResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5160,6 +5348,9 @@
       "permission_mode": {
         "$ref": "#/$defs/PermissionMode"
       },
+      "model_selection": {
+        "$ref": "#/$defs/EffectiveModelSelection"
+      },
       "model_options": {
         "type": "array",
         "items": {
@@ -5182,6 +5373,7 @@
     "required": [
       "session_id",
       "permission_mode",
+      "model_selection",
       "model_options",
       "effort_options"
     ],
@@ -5196,6 +5388,174 @@
           "dontAsk",
           "plan",
           "auto"
+        ]
+      },
+      "EffectiveModelSelection": {
+        "type": "object",
+        "properties": {
+          "persisted": {
+            "$ref": "#/$defs/PersistedModelSetting"
+          },
+          "runtime_override": {
+            "$ref": "#/$defs/RuntimeModelOverride"
+          },
+          "requested_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/$defs/ModelSelectionSource"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/$defs/ProviderModelSelection"
+          }
+        },
+        "required": [
+          "persisted",
+          "runtime_override",
+          "source",
+          "provider",
+          "resolution"
+        ]
+      },
+      "PersistedModelSetting": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "locked"
+        ]
+      },
+      "SettingSource": {
+        "type": "string",
+        "enum": [
+          "defaults",
+          "user",
+          "project",
+          "local",
+          "managed",
+          "cli",
+          "environment",
+          "session"
+        ]
+      },
+      "RuntimeModelOverride": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "inherit"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "default"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "model"
+              },
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "model"
+            ]
+          }
+        ]
+      },
+      "ModelSelectionSource": {
+        "type": "string",
+        "enum": [
+          "runtime",
+          "environment",
+          "persisted",
+          "provider_default"
+        ]
+      },
+      "ProviderModelSelection": {
+        "type": "object",
+        "properties": {
+          "requested_setting": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "family": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "request_model": {
+            "type": "string"
+          },
+          "display_label": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "model",
+          "request_model",
+          "display_label",
+          "display_name",
+          "capabilities"
         ]
       },
       "SessionModelOption": {
@@ -5858,7 +6218,7 @@
         "type": "string"
       },
       "kind": {
-        "type": "string"
+        "$ref": "#/$defs/PermissionRuleKind"
       },
       "rule": {
         "type": "string"
@@ -5868,7 +6228,16 @@
       "session_id",
       "kind",
       "rule"
-    ]
+    ],
+    "$defs": {
+      "PermissionRuleKind": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "deny"
+        ]
+      }
+    }
   },
   "SessionRecordMessageParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5928,12 +6297,6 @@
     "title": "SetModelParams",
     "type": "object",
     "properties": {
-      "session_id": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
       "model": {
         "type": [
           "string",
@@ -5949,11 +6312,185 @@
     "properties": {
       "display_name": {
         "type": "string"
+      },
+      "model_selection": {
+        "$ref": "#/$defs/EffectiveModelSelection"
       }
     },
     "required": [
-      "display_name"
-    ]
+      "display_name",
+      "model_selection"
+    ],
+    "$defs": {
+      "EffectiveModelSelection": {
+        "type": "object",
+        "properties": {
+          "persisted": {
+            "$ref": "#/$defs/PersistedModelSetting"
+          },
+          "runtime_override": {
+            "$ref": "#/$defs/RuntimeModelOverride"
+          },
+          "requested_model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/$defs/ModelSelectionSource"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/$defs/ProviderModelSelection"
+          }
+        },
+        "required": [
+          "persisted",
+          "runtime_override",
+          "source",
+          "provider",
+          "resolution"
+        ]
+      },
+      "PersistedModelSetting": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SettingSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "locked"
+        ]
+      },
+      "SettingSource": {
+        "type": "string",
+        "enum": [
+          "defaults",
+          "user",
+          "project",
+          "local",
+          "managed",
+          "cli",
+          "environment",
+          "session"
+        ]
+      },
+      "RuntimeModelOverride": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "inherit"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "default"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "model"
+              },
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "model"
+            ]
+          }
+        ]
+      },
+      "ModelSelectionSource": {
+        "type": "string",
+        "enum": [
+          "runtime",
+          "environment",
+          "persisted",
+          "provider_default"
+        ]
+      },
+      "ProviderModelSelection": {
+        "type": "object",
+        "properties": {
+          "requested_setting": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "family": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "request_model": {
+            "type": "string"
+          },
+          "display_label": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "model",
+          "request_model",
+          "display_label",
+          "display_name",
+          "capabilities"
+        ]
+      }
+    }
   },
   "SetSessionEffortParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5984,11 +6521,14 @@
         "type": "string"
       },
       "model": {
-        "description": "`None` selects the provider's configured default.",
+        "description": "`None` selects the provider's configured default. `inherit` is a\ndistinct clear operation that resumes env/persisted selection.",
         "type": [
           "string",
           "null"
         ]
+      },
+      "inherit": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -6286,12 +6826,26 @@
     "type": "object",
     "properties": {
       "theme": {
-        "type": "string"
+        "$ref": "#/$defs/ThemeSetting"
       }
     },
     "required": [
       "theme"
-    ]
+    ],
+    "$defs": {
+      "ThemeSetting": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "dark",
+          "light",
+          "dark-daltonized",
+          "light-daltonized",
+          "dark-ansi",
+          "light-ansi"
+        ]
+      }
+    }
   },
   "ThemeResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -6299,12 +6853,26 @@
     "type": "object",
     "properties": {
       "theme": {
-        "type": "string"
+        "$ref": "#/$defs/ThemeSetting"
       }
     },
     "required": [
       "theme"
-    ]
+    ],
+    "$defs": {
+      "ThemeSetting": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "dark",
+          "light",
+          "dark-daltonized",
+          "light-daltonized",
+          "dark-ansi",
+          "light-ansi"
+        ]
+      }
+    }
   },
   "ThinkingBudgetResult": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

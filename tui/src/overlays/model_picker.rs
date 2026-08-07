@@ -138,8 +138,9 @@ impl TuiState {
         command: &str,
         app_server: &AppClient,
     ) -> Result<()> {
-        let options_result = app_server.model_options().await?;
-        let options: Vec<ModelOption> = options_result
+        let controls = app_server.session_control_state(&self.session_id).await?;
+        let options: Vec<ModelOption> = controls
+            .model_options
             .iter()
             .map(|o| ModelOption {
                 value: o.value.clone(),
@@ -148,7 +149,7 @@ impl TuiState {
                 current: o.current,
             })
             .collect();
-        let effort = app_server.effort_level().await?.effort;
+        let effort = controls.effort_level;
         self.overlay = Some(OverlayState::ModelPicker(ModelPickerState::new(
             command, options, effort,
         )));
@@ -164,8 +165,10 @@ impl TuiState {
         effort: EffortOverrideSelection,
     ) -> Result<()> {
         let selected_default = model.is_none();
-        let result = app_server.set_model_override(model).await?;
-        let display_name = result.display_name;
+        let result = app_server
+            .set_session_model(&self.session_id, model)
+            .await?;
+        let display_name = result.model_selection.resolution.display_name.clone();
         let effort_message = match effort {
             Some(effort) => {
                 Some(set_effort_override_message(app_server, &self.session_id, effort).await?)
@@ -176,7 +179,7 @@ impl TuiState {
         self.overlay = None;
         self.refresh_status_effort(app_server).await;
 
-        let mut model_name = app_server.model_name().await?.model_name;
+        let mut model_name = result.model_selection.resolution.request_model;
         if selected_default {
             model_name.push_str(" (default)");
         }

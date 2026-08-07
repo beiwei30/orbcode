@@ -6,8 +6,9 @@ use orbcode_protocol::{
 };
 
 use crate::{
-    ContextWindowOptions, EditorModeSetting, MaxOutputTokenOptions, PermissionContext,
-    PermissionMode, StatusAuthOverview, ThemeSetting, TokenWarningOptions,
+    ClientPreferences, ContextWindowOptions, EffectiveModelSelection, EffectivePermissionRules,
+    MaxOutputTokenOptions, PermissionContext, PermissionMode, StatusAuthOverview, StatuslineConfig,
+    TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -24,15 +25,17 @@ pub struct BootstrapState {
     pub context_window_options: ContextWindowOptions,
     pub max_output_token_options: MaxOutputTokenOptions,
     pub token_warning_options: TokenWarningOptions,
-    pub theme: ThemeSetting,
-    pub editor_mode: EditorModeSetting,
+    #[serde(flatten)]
+    pub preferences: ClientPreferences,
+    #[schemars(with = "String")]
     pub default_provider: ProviderId,
+    #[schemars(with = "Option<String>")]
     pub fallback_provider: Option<ProviderId>,
     pub max_retries: usize,
     pub permissions: PermissionContext,
     pub mcp_slash_suggestions: McpSlashSuggestionCatalog,
-    pub statusline_command: Option<String>,
-    pub statusline_refresh_interval_secs: u64,
+    #[serde(flatten)]
+    pub statusline: StatuslineConfig,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -57,6 +60,7 @@ pub struct AcpDeleteSessionParams {
 pub struct SessionControlState {
     pub session_id: String,
     pub permission_mode: PermissionMode,
+    pub model_selection: EffectiveModelSelection,
     pub model_options: Vec<SessionModelOption>,
     #[schemars(with = "Option<String>")]
     pub effort_level: Option<EffortLevel>,
@@ -112,10 +116,14 @@ pub struct McpResourceSlashSuggestion {
     pub description: String,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PermissionOverview {
     pub permissions: PermissionContext,
     pub allow_all: bool,
+    #[serde(default)]
+    pub effective_rules: EffectivePermissionRules,
+    // Compatibility fields retained for protocol 1.0 clients. New consumers
+    // use `effective_rules`, which also carries ask rules and source metadata.
     pub settings_allowed_rules: Vec<String>,
     pub settings_denied_rules: Vec<String>,
     pub startup_allowed_rules: Vec<String>,
@@ -126,6 +134,73 @@ pub struct PermissionOverview {
     pub runtime_denied_rules: Vec<String>,
     pub configured_additional_directories: Vec<PathBuf>,
     pub session_additional_directories: Vec<PathBuf>,
+}
+
+impl PermissionOverview {
+    fn has_effective_rule_projection(&self) -> bool {
+        !self.effective_rules.precedence.is_empty()
+    }
+
+    pub fn configured_rules(&self, kind: crate::PermissionRuleKind) -> Vec<String> {
+        if !self.has_effective_rule_projection() {
+            return match kind {
+                crate::PermissionRuleKind::Allow => self.settings_allowed_rules.clone(),
+                crate::PermissionRuleKind::Deny => self.settings_denied_rules.clone(),
+            };
+        }
+        let mut rules = self.effective_rules.managed.rules(kind).to_vec();
+        for group in self
+            .effective_rules
+            .settings
+            .iter()
+            .filter(|group| group.active)
+        {
+            extend_unique(&mut rules, group.rules.rules(kind));
+        }
+        rules
+    }
+
+    pub fn startup_rules(&self, kind: crate::PermissionRuleKind) -> Vec<String> {
+        if self.has_effective_rule_projection() {
+            self.effective_rules.startup.rules(kind).to_vec()
+        } else {
+            match kind {
+                crate::PermissionRuleKind::Allow => self.startup_allowed_rules.clone(),
+                crate::PermissionRuleKind::Deny => self.startup_denied_rules.clone(),
+            }
+        }
+    }
+
+    pub fn runtime_added_rules(&self, kind: crate::PermissionRuleKind) -> Vec<String> {
+        if self.has_effective_rule_projection() {
+            self.effective_rules.runtime_added.rules(kind).to_vec()
+        } else {
+            match kind {
+                crate::PermissionRuleKind::Allow => self.edited_allowed_rules.clone(),
+                crate::PermissionRuleKind::Deny => self.edited_denied_rules.clone(),
+            }
+        }
+    }
+
+    pub fn session_rules(&self, kind: crate::PermissionRuleKind) -> Vec<String> {
+        if !self.has_effective_rule_projection() {
+            return match kind {
+                crate::PermissionRuleKind::Allow => self.runtime_allowed_rules.clone(),
+                crate::PermissionRuleKind::Deny => self.runtime_denied_rules.clone(),
+            };
+        }
+        let mut rules = self.effective_rules.session.rules(kind).to_vec();
+        extend_unique(&mut rules, self.effective_rules.remembered.rules(kind));
+        rules
+    }
+}
+
+fn extend_unique(target: &mut Vec<String>, source: &[String]) {
+    for rule in source {
+        if !target.iter().any(|existing| existing == rule) {
+            target.push(rule.clone());
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -204,16 +279,6 @@ impl IntoIterator for McpStatusResult {
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
-}
-
-#[derive(
-    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-pub struct ModelChangeResult {
-    #[schemars(with = "String")]
-    pub provider: ProviderId,
-    pub model: String,
-    pub display_name: String,
 }
 
 #[derive(

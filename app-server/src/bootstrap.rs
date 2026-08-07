@@ -1,4 +1,6 @@
-use orbcode_app_server_protocol::{BootstrapParams, BootstrapState, McpSlashSuggestionCatalog};
+use orbcode_app_server_protocol::{
+    BootstrapParams, BootstrapState, ClientPreferences, McpSlashSuggestionCatalog, StatuslineConfig,
+};
 use orbcode_core::CoreError;
 use orbcode_protocol::{SessionRecord, StreamEvent};
 
@@ -202,18 +204,25 @@ impl AppServer {
                 config.max_output_token_options(),
             ),
             token_warning_options: token_warning_options_to_wire(config.token_warning_options()),
-            theme: theme_setting_to_wire(self.sessions.theme_setting()),
-            editor_mode: editor_mode_setting_to_wire(self.sessions.editor_mode_setting()),
+            preferences: {
+                let preferences = self.sessions.client_preferences();
+                ClientPreferences {
+                    theme: theme_setting_to_wire(preferences.theme),
+                    editor_mode: editor_mode_setting_to_wire(preferences.editor_mode),
+                }
+            },
             default_provider: config.default_provider,
             fallback_provider: config.fallback_provider,
             max_retries: config.max_retries,
             permissions: permission_context_to_wire(self.sessions.permission_context()),
             mcp_slash_suggestions,
-            statusline_command: config.settings.statusline_command.clone(),
-            statusline_refresh_interval_secs: config
-                .settings
-                .statusline_refresh_interval_secs
-                .unwrap_or(30),
+            statusline: {
+                let statusline = config.settings.statusline_config();
+                StatuslineConfig {
+                    command: statusline.command,
+                    refresh_interval_secs: statusline.refresh_interval_secs,
+                }
+            },
         })
     }
 }

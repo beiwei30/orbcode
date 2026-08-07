@@ -8,13 +8,14 @@ use orbcode_app_server_protocol::{
     SessionIdParams, SetModelParams, SetModelResult, SetThinkingBudgetParams, SettingKeyParams,
     SettingLockedResult, StringPathParams, ThemeParams, ThemeResult,
 };
-use orbcode_config::ThemeSetting;
 use serde_json::Value;
 
 use super::{core_error, success, try_parse};
 use crate::AppServer;
 use crate::protocol_conversion::{
-    sandbox_local_settings_to_wire, sandbox_settings_update_from_wire,
+    editor_mode_setting_from_wire, editor_mode_setting_to_wire, effective_model_selection_to_wire,
+    sandbox_local_settings_to_wire, sandbox_settings_update_from_wire, theme_setting_from_wire,
+    theme_setting_to_wire,
 };
 
 impl AppServer {
@@ -40,15 +41,14 @@ impl AppServer {
 
     pub(super) async fn handle_settings_set_model(&self, params: Option<Value>) -> ResponseResult {
         let p: SetModelParams = try_parse!(params);
-        match p.session_id {
-            Some(session_id) => match self.set_session_model_override(&session_id, p.model).await {
-                Ok(result) => success(result),
-                Err(e) => core_error(e),
-            },
-            None => match self.set_model_override(p.model).await {
-                Ok(display_name) => success(SetModelResult { display_name }),
-                Err(e) => core_error(e),
-            },
+        match self.set_persisted_model_setting(p.model).await {
+            Ok(display_name) => success(SetModelResult {
+                display_name,
+                model_selection: effective_model_selection_to_wire(
+                    self.sessions.effective_config().effective_model_selection(),
+                ),
+            }),
+            Err(e) => core_error(e),
         }
     }
 
@@ -91,18 +91,16 @@ impl AppServer {
 
     pub(super) fn handle_settings_theme(&self, _params: Option<Value>) -> ResponseResult {
         success(ThemeResult {
-            theme: self.theme_setting().as_str().to_string(),
+            theme: theme_setting_to_wire(self.theme_setting()),
         })
     }
 
     pub(super) async fn handle_settings_set_theme(&self, params: Option<Value>) -> ResponseResult {
         let p: ThemeParams = try_parse!(params);
-        let Some(theme) = ThemeSetting::parse(&p.theme) else {
-            return super::invalid_params(format!("unknown theme: {}", p.theme));
-        };
+        let theme = theme_setting_from_wire(p.theme);
         match self.set_theme_setting(theme).await {
             Ok(theme) => success(ThemeResult {
-                theme: theme.as_str().to_string(),
+                theme: theme_setting_to_wire(theme),
             }),
             Err(e) => core_error(e),
         }
@@ -226,7 +224,7 @@ impl AppServer {
     pub(super) fn handle_settings_editor_mode(&self, _params: Option<Value>) -> ResponseResult {
         let mode = self.editor_mode_setting();
         success(EditorModeResult {
-            editor_mode: mode.as_str().to_string(),
+            editor_mode: editor_mode_setting_to_wire(mode),
         })
     }
 
@@ -235,12 +233,10 @@ impl AppServer {
         params: Option<Value>,
     ) -> ResponseResult {
         let p: EditorModeParams = try_parse!(params);
-        let Some(mode) = orbcode_config::EditorModeSetting::parse(&p.mode) else {
-            return super::invalid_params(format!("unknown editor mode: {}", p.mode));
-        };
+        let mode = editor_mode_setting_from_wire(p.mode);
         match self.set_editor_mode_setting(mode).await {
             Ok(mode) => success(EditorModeResult {
-                editor_mode: mode.as_str().to_string(),
+                editor_mode: editor_mode_setting_to_wire(mode),
             }),
             Err(e) => core_error(e),
         }

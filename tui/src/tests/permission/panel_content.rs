@@ -826,6 +826,7 @@ fn render_permission_overview_includes_gates_and_rules() {
             additional_directories: vec![PathBuf::from("/tmp/extra")],
         },
         allow_all: true,
+        effective_rules: Default::default(),
         settings_allowed_rules: vec!["Bash(git status:*)".to_string()],
         settings_denied_rules: vec!["Bash(rm:*)".to_string()],
         startup_allowed_rules: vec!["Read(src/**)".to_string()],

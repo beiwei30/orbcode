@@ -266,6 +266,7 @@ fn permission_picker_lines_at_narrow_40_col() {
             additional_directories: Vec::new(),
         },
         allow_all: false,
+        effective_rules: Default::default(),
         settings_allowed_rules: vec!["Bash(cargo test:*)".to_string()],
         settings_denied_rules: Vec::new(),
         startup_allowed_rules: Vec::new(),

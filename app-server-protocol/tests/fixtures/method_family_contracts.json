@@ -10,7 +10,21 @@
   "permission": {
     "path": "/tmp/settings.json",
     "rule": "Bash(cargo test:*)",
-    "changed": true
+    "changed": true,
+    "kind": "allow",
+    "target": "settings",
+    "source": "user",
+    "effective_rules": {
+      "managed": { "allow": [], "deny": [], "ask": [] },
+      "settings": [],
+      "startup": { "allow": [], "deny": [], "ask": [] },
+      "session": { "allow": [], "deny": [], "ask": [] },
+      "runtime_added": { "allow": [], "deny": [], "ask": [] },
+      "remembered": { "allow": [], "deny": [], "ask": [] },
+      "settings_locked": false,
+      "allow_managed_permission_rules_only": false,
+      "precedence": ["deny", "ask", "allow"]
+    }
   },
   "settings": {
     "enabled": true,

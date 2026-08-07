@@ -27,7 +27,7 @@ pub(super) use crossterm::{
     event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
 };
 pub(super) use orbcode_app_server::{
-    AppServer, CostSummary, ModelOption, ModelUsage, OutputStyleOption, PermissionRuleSettingKind,
+    AppServer, CostSummary, ModelOption, ModelUsage, OutputStyleOption,
     suggested_bash_permission_rules,
 };
 pub(super) use orbcode_app_server::{
@@ -40,7 +40,8 @@ pub(super) use orbcode_app_server_client::{
     ContextTokenSource, ContextUsageOverview, ContextWindowOptions, CostOverview, DoctorCheck,
     DoctorReport, DoctorStatus, MaxOutputTokenOptions, McpResourceSlashSuggestion,
     McpServerSlashSuggestion, McpSlashSuggestionCatalog, McpToolSlashSuggestion,
-    MemoryFileOverview, MemoryOverview, PermissionOverview, PermissionRuleOverview,
+    MemoryFileOverview, MemoryOverview, PermissionOverview,
+    PermissionRuleKind as PermissionRuleSettingKind, PermissionRuleOverview,
     ProviderRequestDebugSnapshot, SandboxFilesystemLocalSettings, SandboxLocalSettings,
     SandboxNetworkLocalSettings, StatsActivityDay, StatsOverview, StatusAuthOverview,
     StatusOverview, ThemeSetting, TokenWarningOptions, UsageOverview, WorkspaceDiff,

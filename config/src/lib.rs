@@ -32,9 +32,11 @@ pub use auth::{
 };
 pub use claude_home::resolve_env_value_with;
 pub use claude_home::{
-    ClaudeSettings, EditorModeSetting, HookSource, McpServerTrustSetting, OutputStyleOption,
-    PermissionRuleSettingKind, PermissionRuleSettingsUpdate, SandboxFilesystemLocalSettings,
-    SandboxLocalSettings, SandboxNetworkLocalSettings, SandboxSettingsUpdate, ShadowedHome,
+    ClaudeSettings, DEFAULT_STATUSLINE_REFRESH_INTERVAL_SECS, EditorModeSetting, HookSource,
+    MAX_STATUSLINE_REFRESH_INTERVAL_SECS, MIN_STATUSLINE_REFRESH_INTERVAL_SECS,
+    McpServerTrustSetting, OutputStyleOption, PermissionRuleSettingKind,
+    PermissionRuleSettingsUpdate, SandboxFilesystemLocalSettings, SandboxLocalSettings,
+    SandboxNetworkLocalSettings, SandboxSettingsUpdate, ShadowedHome, StatuslineConfig,
     ThemeSetting, add_permission_rule_setting, add_sandbox_excluded_command,
     load_mcp_trust_overrides, load_output_style_setting, load_sandbox_local_settings,
     output_style_options, remove_permission_rule_setting, sanitize_path,
@@ -43,8 +45,10 @@ pub use claude_home::{
     update_sandbox_settings, update_theme_setting,
 };
 pub use config::{
-    AppConfig, AppConfigOverrides, ContextWindowOptions, MaxOutputTokenOptions, ModelOption,
-    PermissionMode, TokenWarningOptions, parse_tool_rule_list, sealed_provider_env_overrides,
+    AppConfig, AppConfigOverrides, ContextWindowOptions, EffectiveModelSelection,
+    MaxOutputTokenOptions, ModelOption, ModelSelectionSource, PermissionMode,
+    PersistedModelSetting, TokenWarningOptions, parse_tool_rule_list,
+    sealed_provider_env_overrides,
 };
 pub use env_compat::resolve_process_env;
 pub use hooks::{
@@ -84,11 +88,11 @@ pub use plugins::{
 };
 pub use policy::{
     EffectivePolicy, EffectiveValue, ManagedOrigin, PolicyConflict, PolicyConflictKind,
-    PolicyLockError, SettingsLayer, SettingsLayerError, SettingsLayers, SettingsSource,
-    StrictPluginOnly,
+    PolicyLockError, SettingsLayer, SettingsLayerError, SettingsLayers,
+    SettingsPermissionRuleGroup, SettingsPermissionRules, SettingsSource, StrictPluginOnly,
 };
 pub use proxy::{OutboundProxyConfig, OutboundProxyRoute};
-pub use runtime_state::{RuntimeModelOverride, RuntimeSessionState};
+pub use runtime_state::{ClientPreferences, RuntimeModelOverride, RuntimeSessionState};
 pub use token_accounting::{
     AUTOCOMPACT_BUFFER_TOKENS, COMPACT_MAX_OUTPUT_TOKENS, ERROR_THRESHOLD_BUFFER_TOKENS,
     MANUAL_COMPACT_BUFFER_TOKENS, MAX_OUTPUT_TOKENS_DEFAULT, MAX_OUTPUT_TOKENS_UPPER_LIMIT,

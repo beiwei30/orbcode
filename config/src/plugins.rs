@@ -66,6 +66,8 @@ pub struct PluginManifest {
     pub homepage: Option<String>,
     pub repository: Option<String>,
     pub license: Option<String>,
+    /// Plugin-owned open MCP configuration; the MCP loader validates it after
+    /// plugin discovery and config must not close over that extension schema.
     pub mcp_servers: Option<Value>,
 }
 
@@ -74,6 +76,7 @@ pub struct PluginManifest {
 pub struct PluginToolDefinition {
     pub name: String,
     pub description: String,
+    /// Plugin-owned JSON Schema, intentionally opaque to settings parsing.
     pub input_schema: Value,
     pub requires_permission: bool,
     pub plugin_id: String,

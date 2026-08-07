@@ -89,6 +89,9 @@ export type BootstrapParams = {
   read_only?: boolean;
 };
 
+/** Client-owned appearance and editing preferences. Bootstrap uses the legacy
+PascalCase wire spelling through field adapters while typed settings
+methods use each enum's canonical settings spelling. */
 export type BootstrapState = {
   session: SessionRecord;
   bootstrap_event: StreamEvent;
@@ -102,10 +105,10 @@ export type BootstrapState = {
   context_window_options: ContextWindowOptions;
   max_output_token_options: MaxOutputTokenOptions;
   token_warning_options: TokenWarningOptions;
-  theme: ThemeSetting;
-  editor_mode: EditorModeSetting;
-  default_provider: ProviderId;
-  fallback_provider?: ProviderId | null;
+  theme: string;
+  editor_mode: string;
+  default_provider: string;
+  fallback_provider?: string | null;
   max_retries: number;
   permissions: PermissionContext;
   mcp_slash_suggestions: McpSlashSuggestionCatalog;
@@ -138,6 +141,7 @@ their protocol-specific shapes. */
 export type SessionControlState = {
   session_id: string;
   permission_mode: PermissionMode;
+  model_selection: EffectiveModelSelection;
   model_options: SessionModelOption[];
   effort_level?: string | null;
   effort_options: string[];
@@ -151,6 +155,7 @@ export interface SetSessionPermissionModeParams {
 export type SetSessionModelParams = {
   session_id: string;
   model?: string | null;
+  inherit?: boolean;
 };
 
 export type SetSessionEffortParams = {
@@ -489,6 +494,13 @@ export interface SessionIdParams {
   session_id: string;
 }
 
+export type SessionModelOption = {
+  value?: string | null;
+  label: string;
+  description: string;
+  current: boolean;
+};
+
 export interface SessionRenameParams {
   session_id: string;
   new_title: string;
@@ -540,21 +552,21 @@ export interface SentResult {
 }
 
 export interface PermissionModeResult {
-  mode: string;
+  mode: PermissionMode;
 }
 
 export interface PermissionSetModeParams {
-  mode: string;
+  mode: PermissionMode;
 }
 
 export interface PermissionRuleParams {
-  kind: string;
+  kind: PermissionRuleKind;
   rule: string;
 }
 
 export interface SessionPermissionRuleParams {
   session_id: string;
-  kind: string;
+  kind: PermissionRuleKind;
   rule: string;
 }
 
@@ -562,6 +574,26 @@ export interface PermissionRuleUpdateResult {
   path: string;
   rule: string;
   changed: boolean;
+  kind: PermissionRuleKind;
+  target: PermissionRuleTargetScope;
+  source: SettingSource;
+  effective_rules: EffectivePermissionRules;
+}
+
+export interface PermissionOverview {
+  permissions: PermissionContext;
+  allow_all: boolean;
+  effective_rules?: EffectivePermissionRules;
+  settings_allowed_rules: string[];
+  settings_denied_rules: string[];
+  startup_allowed_rules: string[];
+  startup_denied_rules: string[];
+  edited_allowed_rules: string[];
+  edited_denied_rules: string[];
+  runtime_allowed_rules: string[];
+  runtime_denied_rules: string[];
+  configured_additional_directories: string[];
+  session_additional_directories: string[];
 }
 
 export interface AddDirectoryParams {
@@ -580,12 +612,12 @@ export interface ModelNameResult {
 export type ModelOptionsResult = ModelOptionOverview[];
 
 export type SetModelParams = {
-  session_id?: string | null;
   model?: string | null;
 };
 
 export interface SetModelResult {
   display_name: string;
+  model_selection: EffectiveModelSelection;
 }
 
 /** Set or clear the per-session thinking-token override. */
@@ -607,11 +639,11 @@ export type ProvidersResult = {
 };
 
 export interface ThemeParams {
-  theme: string;
+  theme: ThemeSetting;
 }
 
 export interface ThemeResult {
-  theme: string;
+  theme: ThemeSetting;
 }
 
 export type EffortParams = {
@@ -645,11 +677,11 @@ export interface KeybindingsLoadResult {
 }
 
 export interface EditorModeParams {
-  mode: string;
+  mode: EditorModeSetting;
 }
 
 export interface EditorModeResult {
-  editor_mode: string;
+  editor_mode: EditorModeSetting;
 }
 
 export type OutputStyleOptionsResult = OutputStyleOptionOverview[];
@@ -1202,7 +1234,30 @@ export type DiscoveredHook = {
   validation: HookValidationStatus;
 };
 
-export type EditorModeSetting = "Normal" | "Vim";
+export type EditorModeSetting = "normal" | "vim";
+
+export type EffectiveModelSelection = {
+  persisted: PersistedModelSetting;
+  runtime_override: RuntimeModelOverride;
+  requested_model?: string | null;
+  source: ModelSelectionSource;
+  provider: string;
+  resolution: ProviderModelSelection;
+};
+
+/** Source-preserving permission projection. Matching remains owned by config's
+structured parser; this DTO only describes effective rule provenance. */
+export interface EffectivePermissionRules {
+  managed: PermissionRuleGroup;
+  settings: SourcedPermissionRuleGroup[];
+  startup: PermissionRuleGroup;
+  session: PermissionRuleGroup;
+  runtime_added: PermissionRuleGroup;
+  remembered: PermissionRuleGroup;
+  settings_locked: boolean;
+  allow_managed_permission_rules_only: boolean;
+  precedence: PermissionRuleEffect[];
+}
 
 export type EffortLevel = "low" | "medium" | "high" | "max";
 
@@ -1420,6 +1475,8 @@ export type ModelOptionOverview = {
   current: boolean;
 };
 
+export type ModelSelectionSource = "runtime" | "environment" | "persisted" | "provider_default";
+
 export interface OutputStyleOptionOverview {
   value: string;
   label: string;
@@ -1442,13 +1499,43 @@ export interface PermissionRequest {
 
 export type PermissionResolutionKind = "approved" | "denied" | "interrupted";
 
+export type PermissionRuleEffect = "deny" | "ask" | "allow";
+
+export interface PermissionRuleGroup {
+  allow: string[];
+  deny: string[];
+  ask: string[];
+}
+
+export type PermissionRuleKind = "allow" | "deny";
+
 export type PermissionRuleOverview = {
   raw: string;
   tool_name: string;
   rule_content?: string | null;
 };
 
+/** Storage scope for a permission-rule mutation. The endpoint-specific
+parameter DTOs expose this before app-server opens either storage path. */
+export type PermissionRuleTargetScope = "settings" | "session";
+
+export type PersistedModelSetting = {
+  value?: string | null;
+  source?: SettingSource | null;
+  locked: boolean;
+};
+
 export type ProviderId = "anthropic" | "openai" | "gemini" | "grok";
+
+export type ProviderModelSelection = {
+  requested_setting?: string | null;
+  family?: string | null;
+  model: string;
+  request_model: string;
+  display_label: string;
+  display_name: string;
+  capabilities: string[];
+};
 
 export interface ProviderRequestDebugOverview {
   provider: string;
@@ -1469,6 +1556,15 @@ export interface ProviderResolutionOverview {
   display_name: string;
   capabilities: string[];
 }
+
+export type RuntimeModelOverride = {
+  kind: "inherit";
+} | {
+  kind: "default";
+} | {
+  kind: "model";
+  model: string;
+};
 
 export interface SandboxFilesystemLocalSettings {
   allow_write: string[];
@@ -1502,13 +1598,6 @@ export interface ServerToolUseUsage {
   web_search_requests?: number;
   web_fetch_requests?: number;
 }
-
-export type SessionModelOption = {
-  value?: string | null;
-  label: string;
-  description: string;
-  current: boolean;
-};
 
 export type SessionRecord = {
   session_id: string;
@@ -1552,6 +1641,8 @@ export type SessionSummary = {
   duration_secs?: number | null;
 };
 
+export type SettingSource = "defaults" | "user" | "project" | "local" | "managed" | "cli" | "environment" | "session";
+
 export type SkillDefinition = {
   name: string;
   description?: string | null;
@@ -1574,6 +1665,13 @@ export type SkillSource = "User" | "Project" | "Bundled" | {
   };
 };
 
+export interface SourcedPermissionRuleGroup {
+  source: SettingSource;
+  active: boolean;
+  mutable: boolean;
+  rules: PermissionRuleGroup;
+}
+
 export type StreamErrorCategory = "auth" | "rate_limit" | "overload" | "network" | "invalid_request" | "prompt_too_long" | "max_output" | "server_error" | "account_suspended" | "unsupported_provider" | "interrupted" | "retry_exhausted" | "other";
 
 export interface TaskOverview {
@@ -1583,7 +1681,7 @@ export interface TaskOverview {
   status: string;
 }
 
-export type ThemeSetting = "Auto" | "Dark" | "Light" | "DarkDaltonized" | "LightDaltonized" | "DarkAnsi" | "LightAnsi";
+export type ThemeSetting = "auto" | "dark" | "light" | "dark-daltonized" | "light-daltonized" | "dark-ansi" | "light-ansi";
 
 export type TokenUsage = {
   input_tokens?: number;
