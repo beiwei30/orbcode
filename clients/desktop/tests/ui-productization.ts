@@ -33,6 +33,7 @@ async function main(): Promise<void> {
   await askUserTurn();
   await mcpTrustTurn();
   await cancelTurn();
+  await sessionMutationsBlockedDuringTurn();
   await reconnectAndResume();
   await disconnectWithPendingRequest();
   await remoteLossIsResumable();
@@ -110,6 +111,28 @@ async function askUserTurn(): Promise<void> {
     const request = controller.snapshot.requests[0];
     assert(request?.kind === "ask_user", "AskUser surface preserves typed request");
     await controller.answerAskUser(request.envelopeId, {
+      database: { kind: "selected", option_id: "mysql" },
+    });
+    await waitFor(
+      () => {
+        const retry = controller.snapshot.requests[0];
+        return retry?.kind === "ask_user" &&
+          retry.envelopeId === request.envelopeId &&
+          retry.request.validation_error !== undefined &&
+          !retry.responding;
+      },
+      "AskUser validation retry",
+    );
+    const retry = controller.snapshot.requests[0];
+    assert(
+      retry?.kind === "ask_user" && retry.envelopeId === request.envelopeId,
+      "AskUser validation failure reuses and reopens the envelope ID",
+    );
+    assert(
+      retry?.kind === "ask_user" && retry.request.validation_error?.code === "unknown_option",
+      "AskUser retry preserves the server validation error",
+    );
+    await controller.answerAskUser(request.envelopeId, {
       database: { kind: "selected", option_id: "postgres" },
     });
     await expectRejected(
@@ -119,6 +142,46 @@ async function askUserTurn(): Promise<void> {
     await waitFor(() => !controller.snapshot.streaming, "AskUser turn completion");
     assert(controller.snapshot.requests.length === 0, "AskUser request resolves exactly once");
     console.log("  PASS: AskUser typed response");
+  } finally {
+    await controller.disconnect();
+    await stopServer(server);
+  }
+}
+
+async function sessionMutationsBlockedDuringTurn(): Promise<void> {
+  const server = await spawnServer("hang");
+  const controller = new DesktopAppController();
+  const activeConnection = await connection(server, 1);
+  try {
+    await controller.attach(activeConnection);
+    const sessionId = controller.snapshot.bootstrap?.session.session_id;
+    assert(!!sessionId, "active-turn mutation test has a session");
+
+    await controller.submitTurn("keep this session active");
+    const before = await activeConnection.client.sessionList();
+    await expectRejected(
+      () => controller.newSession(),
+      "new session is rejected before an active-turn side effect",
+    );
+    await expectRejected(
+      () => controller.forkSession(sessionId!),
+      "fork is rejected before an active-turn side effect",
+    );
+
+    const after = await activeConnection.client.sessionList();
+    assert(
+      after.map((session) => session.session_id).join("\n") ===
+        before.map((session) => session.session_id).join("\n"),
+      "blocked new/fork operations create no server sessions",
+    );
+    assert(
+      controller.snapshot.bootstrap?.session.session_id === sessionId,
+      "active-turn events remain bound to their original session",
+    );
+
+    await controller.cancelTurn();
+    await waitFor(() => !controller.snapshot.streaming, "mutation-test cancellation");
+    console.log("  PASS: active turn blocks session mutation side effects");
   } finally {
     await controller.disconnect();
     await stopServer(server);

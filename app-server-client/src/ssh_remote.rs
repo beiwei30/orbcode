@@ -18,7 +18,7 @@ use tokio::time::timeout;
 use crate::InteractiveQuestionsCapability;
 use crate::{
     AppClient, ChildExitDiagnostics, ChildStdioHandle, ChildStdioTransport,
-    ChildStdioTransportConfig, interactive_client_capabilities,
+    ChildStdioTransportConfig, interactive_persistent_goal_client_capabilities,
 };
 
 /// One reviewed OpenSSH `-o Key=Value` setting.
@@ -124,7 +124,7 @@ impl SshRemoteConnection {
             initialize_timeout,
             AppClient::from_transport_with_capabilities(
                 Box::new(transport),
-                interactive_client_capabilities(),
+                interactive_persistent_goal_client_capabilities(),
             ),
         )
         .await;
@@ -465,9 +465,11 @@ mod tests {
     }
 
     #[test]
-    fn interactive_capability_remains_full_for_ssh_tui() {
+    fn ssh_tui_capability_includes_full_interactions_and_persistent_goals() {
+        let capabilities = interactive_persistent_goal_client_capabilities();
+        assert!(capabilities.persistent_goals);
         assert_eq!(
-            interactive_client_capabilities().interactive_questions,
+            capabilities.interactive_questions,
             Some(InteractiveQuestionsCapability::full())
         );
     }

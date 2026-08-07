@@ -2,6 +2,7 @@ import type {
   AskUserAnswerValue,
   AskUserQuestionRequest,
   BootstrapState,
+  InteractiveQuestionsCapability,
   McpTrustApprovalRequest,
   McpTrustDecisionWire,
   OutputStyleOptionOverview,
@@ -115,6 +116,15 @@ export interface DesktopConnectionLike {
   client: DesktopProtocolClient;
 }
 
+export const DESKTOP_INTERACTIVE_QUESTIONS = {
+  single_select: true,
+  multi_select: true,
+  free_text: true,
+  previews: false,
+  annotations: false,
+  special_outcomes: false,
+} as const satisfies InteractiveQuestionsCapability;
+
 const DEFAULT_LOCKS: SettingLocks = {
   model: false,
   effort: false,
@@ -140,6 +150,8 @@ export class DesktopAppController {
   private unsubscribeServerRequest?: () => void;
   private unsubscribeClose?: () => void;
   private epoch = 0;
+  private activeTurnSessionId?: string;
+  private pendingStreamEvents: StreamEventNotification[] = [];
 
   get snapshot(): Readonly<DesktopAppState> {
     return this.state;
@@ -159,6 +171,7 @@ export class DesktopAppController {
     const epoch = ++this.epoch;
     const reconnecting = this.state.phase !== "disconnected";
     await this.detachClient();
+    this.clearActiveTurn();
     this.client = connection.client;
     this.unsubscribeNotification = connection.client.subscribeNotifications(
       (notification) => this.onNotification(notification),
@@ -185,7 +198,7 @@ export class DesktopAppController {
     try {
       const initialized = await connection.client.initialize({
         experimentalMethods: true,
-        interactiveQuestions: true,
+        interactiveQuestions: DESKTOP_INTERACTIVE_QUESTIONS,
       });
       validateDesktopCompatibility(initialized);
       this.assertCurrent(epoch);
@@ -218,6 +231,7 @@ export class DesktopAppController {
   async disconnect(): Promise<void> {
     ++this.epoch;
     await this.detachClient();
+    this.clearActiveTurn();
     this.patch({
       phase: "disconnected",
       connection: undefined,
@@ -230,6 +244,7 @@ export class DesktopAppController {
   }
 
   async newSession(): Promise<void> {
+    if (this.state.streaming) throw new Error("Cancel the active turn before creating a session");
     const client = this.requireClient();
     const bootstrap = await client.bootstrap();
     this.patch({ bootstrap, assistantDraft: "", thinkingDraft: "" });
@@ -249,6 +264,7 @@ export class DesktopAppController {
   }
 
   async forkSession(sessionId: string): Promise<void> {
+    if (this.state.streaming) throw new Error("Cancel the active turn before forking a session");
     const forked = await this.requireClient().forkSession({ session_id: sessionId });
     await this.loadSession(forked.session_id);
     await this.refreshSessions();
@@ -282,6 +298,8 @@ export class DesktopAppController {
     if (!trimmed) return;
     if (this.state.streaming) throw new Error("A turn is already active");
     const sessionId = this.requireSessionId();
+    this.activeTurnSessionId = sessionId;
+    this.pendingStreamEvents = [];
     this.patch({
       streaming: true,
       assistantDraft: "",
@@ -294,7 +312,9 @@ export class DesktopAppController {
         prompt: trimmed,
       });
       this.patch({ subscriptionId: result.subscription_id });
+      this.flushPendingStreamEvents(sessionId, result.subscription_id);
     } catch (error) {
+      this.clearActiveTurn();
       this.patch({ streaming: false, diagnostic: errorMessage(error, "Turn failed") });
       throw error;
     }
@@ -434,12 +454,28 @@ export class DesktopAppController {
     if (notification.method !== "stream/event") return;
     const payload = notification.params as StreamEventNotification;
     if (
-      this.state.subscriptionId &&
-      payload.subscription_id !== this.state.subscriptionId
-    ) {
+      !this.activeTurnSessionId ||
+      this.state.bootstrap?.session.session_id !== this.activeTurnSessionId
+    ) return;
+    if (!this.state.subscriptionId) {
+      this.pendingStreamEvents.push(payload);
       return;
     }
+    if (payload.subscription_id !== this.state.subscriptionId) return;
     this.applyStreamEvent(payload.event);
+  }
+
+  private flushPendingStreamEvents(sessionId: string, subscriptionId: string): void {
+    const pending = this.pendingStreamEvents;
+    this.pendingStreamEvents = [];
+    for (const payload of pending) {
+      if (
+        this.activeTurnSessionId !== sessionId ||
+        this.state.bootstrap?.session.session_id !== sessionId ||
+        this.state.subscriptionId !== subscriptionId
+      ) break;
+      if (payload.subscription_id === subscriptionId) this.applyStreamEvent(payload.event);
+    }
   }
 
   private applyStreamEvent(event: StreamEvent): void {
@@ -468,6 +504,7 @@ export class DesktopAppController {
         this.finishTurn();
         break;
       case "error":
+        this.clearActiveTurn();
         this.patch({
           diagnostic: [event.message, event.suggestion].filter(Boolean).join(" "),
           streaming: false,
@@ -495,6 +532,7 @@ export class DesktopAppController {
   }
 
   private finishTurn(): void {
+    this.clearActiveTurn();
     this.patch({
       streaming: false,
       subscriptionId: undefined,
@@ -505,7 +543,6 @@ export class DesktopAppController {
   }
 
   private onServerRequest(envelope: ServerRequestEnvelope): void {
-    if (this.state.requests.some((request) => request.envelopeId === envelope.id)) return;
     let request: InteractiveRequest | undefined;
     if (envelope.method === "permission/request") {
       request = {
@@ -529,11 +566,23 @@ export class DesktopAppController {
         responding: false,
       };
     }
-    if (request) this.patch({ requests: [...this.state.requests, request] });
+    if (!request) return;
+    const existing = this.state.requests.findIndex(
+      (candidate) => candidate.envelopeId === envelope.id,
+    );
+    this.patch({
+      requests:
+        existing < 0
+          ? [...this.state.requests, request]
+          : this.state.requests.map((candidate, index) =>
+              index === existing ? request : candidate,
+            ),
+    });
   }
 
   private onClientClosed(client: DesktopProtocolClient, reason: string): void {
     if (client !== this.client) return;
+    this.clearActiveTurn();
     this.client = undefined;
     this.unsubscribeNotification?.();
     this.unsubscribeNotification = undefined;
@@ -561,25 +610,31 @@ export class DesktopAppController {
   ): Promise<void> {
     const request = this.state.requests.find((item) => item.envelopeId === envelopeId);
     if (!request || request.responding) throw new Error("Request is no longer pending");
+    const respondingRequest = { ...request, responding: true } as InteractiveRequest;
     this.patch({
       requests: this.state.requests.map((item) =>
-        item.envelopeId === envelopeId ? { ...item, responding: true } : item,
+        item === request ? respondingRequest : item,
       ),
     });
     try {
       await send(this.requireClient());
       this.patch({
-        requests: this.state.requests.filter((item) => item.envelopeId !== envelopeId),
+        requests: this.state.requests.filter((item) => item !== respondingRequest),
       });
     } catch (error) {
       this.patch({
         requests: this.state.requests.map((item) =>
-          item.envelopeId === envelopeId ? { ...item, responding: false } : item,
+          item === respondingRequest ? { ...item, responding: false } : item,
         ),
         diagnostic: errorMessage(error, "Request response failed"),
       });
       throw error;
     }
+  }
+
+  private clearActiveTurn(): void {
+    this.activeTurnSessionId = undefined;
+    this.pendingStreamEvents = [];
   }
 
   private requireClient(): DesktopProtocolClient {

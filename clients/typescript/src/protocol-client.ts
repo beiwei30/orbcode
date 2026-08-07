@@ -17,6 +17,7 @@ import type {
   EditorModeResult,
   EditorModeSetting,
   InitializeResult,
+  InteractiveQuestionsCapability,
   McpTrustDecisionWire,
   OutputStyleOptionsResult,
   OutputStyleResult,
@@ -90,6 +91,7 @@ export class ProtocolClient {
   private readonly closeListeners = new Set<ProtocolCloseListener>();
   private readonly respondingServerRequests = new Set<string>();
   private readonly respondedServerRequests = new Set<string>();
+  private readonly serverRequestDeliveries = new Map<string, number>();
   private readonly unsubscribe: () => void;
   private readonly requestIdPrefix: string;
   private readonly requestTimeoutMs: number;
@@ -127,6 +129,11 @@ export class ProtocolClient {
         pending.resolve(message);
       }
     } else if (message.type === "request") {
+      this.serverRequestDeliveries.set(
+        message.id,
+        (this.serverRequestDeliveries.get(message.id) ?? 0) + 1,
+      );
+      this.respondedServerRequests.delete(message.id);
       this.serverRequests.push(message);
       for (const listener of this.serverRequestListeners) listener(message);
     } else if (message.type === "notification") {
@@ -177,12 +184,19 @@ export class ProtocolClient {
       throw new Error(`server request ${id} already has a response`);
     }
     this.respondingServerRequests.add(id);
+    const delivery = this.serverRequestDeliveries.get(id) ?? 0;
+    const request = this.serverRequests.find((candidate) => candidate.id === id);
     const message: ClientMessage = { type: "response", id, result };
     try {
       await this.transport.send(message);
-      this.respondedServerRequests.add(id);
-      const index = this.serverRequests.findIndex((request) => request.id === id);
+      const index = request === undefined ? -1 : this.serverRequests.indexOf(request);
       if (index >= 0) this.serverRequests.splice(index, 1);
+      if ((this.serverRequestDeliveries.get(id) ?? 0) === delivery) {
+        this.respondedServerRequests.add(id);
+        this.serverRequestDeliveries.delete(id);
+      } else {
+        this.respondedServerRequests.delete(id);
+      }
     } finally {
       this.respondingServerRequests.delete(id);
     }
@@ -198,26 +212,28 @@ export class ProtocolClient {
   async initialize(
     options: {
       experimentalMethods?: boolean;
-      interactiveQuestions?: boolean;
+      interactiveQuestions?: boolean | InteractiveQuestionsCapability;
     } = {},
   ): Promise<InitializeResult> {
+    const interactiveQuestions =
+      options.interactiveQuestions === true
+        ? {
+            single_select: true,
+            multi_select: true,
+            free_text: true,
+            previews: true,
+            annotations: true,
+            special_outcomes: true,
+          }
+        : options.interactiveQuestions || undefined;
     const response = await this.request("initialize", {
       protocol_version: "1.0",
       client_info: { name: this.clientName, version: this.clientVersion },
       capabilities: {
         streaming: true,
         experimental_methods: options.experimentalMethods ?? false,
-        ...(options.interactiveQuestions
-          ? {
-              interactive_questions: {
-                single_select: true,
-                multi_select: true,
-                free_text: true,
-                previews: true,
-                annotations: true,
-                special_outcomes: true,
-              },
-            }
+        ...(interactiveQuestions
+          ? { interactive_questions: interactiveQuestions }
           : {}),
       },
     });
