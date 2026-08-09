@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use orbcode_app_server::{AppConfigOverrides, PermissionMode, ProviderId, parse_tool_rule_list};
-use orbcode_app_server_client::{AuthMethod, McpTransport, SshOption};
+use orbcode_app_server_client::{AuthMethod, McpTransport};
 use orbcode_protocol::SandboxMode;
 
 use crate::build_info;
@@ -397,31 +397,15 @@ pub(crate) fn load_inline_settings_source(raw: &str) -> Result<String> {
 pub(crate) enum Command {
     /// Run the interactive TUI (embedded mode — starts local core).
     Tui,
-    /// Run the TUI against an existing endpoint or an OpenSSH stdio child.
+    /// Run the TUI against an existing orbcode serve endpoint.
     /// Does not start an embedded local core; all operations use the protocol.
     Remote {
         /// Socket path or WebSocket address to connect to.
-        #[arg(
-            value_name = "ENDPOINT",
-            required_unless_present = "ssh",
-            conflicts_with = "ssh"
-        )]
-        endpoint: Option<String>,
+        #[arg(value_name = "ENDPOINT")]
+        endpoint: String,
         /// Auth token for the connection.
-        #[arg(long, requires = "endpoint", required_unless_present = "ssh")]
-        token: Option<String>,
-        /// Launch `orbcode serve --stdio` through system OpenSSH.
-        #[arg(long, value_name = "TARGET", conflicts_with_all = ["endpoint", "token"])]
-        ssh: Option<String>,
-        /// Absolute working directory for the remote orbcode process.
-        #[arg(long, value_name = "PATH", requires = "ssh")]
-        remote_cwd: Option<String>,
-        /// Absolute path or simple command name for remote orbcode.
-        #[arg(long, value_name = "PATH", requires = "ssh")]
-        remote_orbcode: Option<String>,
-        /// Reviewed OpenSSH option in KEY=VALUE form. May be repeated.
-        #[arg(long = "ssh-option", value_name = "KEY=VALUE", requires = "ssh")]
-        ssh_options: Vec<SshOption>,
+        #[arg(long)]
+        token: String,
     },
     /// Resume an existing persisted session in the TUI.
     Resume {
@@ -856,88 +840,21 @@ mod tests {
             "test-token",
         ])
         .expect("parse endpoint remote");
-        let Some(Command::Remote {
-            endpoint,
-            token,
-            ssh,
-            ..
-        }) = parsed.command
-        else {
+        let Some(Command::Remote { endpoint, token }) = parsed.command else {
             panic!("expected remote command");
         };
-        assert_eq!(endpoint.as_deref(), Some("ws://127.0.0.1:9000"));
-        assert_eq!(token.as_deref(), Some("test-token"));
-        assert!(ssh.is_none());
+        assert_eq!(endpoint, "ws://127.0.0.1:9000");
+        assert_eq!(token, "test-token");
     }
 
     #[test]
-    fn cli_parses_ssh_remote_mode_and_reviewed_options() {
-        let parsed = Cli::try_parse_from([
-            "orbcode",
-            "remote",
-            "--ssh",
-            "user@example.com",
-            "--remote-cwd",
-            "/srv/project",
-            "--remote-orbcode",
-            "/opt/orbcode",
-            "--ssh-option",
-            "Port=2222",
-            "--ssh-option",
-            "ProxyJump=bastion",
-        ])
-        .expect("parse SSH remote");
-        let Some(Command::Remote {
-            endpoint,
-            token,
-            ssh,
-            remote_cwd,
-            remote_orbcode,
-            ssh_options,
-        }) = parsed.command
-        else {
-            panic!("expected remote command");
-        };
-        assert!(endpoint.is_none());
-        assert!(token.is_none());
-        assert_eq!(ssh.as_deref(), Some("user@example.com"));
-        assert_eq!(remote_cwd.as_deref(), Some("/srv/project"));
-        assert_eq!(remote_orbcode.as_deref(), Some("/opt/orbcode"));
-        assert_eq!(
-            ssh_options
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-            ["Port=2222", "ProxyJump=bastion"]
-        );
-    }
-
-    #[test]
-    fn cli_rejects_mixed_or_unsafe_ssh_remote_arguments() {
-        assert!(
-            Cli::try_parse_from([
-                "orbcode",
-                "remote",
-                "socket.sock",
-                "--token",
-                "token",
-                "--ssh",
-                "host",
-            ])
-            .is_err()
-        );
-        assert!(
-            Cli::try_parse_from([
-                "orbcode",
-                "remote",
-                "--ssh",
-                "host",
-                "--ssh-option",
-                "ProxyCommand=touch /tmp/pwn",
-            ])
-            .is_err()
-        );
+    fn cli_rejects_endpoint_remote_without_token() {
         assert!(Cli::try_parse_from(["orbcode", "remote", "socket.sock"]).is_err());
+    }
+
+    #[test]
+    fn cli_rejects_deferred_ssh_remote_mode() {
+        assert!(Cli::try_parse_from(["orbcode", "remote", "--ssh", "example.com"]).is_err());
     }
 
     #[test]

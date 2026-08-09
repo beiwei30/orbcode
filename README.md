@@ -148,8 +148,8 @@ the throwaway-home and tracing patterns.
 | Background jobs | Stable | `prompt --bg` plus `ps`, `logs`, `attach`, `kill`. |
 | Direct tool invocation (`orbcode tool`) | Beta | Runs one tool outside a turn; useful for debugging. |
 | ACP adapter (`orbcode acp`) | Experimental | Agent Client Protocol v1 over stdio; verified with Zed 1.13.2 on macOS 26.6 for startup, prompt/streaming, history restoration, model/thought controls, permission rejection, tool titles, and clean shutdown. See the [support matrix](docs/acp-support.md) and [Zed smoke guide](docs/acp-zed-smoke.md). |
-| App-server protocol (`orbcode serve` / `orbcode remote`) | P2 in progress | Protocol `1.0` over stdio, Unix socket or WebSocket. The supported remote product path under construction is `orbcode remote --ssh TARGET`, which runs remote stdio through system OpenSSH without a listener or bearer token. Explicit socket/WebSocket endpoint mode remains experimental: listeners allow sequential reconnects but only one active client at a time, require an auth token, and WebSocket also validates `Origin`. |
-| Desktop host (`clients/desktop`) | Release candidate | Tauri thin client with session/turn/request workflows, local and system-SSH launch, non-secret remote profiles, generated-protocol controls, compatibility checks, resumable reconnect, and bounded child cleanup. The macOS tag job signs/notarizes the app and matching helper; release remains gated on that job and the clean-machine checklist. |
+| App-server protocol (`orbcode serve` / `orbcode remote`) | Experimental | Protocol `1.0` over stdio, Unix socket or WebSocket. Explicit socket/WebSocket endpoint mode allows sequential reconnects but only one active client at a time, requires an auth token, and WebSocket also validates `Origin`. Reusable child-stdio and reviewed OpenSSH transports are retained as library infrastructure. |
+| Desktop product / SSH CLI | Deferred | No packaged Desktop client or `remote --ssh` command currently ships. Shared protocol, generated TypeScript client, and process transports remain available for future product work. See the [deferred product plan](docs/plans/desktop-and-ssh-products.md). |
 | Remote-control bridge, voice, computer use | Deferred | Reported as deferred by `orbcode advanced`. |
 
 ### Model providers
@@ -321,9 +321,8 @@ subcommand.
 | `doctor [cleanup-orphans]` | Health checks. `cleanup-orphans --dry-run \| --yes [--stale-running-days N]` prunes orphaned child-session metadata. |
 | `advanced` | Which advanced capability slices are implemented vs deferred. |
 | `acp` | ACP adapter over stdio (for editors such as Zed). |
-| `serve` | Hidden protocol server. Stdio backs owned local/SSH children; explicit socket/WebSocket listeners remain experimental. |
+| `serve` | Hidden protocol server. Stdio backs supervised child clients; explicit socket/WebSocket listeners remain experimental. |
 | `remote ENDPOINT --token TOKEN` | Experimental remote TUI against an explicitly managed Unix socket or WebSocket. |
-| `remote --ssh TARGET [--remote-cwd PATH] [--remote-orbcode PATH] [--ssh-option KEY=VALUE]` | Launch the remote TUI through system OpenSSH and canonical stdio without opening an app-server port. |
 
 Two `doctor` probes are opt-in because they cost a network round trip:
 `ORBCODE_DOCTOR_PROBE=1` fires a ~1-token provider request, and
@@ -395,32 +394,12 @@ orbcode --allow-tools true \
         -p "why does the build fail?"
 ```
 
-Remote TUI through the user's existing OpenSSH configuration and agent:
-
-```bash
-orbcode remote --ssh user@example.com \
-        --remote-cwd /srv/project \
-        --remote-orbcode /opt/orbcode/bin/orbcode \
-        --ssh-option Port=2222 \
-        --ssh-option ProxyJump=bastion.example.com
-```
-
-The SSH path opens no app-server network port and uses no bearer token. It
-delegates host-key verification, agents, certificates, MFA, and `known_hosts`
-to `/usr/bin/ssh`. Reviewed `--ssh-option` keys are `Port`, `User`, `HostName`,
-`IdentityFile`, `IdentitiesOnly`, `ProxyJump`, `ConnectTimeout`,
-`ServerAliveInterval`, and `ServerAliveCountMax`; shell-bearing options such as
-`ProxyCommand`, `LocalCommand`, and `RemoteCommand`, and options that weaken
-host-key policy, are rejected.
-
-The formal desktop client lives in `clients/desktop`. It keeps AppServer/core
-in a separate `orbcode serve --stdio` child and shares the generated TypeScript
-request-correlation client across local, SSH, and test transports. The same UI
-handles session replay, interactive requests, controls, and resumable
-connection loss. See its README for build, E2E, and release commands. Debug
-builds may use the explicit `ORBCODE_DESKTOP_DEV_BINARY` fallback when the
-bundle resource is absent; the UI marks that connection and release builds
-ignore the variable.
+Future Desktop and SSH-client work can build on the canonical app-server
+protocol, generated TypeScript request-correlation client, child-stdio
+supervision, and reviewed OpenSSH transport. These are library/test
+infrastructure only; there is currently no Desktop package or SSH CLI product.
+The [deferred product plan](docs/plans/desktop-and-ssh-products.md) records the
+restart conditions and intended boundaries.
 
 Ad-hoc settings and MCP config without touching any file:
 

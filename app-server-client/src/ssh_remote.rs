@@ -75,7 +75,7 @@ pub enum SshOptionParseError {
     InvalidValue { key: String, message: String },
 }
 
-/// Launch policy shared by the TUI and desktop host.
+/// Reusable launch policy for a future SSH-backed protocol client.
 #[derive(Clone, Debug)]
 pub struct SshRemoteConfig {
     pub target: String,
@@ -100,8 +100,8 @@ impl SshRemoteConfig {
         }
     }
 
-    /// Override the OpenSSH executable. Release desktop hosts should retain
-    /// the absolute system default; this hook also supports deterministic test
+    /// Override the OpenSSH executable. Production callers should retain the
+    /// absolute system default; this hook also supports deterministic test
     /// harnesses.
     pub fn with_ssh_program(mut self, program: impl Into<PathBuf>) -> Self {
         self.ssh_program = program.into();
@@ -158,7 +158,7 @@ impl SshRemoteConnection {
 }
 
 /// Spawn the reviewed OpenSSH command without consuming protocol initialize.
-/// Desktop relays use this when the generated TypeScript client owns the
+/// Future host relays can use this when an external protocol client owns the
 /// canonical initialize envelope and request IDs.
 pub async fn spawn_ssh_transport(
     config: SshRemoteConfig,

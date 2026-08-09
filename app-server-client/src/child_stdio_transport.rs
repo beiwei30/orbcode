@@ -105,7 +105,7 @@ pub enum ChildTermination {
     WaitFailed,
 }
 
-/// Sanitized process evidence exposed to desktop/SSH hosts.
+/// Sanitized process evidence exposed to supervising hosts.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ChildExitDiagnostics {
     pub pid: u32,

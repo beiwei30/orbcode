@@ -3,7 +3,7 @@
  *
  * Transports own framing, authentication, and lifecycle only. This class owns
  * request IDs, response correlation, timeouts, notifications, and server
- * requests for stdio, WebSocket, and desktop IPC alike.
+ * requests for stdio, WebSocket, and future host IPC transports alike.
  */
 
 import type {
