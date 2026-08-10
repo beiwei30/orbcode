@@ -11,7 +11,7 @@ use std::time::Duration;
 use orbcode_app_server_protocol::{
     ClientMessage, ClientRequestEnvelope, ResponseResult, ServerMessage,
     ServerNotificationEnvelope, ServerRequestEnvelope, ServerRequestResponse,
-    ServerResponseEnvelope,
+    ServerResponseEnvelope, StreamEvent, StreamEventNotification, method,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -470,10 +470,16 @@ async fn read_stdout(
                 }
             }
             ServerMessage::Notification(notification) => {
-                // Notifications are best-effort, as in the socket/WebSocket
-                // transports. `try_send` keeps a slow renderer from blocking
-                // later request responses on the same stdout stream.
-                let _ = notification_tx.try_send(notification);
+                if notification_is_best_effort(&notification) {
+                    // Deltas and progress may be dropped so a slow renderer
+                    // does not block later protocol messages on stdout.
+                    let _ = notification_tx.try_send(notification);
+                } else {
+                    // Terminal and other durable notifications must survive
+                    // bounded-channel pressure. Await capacity instead of
+                    // silently leaving AppClient streams unterminated.
+                    let _ = notification_tx.send(notification).await;
+                }
             }
             ServerMessage::Request(request) => {
                 if server_request_tx.try_send(request).is_err() {
@@ -485,6 +491,24 @@ async fn read_stdout(
     };
     close_transport(&closed, &pending).await;
     let _ = fault_tx.send(fault);
+}
+
+fn notification_is_best_effort(notification: &ServerNotificationEnvelope) -> bool {
+    if notification.method != method::NOTIFICATION_STREAM_EVENT {
+        return false;
+    }
+    let Ok(notification) =
+        serde_json::from_value::<StreamEventNotification>(notification.params.clone())
+    else {
+        return false;
+    };
+    matches!(
+        notification.event,
+        StreamEvent::AssistantDelta { .. }
+            | StreamEvent::ThinkingDelta { .. }
+            | StreamEvent::ToolProgress { .. }
+            | StreamEvent::HookProgress { .. }
+    )
 }
 
 async fn write_stdin(
@@ -877,6 +901,67 @@ fn truncate_utf8_tail(mut text: String, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stream_notification(event: Value) -> ServerNotificationEnvelope {
+        ServerNotificationEnvelope {
+            method: method::NOTIFICATION_STREAM_EVENT.to_string(),
+            params: serde_json::json!({
+                "subscription_id": "sub-backpressure",
+                "event": event,
+            }),
+        }
+    }
+
+    #[test]
+    fn only_delta_and_progress_stream_notifications_are_best_effort() {
+        for event in [
+            serde_json::json!({
+                "event": "assistant_delta",
+                "session_id": "session-1",
+                "delta": "chunk",
+            }),
+            serde_json::json!({
+                "event": "thinking_delta",
+                "session_id": "session-1",
+                "delta": "thought",
+            }),
+            serde_json::json!({
+                "event": "tool_progress",
+                "session_id": "session-1",
+                "tool_use_id": "tool-1",
+                "tool_name": "bash",
+                "progress": {},
+            }),
+            serde_json::json!({
+                "event": "hook_progress",
+                "session_id": "session-1",
+                "hook_event_name": "PostToolUse",
+                "progress": {},
+            }),
+        ] {
+            assert!(notification_is_best_effort(&stream_notification(event)));
+        }
+
+        for event in [
+            serde_json::json!({
+                "event": "turn_finished",
+                "session_id": "session-1",
+                "provider": "anthropic",
+                "usage": {},
+            }),
+            serde_json::json!({
+                "event": "error",
+                "message": "provider failed",
+            }),
+        ] {
+            assert!(!notification_is_best_effort(&stream_notification(event)));
+        }
+
+        assert!(!notification_is_best_effort(&ServerNotificationEnvelope {
+            method: "future/notification".to_string(),
+            params: serde_json::json!({"unknown": true}),
+        }));
+    }
 
     #[test]
     fn stderr_redaction_handles_exact_values_headers_assignments_bearers_and_urls() {

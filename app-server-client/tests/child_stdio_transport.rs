@@ -111,6 +111,50 @@ async fn responses_notifications_and_server_requests_keep_protocol_semantics() {
 }
 
 #[tokio::test]
+async fn durable_notification_survives_saturated_best_effort_queue() {
+    let (transport, handle) = ChildStdioTransport::spawn(fixture_command("normal"), fast_config())
+        .await
+        .expect("spawn fixture");
+    let mut notifications = transport
+        .take_notification_receiver()
+        .await
+        .expect("notification receiver");
+
+    let response = timeout(
+        TEST_TIMEOUT,
+        transport.request("fixture/notification-backpressure", None),
+    )
+    .await
+    .expect("fixture response should arrive before the durable notification")
+    .expect("fixture response");
+    assert_eq!(response, json!({"notifications_sent": 300}));
+
+    let (best_effort_count, terminal) = timeout(TEST_TIMEOUT, async {
+        let mut best_effort_count = 0;
+        loop {
+            let notification = notifications.recv().await.expect("notification");
+            match notification.params["event"]["event"].as_str() {
+                Some("assistant_delta") => best_effort_count += 1,
+                Some("turn_finished") => break (best_effort_count, notification),
+                event => panic!("unexpected stream event: {event:?}"),
+            }
+        }
+    })
+    .await
+    .expect("durable notification must not be dropped");
+
+    assert!(
+        best_effort_count < 300,
+        "transient notifications should drop under bounded pressure"
+    );
+    assert_eq!(terminal.params["subscription_id"], "fixture-backpressure");
+    assert_eq!(terminal.params["event"]["event"], "turn_finished");
+
+    let diagnostics = handle.shutdown().await.expect("shutdown fixture");
+    assert!(diagnostics.success);
+}
+
+#[tokio::test]
 async fn malformed_stdout_cancels_pending_request_and_reports_reason() {
     let (transport, handle) =
         ChildStdioTransport::spawn(fixture_command("malformed"), fast_config())

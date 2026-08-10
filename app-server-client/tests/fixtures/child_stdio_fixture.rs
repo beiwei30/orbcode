@@ -70,7 +70,7 @@ fn main() {
                             "server_info": {"name": "child-stdio-fixture", "version": "0.1.0"},
                             "capabilities": {
                                 "streaming": true,
-                                "stable_methods": ["fixture/echo", "fixture/ordered", "fixture/server-request"],
+                                "stable_methods": ["fixture/echo", "fixture/ordered", "fixture/server-request", "fixture/notification-backpressure"],
                                 "experimental_methods": [],
                                 "server_notification_methods": ["fixture/notification"],
                                 "server_request_methods": ["fixture/question"]
@@ -96,6 +96,44 @@ fn main() {
                             "id": "fixture-server-request-1",
                             "method": "fixture/question",
                             "params": {"question": "continue?"}
+                        }),
+                    );
+                } else if method == "fixture/notification-backpressure" {
+                    for index in 0..300 {
+                        write_message(
+                            &mut stdout,
+                            json!({
+                                "type": "notification",
+                                "method": "stream/event",
+                                "params": {
+                                    "subscription_id": "fixture-backpressure",
+                                    "event": {
+                                        "event": "assistant_delta",
+                                        "session_id": "fixture-session",
+                                        "delta": format!("chunk-{index}")
+                                    }
+                                }
+                            }),
+                        );
+                    }
+                    // Put the response ahead of the durable notification so
+                    // the test can begin draining a saturated notification
+                    // receiver without coupling response delivery to it.
+                    respond(&mut stdout, id, json!({"notifications_sent": 300}));
+                    write_message(
+                        &mut stdout,
+                        json!({
+                            "type": "notification",
+                            "method": "stream/event",
+                            "params": {
+                                "subscription_id": "fixture-backpressure",
+                                "event": {
+                                    "event": "turn_finished",
+                                    "session_id": "fixture-session",
+                                    "provider": "anthropic",
+                                    "usage": {}
+                                }
+                            }
                         }),
                     );
                 } else {

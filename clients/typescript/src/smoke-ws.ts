@@ -9,6 +9,8 @@ import { createInterface } from "node:readline";
 import { ProtocolClient, expectSuccess } from "./protocol-client.js";
 import { WebSocketProtocolTransport } from "./websocket-transport.js";
 
+const ALLOWED_ORIGIN = "https://reference-client.orbcode.test";
+
 const BIN: string = process.env.ORBCODE_BIN ?? (() => {
   console.error("ORBCODE_BIN env var required");
   process.exit(1);
@@ -57,16 +59,26 @@ async function main(): Promise<void> {
     JSON.stringify({ env: { ANTHROPIC_API_KEY: "stub-key" } }),
   );
 
-  const server = spawn(BIN, ["serve", "--websocket", "127.0.0.1:0"], {
-    cwd: cwdDir,
-    env: {
-      ORBCODE_HOME: homeDir,
-      PATH: process.env.PATH ?? "",
-      HOME: homeDir,
-      RUST_LOG: "warn",
+  const server = spawn(
+    BIN,
+    [
+      "serve",
+      "--websocket",
+      "127.0.0.1:0",
+      "--allowed-origin",
+      ALLOWED_ORIGIN,
+    ],
+    {
+      cwd: cwdDir,
+      env: {
+        ORBCODE_HOME: homeDir,
+        PATH: process.env.PATH ?? "",
+        HOME: homeDir,
+        RUST_LOG: "warn",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  );
 
   let client: ProtocolClient | undefined;
   try {
@@ -77,6 +89,7 @@ async function main(): Promise<void> {
     const transport = await WebSocketProtocolTransport.connect(
       `ws://${info.addr}`,
       info.auth_token,
+      { origin: ALLOWED_ORIGIN },
     );
     client = new ProtocolClient(transport, {
       requestIdPrefix: "ws",

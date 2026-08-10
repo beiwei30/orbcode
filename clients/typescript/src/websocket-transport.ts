@@ -7,6 +7,12 @@ import type {
   ProtocolTransportEvent,
 } from "./protocol-client.js";
 
+export interface WebSocketProtocolTransportOptions {
+  /** Origin sent by the Node `ws` client during the opening handshake. */
+  origin?: string;
+  timeoutMs?: number;
+}
+
 export class WebSocketProtocolTransport implements ProtocolTransport {
   private readonly listeners = new Set<
     (event: ProtocolTransportEvent) => void
@@ -31,9 +37,10 @@ export class WebSocketProtocolTransport implements ProtocolTransport {
   static async connect(
     url: string,
     authenticationToken: string,
-    timeoutMs = 10_000,
+    options: WebSocketProtocolTransportOptions = {},
   ): Promise<WebSocketProtocolTransport> {
-    const socket = new WebSocket(url);
+    const { origin, timeoutMs = 10_000 } = options;
+    const socket = new WebSocket(url, { origin });
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         socket.terminate();
