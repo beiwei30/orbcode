@@ -148,7 +148,8 @@ the throwaway-home and tracing patterns.
 | Background jobs | Stable | `prompt --bg` plus `ps`, `logs`, `attach`, `kill`. |
 | Direct tool invocation (`orbcode tool`) | Beta | Runs one tool outside a turn; useful for debugging. |
 | ACP adapter (`orbcode acp`) | Experimental | Agent Client Protocol v1 over stdio; verified with Zed 1.13.2 on macOS 26.6 for startup, prompt/streaming, history restoration, model/thought controls, permission rejection, tool titles, and clean shutdown. See the [support matrix](docs/acp-support.md) and [Zed smoke guide](docs/acp-zed-smoke.md). |
-| App-server protocol (`orbcode serve` / `orbcode remote`) | Experimental | Hidden subcommands. Protocol `1.0` over stdio, Unix socket or WebSocket; one client per `serve`. Stdio is implicitly trusted; socket and WebSocket require an auth token (auto-generated if `--auth-token` is omitted, reported in the startup connection-info line), and WebSocket also validates `Origin`. |
+| App-server protocol (`orbcode serve` / `orbcode remote`) | Experimental | Protocol `1.0` over stdio, Unix socket or WebSocket. Explicit socket/WebSocket endpoint mode allows sequential reconnects but only one active client at a time, requires an auth token, and WebSocket also validates `Origin`. Reusable child-stdio and reviewed OpenSSH transports are retained as library infrastructure. |
+| Desktop product / SSH CLI | Deferred | No packaged Desktop client or `remote --ssh` command currently ships. Shared protocol, generated TypeScript client, and process transports remain available for future product work. See the [deferred product plan](docs/plans/desktop-and-ssh-products.md). |
 | Remote-control bridge, voice, computer use | Deferred | Reported as deferred by `orbcode advanced`. |
 
 ### Model providers
@@ -320,7 +321,8 @@ subcommand.
 | `doctor [cleanup-orphans]` | Health checks. `cleanup-orphans --dry-run \| --yes [--stale-running-days N]` prunes orphaned child-session metadata. |
 | `advanced` | Which advanced capability slices are implemented vs deferred. |
 | `acp` | ACP adapter over stdio (for editors such as Zed). |
-| `serve` / `remote` | Hidden, experimental protocol server and remote TUI client. |
+| `serve` | Hidden protocol server. Stdio backs supervised child clients; explicit socket/WebSocket listeners remain experimental. |
+| `remote ENDPOINT --token TOKEN` | Experimental remote TUI against an explicitly managed Unix socket or WebSocket. |
 
 Two `doctor` probes are opt-in because they cost a network round trip:
 `ORBCODE_DOCTOR_PROBE=1` fires a ~1-token provider request, and
@@ -391,6 +393,13 @@ orbcode --allow-tools true \
         --disallowed-tools "Bash(git push:*),Write" \
         -p "why does the build fail?"
 ```
+
+Future Desktop and SSH-client work can build on the canonical app-server
+protocol, generated TypeScript request-correlation client, child-stdio
+supervision, and reviewed OpenSSH transport. These are library/test
+infrastructure only; there is currently no Desktop package or SSH CLI product.
+The [deferred product plan](docs/plans/desktop-and-ssh-products.md) records the
+restart conditions and intended boundaries.
 
 Ad-hoc settings and MCP config without touching any file:
 

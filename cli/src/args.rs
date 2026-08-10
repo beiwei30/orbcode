@@ -397,8 +397,8 @@ pub(crate) fn load_inline_settings_source(raw: &str) -> Result<String> {
 pub(crate) enum Command {
     /// Run the interactive TUI (embedded mode — starts local core).
     Tui,
-    /// Run the TUI in remote mode — connects to a running orbcode serve instance.
-    /// Does not start a local core; all operations go through the protocol.
+    /// Run the TUI against an existing orbcode serve endpoint.
+    /// Does not start an embedded local core; all operations use the protocol.
     Remote {
         /// Socket path or WebSocket address to connect to.
         #[arg(value_name = "ENDPOINT")]
@@ -509,11 +509,12 @@ pub(crate) enum Command {
         #[arg(long)]
         prompt: String,
     },
-    /// Start a one-shot protocol transport server (experimental).
+    /// Start a protocol transport server (experimental).
     ///
-    /// Accepts a single client connection then exits. Stdio is implicitly
-    /// trusted; socket and WebSocket require an auth token (auto-generated
-    /// if not provided, printed in the startup JSON).
+    /// Socket and WebSocket accept sequential reconnects with one active
+    /// client at a time. Stdio is bound to its parent process and implicitly
+    /// trusted. Socket and WebSocket require an auth token (auto-generated if
+    /// not provided, printed in the startup JSON).
     #[command(hide = true)]
     Serve {
         /// Use stdin/stdout as the transport (implicitly trusted, no auth).
@@ -827,6 +828,33 @@ mod tests {
         assert_eq!(parsed.prompt.as_deref(), Some("hello"));
         assert!(parsed.command.is_none());
         assert!(!parsed.print);
+    }
+
+    #[test]
+    fn cli_parses_existing_endpoint_remote_mode() {
+        let parsed = Cli::try_parse_from([
+            "orbcode",
+            "remote",
+            "ws://127.0.0.1:9000",
+            "--token",
+            "test-token",
+        ])
+        .expect("parse endpoint remote");
+        let Some(Command::Remote { endpoint, token }) = parsed.command else {
+            panic!("expected remote command");
+        };
+        assert_eq!(endpoint, "ws://127.0.0.1:9000");
+        assert_eq!(token, "test-token");
+    }
+
+    #[test]
+    fn cli_rejects_endpoint_remote_without_token() {
+        assert!(Cli::try_parse_from(["orbcode", "remote", "socket.sock"]).is_err());
+    }
+
+    #[test]
+    fn cli_rejects_deferred_ssh_remote_mode() {
+        assert!(Cli::try_parse_from(["orbcode", "remote", "--ssh", "example.com"]).is_err());
     }
 
     #[test]

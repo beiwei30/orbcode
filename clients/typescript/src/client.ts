@@ -1,51 +1,21 @@
-/**
- * Minimal orbcode protocol client for stdio NDJSON transport.
- *
- * Imports types from the generated protocol contract — no hand-written
- * protocol types, no Rust facade linking.
- */
+/** Node stdio transport for the shared generated-protocol client. */
 
-import { ChildProcess, spawn } from "node:child_process";
-import { createInterface, Interface } from "node:readline";
-import type {
-  ClientRequestEnvelope,
-  ServerResponseEnvelope,
-  ServerNotificationEnvelope,
-  ServerRequestEnvelope,
-  InitializeParams,
-  InitializeResult,
-  ResponseResult,
-  ErrorCode,
-  ServerCapabilities,
-  ClientCapabilities,
-  BootstrapState,
-  PermissionOverview,
-  SessionControlState,
-  SetSessionModelParams,
-  ThemeResult,
-  ThemeSetting,
-  EditorModeResult,
-  EditorModeSetting,
-} from "@orbcode/protocol";
+import { type ChildProcess, spawn } from "node:child_process";
+import { createInterface, type Interface } from "node:readline";
+import type { ClientMessage, ServerMessage } from "./generated/protocol.js";
+import {
+  ProtocolClient,
+  type ProtocolTransport,
+  type ProtocolTransportEvent,
+} from "./protocol-client.js";
 
-export type ServerMessage =
-  | (ServerResponseEnvelope & { type: "response" })
-  | (ServerNotificationEnvelope & { type: "notification" })
-  | (ServerRequestEnvelope & { type: "request" });
-
-export class OrbCodeClient {
-  private process: ChildProcess;
-  private rl: Interface;
-  private pending = new Map<
-    string,
-    {
-      resolve: (msg: ServerMessage) => void;
-      reject: (err: Error) => void;
-    }
+export class StdioProtocolTransport implements ProtocolTransport {
+  private readonly process: ChildProcess;
+  private readonly lines: Interface;
+  private readonly listeners = new Set<
+    (event: ProtocolTransportEvent) => void
   >();
-  private serverRequests: ServerMessage[] = [];
-  private notifications: ServerMessage[] = [];
-  private nextId = 0;
+  private closed = false;
 
   constructor(binPath: string, homeDir: string, cwd: string) {
     this.process = spawn(binPath, ["serve", "--stdio"], {
@@ -59,197 +29,83 @@ export class OrbCodeClient {
       stdio: ["pipe", "pipe", "ignore"],
     });
 
-    this.rl = createInterface({ input: this.process.stdout! });
-    this.rl.on("line", (line: string) => {
+    this.lines = createInterface({ input: this.process.stdout! });
+    this.lines.on("line", (line: string) => {
       try {
-        const msg = JSON.parse(line) as ServerMessage;
-        this.dispatch(msg);
+        this.emit({
+          kind: "message",
+          message: JSON.parse(line) as ServerMessage,
+        });
       } catch {
-        // skip non-JSON lines
+        // A malformed line is not a canonical message. The Rust transport
+        // enforces strict framing; this minimal Node reference ignores it.
       }
     });
-  }
-
-  private dispatch(msg: ServerMessage): void {
-    if (msg.type === "response" && "id" in msg) {
-      const p = this.pending.get(msg.id);
-      if (p) {
-        this.pending.delete(msg.id);
-        p.resolve(msg);
-      }
-    } else if (msg.type === "request") {
-      this.serverRequests.push(msg);
-    } else if (msg.type === "notification") {
-      this.notifications.push(msg);
-    }
-  }
-
-  async request(method: string, params?: unknown): Promise<ServerMessage> {
-    const id = `req-${this.nextId++}`;
-    const msg = { type: "request" as const, id, method, params };
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      const line = JSON.stringify(msg) + "\n";
-      this.process.stdin!.write(line);
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`timeout waiting for response to ${method}`));
-        }
-      }, 10_000);
+    this.process.once("error", () => {
+      this.emitClosed("stdio child process failed");
+    });
+    this.process.once("close", () => {
+      this.emitClosed("stdio child process exited");
     });
   }
 
-  async respond(id: string, data: unknown): Promise<void> {
-    const msg = {
-      type: "response",
-      id,
-      result: { status: "success", data },
-    };
-    const line = JSON.stringify(msg) + "\n";
-    this.process.stdin!.write(line);
-  }
-
-  async initialize(
-    opts: { experimentalMethods?: boolean } = {},
-  ): Promise<InitializeResult> {
-    const resp = await this.request("initialize", {
-      protocol_version: "1.0",
-      client_info: { name: "ts-reference-client", version: "0.1.0" },
-      capabilities: {
-        streaming: true,
-        experimental_methods: opts.experimentalMethods ?? false,
-      },
+  async send(message: ClientMessage): Promise<void> {
+    if (this.closed || !this.process.stdin?.writable) {
+      throw new Error("stdio child input is closed");
+    }
+    const line = `${JSON.stringify(message)}\n`;
+    await new Promise<void>((resolve, reject) => {
+      this.process.stdin!.write(line, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
     });
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`initialize failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as InitializeResult;
   }
 
-  async sessionList(): Promise<unknown[]> {
-    const resp = await this.request("session/list");
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`session/list failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as unknown[];
-  }
-
-  async bootstrap(): Promise<BootstrapState> {
-    const resp = await this.request("session/bootstrap");
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`session/bootstrap failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as BootstrapState;
-  }
-
-  async permissionOverview(): Promise<PermissionOverview> {
-    const resp = await this.request("permission/overview");
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`permission/overview failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as PermissionOverview;
-  }
-
-  async sessionControlState(sessionId: string): Promise<SessionControlState> {
-    const resp = await this.request("session/control_state", {
-      session_id: sessionId,
-    });
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`session/control_state failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as SessionControlState;
-  }
-
-  async setSessionModel(
-    sessionId: string,
-    model: string | null,
-  ): Promise<SessionControlState> {
-    const params: SetSessionModelParams = {
-      session_id: sessionId,
-      model,
-    };
-    const resp = await this.request("session/set_model", params);
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`session/set_model failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as SessionControlState;
-  }
-
-  async clearSessionModelOverride(sessionId: string): Promise<SessionControlState> {
-    const params: SetSessionModelParams = {
-      session_id: sessionId,
-      model: null,
-      inherit: true,
-    };
-    const resp = await this.request("session/set_model", params);
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`session/set_model clear failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as SessionControlState;
-  }
-
-  async theme(): Promise<ThemeResult> {
-    const resp = await this.request("settings/theme");
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`settings/theme failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as ThemeResult;
-  }
-
-  async setTheme(theme: ThemeSetting): Promise<ThemeResult> {
-    const resp = await this.request("settings/set_theme", { theme });
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`settings/set_theme failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as ThemeResult;
-  }
-
-  async editorMode(): Promise<EditorModeResult> {
-    const resp = await this.request("settings/editor_mode");
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`settings/editor_mode failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as EditorModeResult;
-  }
-
-  async setEditorMode(mode: EditorModeSetting): Promise<EditorModeResult> {
-    const resp = await this.request("settings/set_editor_mode", { mode });
-    const result = (resp as any).result;
-    if (result?.status !== "success") {
-      throw new Error(`settings/set_editor_mode failed: ${JSON.stringify(result)}`);
-    }
-    return result.data as EditorModeResult;
-  }
-
-  getServerRequests(): ServerMessage[] {
-    return [...this.serverRequests];
-  }
-
-  getNotifications(): ServerMessage[] {
-    return [...this.notifications];
-  }
-
-  clearNotifications(): void {
-    this.notifications = [];
+  subscribe(listener: (event: ProtocolTransportEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   async close(): Promise<void> {
-    this.rl.close();
-    this.process.stdin!.end();
-    await new Promise<void>((resolve) => {
-      this.process.on("close", () => resolve());
-      setTimeout(resolve, 5000);
+    if (this.closed) return;
+    this.closed = true;
+    this.lines.close();
+    this.process.stdin?.end();
+    if (await this.waitForExit(2_000)) return;
+    this.process.kill("SIGTERM");
+    if (await this.waitForExit(2_000)) return;
+    this.process.kill("SIGKILL");
+    await this.waitForExit(2_000);
+  }
+
+  private emit(event: ProtocolTransportEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+
+  private emitClosed(reason: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.emit({ kind: "closed", reason });
+  }
+
+  private async waitForExit(timeoutMs: number): Promise<boolean> {
+    if (this.process.exitCode !== null || this.process.signalCode !== null) {
+      return true;
+    }
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      this.process.once("close", () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
     });
+  }
+}
+
+/** Backward-compatible stdio convenience used by the existing smoke tests. */
+export class OrbCodeClient extends ProtocolClient {
+  constructor(binPath: string, homeDir: string, cwd: string) {
+    super(new StdioProtocolTransport(binPath, homeDir, cwd));
   }
 }

@@ -13,9 +13,7 @@ use crate::{
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BootstrapState {
-    #[schemars(with = "serde_json::Value")]
     pub session: SessionRecord,
-    #[schemars(with = "serde_json::Value")]
     pub bootstrap_event: StreamEvent,
     pub prompt_history: Vec<String>,
     pub available_tool_count: usize,
@@ -47,7 +45,7 @@ pub struct AcpLoadReplayPreflight {
     pub blockers: Vec<String>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct AcpDeleteSessionParams {
     pub session_id: String,
     pub cwd: PathBuf,

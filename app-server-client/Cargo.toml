@@ -28,11 +28,27 @@ tokio.workspace = true
 tokio-tungstenite.workspace = true
 uuid.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 orbcode-config = { path = "../config" }
 orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
 orbcode-tools = { path = "../tools" }
 chrono.workspace = true
+tempfile.workspace = true
+
+[[bin]]
+name = "orbcode-child-stdio-fixture"
+path = "tests/fixtures/child_stdio_fixture.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "orbcode-fake-ssh"
+path = "tests/fixtures/fake_ssh.rs"
+test = false
+bench = false
 
 [lints]
 workspace = true

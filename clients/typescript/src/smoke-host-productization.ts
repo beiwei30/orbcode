@@ -13,14 +13,16 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import WebSocket from "ws";
 import type {
   InitializeResult,
   ResponseResult,
-  ServerMessage,
-  ServerRequestEnvelope,
-  ServerResponseEnvelope,
-} from "@orbcode/protocol";
+} from "./generated/protocol.js";
+import {
+  ProtocolClient,
+  expectSuccess,
+  type ServerRequestMessage,
+} from "./protocol-client.js";
+import { WebSocketProtocolTransport } from "./websocket-transport.js";
 
 const BIN: string = process.env.ORBCODE_BIN ?? (() => {
   console.error("ORBCODE_BIN env var required");
@@ -36,118 +38,6 @@ interface ConnectionInfo {
   transport: "websocket";
   addr: string;
   auth_token: string;
-}
-
-class HostWsClient {
-  private ws!: WebSocket;
-  private nextId = 0;
-  private pending = new Map<
-    string,
-    { resolve: (msg: ServerResponseEnvelope & { type: "response" }) => void; reject: (err: Error) => void }
-  >();
-  private serverRequests: Array<ServerRequestEnvelope & { type: "request" }> = [];
-  private notifications: ServerMessage[] = [];
-
-  async connect(url: string, token: string): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(url);
-      const timer = setTimeout(() => reject(new Error("WebSocket connect timeout")), 10_000);
-      ws.on("open", () => {
-        this.ws = ws;
-        ws.send(token);
-        ws.on("message", (data: WebSocket.RawData) => this.dispatch(data));
-        clearTimeout(timer);
-        resolve();
-      });
-      ws.on("error", reject);
-    });
-  }
-
-  private dispatch(data: WebSocket.RawData): void {
-    let msg: ServerMessage;
-    try {
-      msg = JSON.parse(data.toString()) as ServerMessage;
-    } catch {
-      return;
-    }
-
-    if (msg.type === "response") {
-      const pending = this.pending.get(msg.id);
-      if (pending) {
-        this.pending.delete(msg.id);
-        pending.resolve(msg);
-      }
-    } else if (msg.type === "request") {
-      this.serverRequests.push(msg);
-    } else if (msg.type === "notification") {
-      this.notifications.push(msg);
-    }
-  }
-
-  async request(method: string, params?: unknown): Promise<ServerResponseEnvelope & { type: "response" }> {
-    const id = `host-${this.nextId++}`;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ type: "request", id, method, params }));
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`timeout waiting for ${method}`));
-        }
-      }, 30_000);
-    });
-  }
-
-  async initialize(experimentalMethods = false): Promise<InitializeResult> {
-    const response = await this.request("initialize", {
-      protocol_version: "1.0",
-      client_info: { name: "ts-host-productization", version: "0.1.0" },
-      capabilities: { streaming: true, experimental_methods: experimentalMethods },
-    });
-    const result = expectSuccess(response.result, "initialize");
-    return result as InitializeResult;
-  }
-
-  respondSuccess(id: string, data: unknown): void {
-    this.ws.send(JSON.stringify({
-      type: "response",
-      id,
-      result: { status: "success", data },
-    }));
-  }
-
-  takeServerRequests(): Array<ServerRequestEnvelope & { type: "request" }> {
-    const requests = this.serverRequests;
-    this.serverRequests = [];
-    return requests;
-  }
-
-  hasTurnFinished(): boolean {
-    return this.notifications.some((msg) => {
-      if (msg.type !== "notification" || msg.method !== "stream/event") return false;
-      const event = (msg.params as { event?: { event?: string } }).event;
-      return event?.event === "turn_finished";
-    });
-  }
-
-  async close(): Promise<void> {
-    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) return;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 2_000);
-      this.ws.once("close", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      this.ws.close();
-    });
-  }
-}
-
-function expectSuccess(result: ResponseResult, context: string): unknown {
-  if (result.status !== "success") {
-    throw new Error(`${context} failed: ${JSON.stringify(result)}`);
-  }
-  return result.data;
 }
 
 function expectErrorCode(result: ResponseResult, code: string, context: string): void {
@@ -200,9 +90,9 @@ function spawnServer(): { server: ChildProcess; info: Promise<ConnectionInfo> } 
 }
 
 async function waitForPermissionRequest(
-  client: HostWsClient,
+  client: ProtocolClient,
   label: string,
-): Promise<ServerRequestEnvelope & { type: "request" }> {
+): Promise<ServerRequestMessage> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     for (const request of client.takeServerRequests()) {
@@ -215,10 +105,14 @@ async function waitForPermissionRequest(
   throw new Error(`${label}: timed out waiting for permission/request`);
 }
 
-async function waitForTurnFinished(client: HostWsClient, label: string): Promise<void> {
+async function waitForTurnFinished(client: ProtocolClient, label: string): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    if (client.hasTurnFinished()) return;
+    if (client.getNotifications().some((message) => {
+      if (message.method !== "stream/event") return false;
+      const event = (message.params as { event?: { event?: string } }).event;
+      return event?.event === "turn_finished";
+    })) return;
     await sleep(100);
   }
   throw new Error(`${label}: timed out waiting for turn_finished`);
@@ -231,10 +125,17 @@ function sleep(ms: number): Promise<void> {
 async function connectInitialized(
   connInfo: ConnectionInfo,
   experimentalMethods = false,
-): Promise<{ client: HostWsClient; init: InitializeResult }> {
-  const client = new HostWsClient();
-  await client.connect(`ws://${connInfo.addr}`, connInfo.auth_token);
-  const init = await client.initialize(experimentalMethods);
+): Promise<{ client: ProtocolClient; init: InitializeResult }> {
+  const transport = await WebSocketProtocolTransport.connect(
+    `ws://${connInfo.addr}`,
+    connInfo.auth_token,
+  );
+  const client = new ProtocolClient(transport, {
+    requestIdPrefix: "host",
+    requestTimeoutMs: 30_000,
+    clientName: "ts-host-productization",
+  });
+  const init = await client.initialize({ experimentalMethods });
   return { client, init };
 }
 
@@ -282,7 +183,7 @@ async function main(): Promise<void> {
     });
     expectSuccess(submit.result, "turn/submit");
     const permission = await waitForPermissionRequest(second.client, "server-request pump");
-    second.client.respondSuccess(permission.id, { decision: "deny" });
+    await second.client.respondSuccess(permission.id, { decision: "deny" });
     await waitForTurnFinished(second.client, "server-request pump");
     assert(true, "permission/request handled and turn finished");
 

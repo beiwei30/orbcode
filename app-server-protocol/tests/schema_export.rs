@@ -55,6 +55,9 @@ fn assert_method_contract_schema_bundle() {
     insert!(
         EmptyParams,
         NoData,
+        BootstrapState,
+        SessionListResult,
+        SessionForkResult,
         SessionIdParams,
         SessionGoalGetResult,
         SessionGoalSetParams,
@@ -66,6 +69,7 @@ fn assert_method_contract_schema_bundle() {
         SetSessionPermissionModeParams,
         SetSessionModelParams,
         SetSessionEffortParams,
+        AcpDeleteSessionParams,
         SessionControlState,
         SessionRenameParams,
         SessionForkParams,

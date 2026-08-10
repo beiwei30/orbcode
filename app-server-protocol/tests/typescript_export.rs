@@ -224,6 +224,46 @@ fn generate_protocol_ts() -> String {
             schema_for::<orbcode_app_server_protocol::BootstrapParams>(),
         ),
         (
+            "BootstrapState",
+            schema_for::<orbcode_app_server_protocol::BootstrapState>(),
+        ),
+        (
+            "SessionListResult",
+            schema_for::<orbcode_app_server_protocol::SessionListResult>(),
+        ),
+        (
+            "SessionForkResult",
+            schema_for::<orbcode_app_server_protocol::SessionForkResult>(),
+        ),
+        (
+            "SessionControlState",
+            schema_for::<orbcode_app_server_protocol::SessionControlState>(),
+        ),
+        (
+            "SetSessionPermissionModeParams",
+            schema_for::<orbcode_app_server_protocol::SetSessionPermissionModeParams>(),
+        ),
+        (
+            "SetSessionModelParams",
+            schema_for::<orbcode_app_server_protocol::SetSessionModelParams>(),
+        ),
+        (
+            "SetSessionEffortParams",
+            schema_for::<orbcode_app_server_protocol::SetSessionEffortParams>(),
+        ),
+        (
+            "AcpDeleteSessionParams",
+            schema_for::<orbcode_app_server_protocol::AcpDeleteSessionParams>(),
+        ),
+        (
+            "StreamEvent",
+            schema_for::<orbcode_app_server_protocol::StreamEvent>(),
+        ),
+        (
+            "StreamEventNotification",
+            schema_for::<orbcode_app_server_protocol::StreamEventNotification>(),
+        ),
+        (
             "McpServerInput",
             schema_for::<orbcode_app_server_protocol::McpServerInput>(),
         ),
@@ -302,12 +342,7 @@ fn generate_protocol_ts() -> String {
         SessionGoalContinueParams,
         SessionGoalNotStartedReason,
         SessionGoalContinueResult,
-        SetSessionPermissionModeParams,
-        SetSessionModelParams,
-        SetSessionEffortParams,
-        SessionControlState,
         SessionModelOption,
-        BootstrapState,
         SessionRenameParams,
         SessionForkParams,
         SessionRewindParams,

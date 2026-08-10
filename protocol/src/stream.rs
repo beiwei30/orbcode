@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -88,7 +89,7 @@ impl ProgressEnvelope {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamErrorCategory {
     Auth,
@@ -132,7 +133,7 @@ impl StreamErrorCategory {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TurnCancellationKind {
@@ -155,7 +156,7 @@ impl TurnCancellationKind {
 /// accumulated cost has reached or passed the cap; `UnknownPricing` means some
 /// accumulated usage came from an unpriced model so the running total
 /// understates real spend.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BudgetOutcome {
@@ -180,7 +181,7 @@ pub struct NormalizedEvent {
 
 // `Eq` is intentionally omitted: the `Budget` variant carries `f64` cost
 // fields, which are `PartialEq` but not `Eq`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StreamEvent {
