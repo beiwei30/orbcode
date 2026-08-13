@@ -32,8 +32,7 @@ use tokio::process::Command;
 const ORBCODE_BIN: &str = env!("CARGO_BIN_EXE_orbcode");
 const ASK_USER_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=AskUserQuestion&input=%7B%22question%22%3A%22Pick%20a%20color%22%2C%22options%22%3A%5B%22red%22%2C%22blue%22%5D%7D";
 const ASK_USER_FREE_TEXT_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=AskUserQuestion&input=%7B%22question%22%3A%22Say%20anything%22%7D";
-const GLOB_TOOL_MOCK_BASE_URL: &str =
-    "mock://anthropic?scenario=tool_use&key=glob&input=%7B%22pattern%22%3A%22*%22%7D";
+const BASH_TOOL_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi";
 const BASH_ESCALATION_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D";
 const HTTP_MCP_TOOL_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=mcp__docs-http__echo&input=%7B%22text%22%3A%22from%20acp%20http%22%7D";
 const HANG_MOCK_BASE_URL: &str = "mock://anthropic?scenario=hang";
@@ -95,7 +94,7 @@ impl AcpProcess {
                 // bool. These focused ACP tests need the permission layer
                 // satisfied so they can exercise MCP trust independently.
                 .arg("--allowed-tools")
-                .arg("bash,glob,mcp__docs-server__*,mcp__docs-server-2__*,mcp__docs-http__*");
+                .arg("bash,mcp__docs-server__*,mcp__docs-server-2__*,mcp__docs-http__*");
         }
 
         let command = command
@@ -3471,7 +3470,7 @@ async fn acp_ask_user_routes_to_second_active_session() {
 #[tokio::test]
 async fn acp_tool_lifecycle_emits_tool_updates() {
     let mut proc =
-        AcpProcess::spawn_with_base_url_and_allow_tools(GLOB_TOOL_MOCK_BASE_URL, true).await;
+        AcpProcess::spawn_with_base_url_and_allow_tools(BASH_TOOL_MOCK_BASE_URL, true).await;
 
     initialize_acp(&mut proc).await;
     let session_id = new_session_without_mcp_id(&mut proc, 2).await;
@@ -3482,7 +3481,7 @@ async fn acp_tool_lifecycle_emits_tool_updates() {
         "method": "session/prompt",
         "params": {
             "sessionId": session_id,
-            "prompt": [{"type": "text", "text": "run a glob tool"}]
+            "prompt": [{"type": "text", "text": "run a bash tool"}]
         }
     }))
     .await;
@@ -3559,9 +3558,9 @@ async fn acp_tool_lifecycle_emits_tool_updates() {
     assert!(
         tool_call_titles.iter().any(|title| {
             let lowered = title.to_ascii_lowercase();
-            lowered.starts_with("search(") && lowered.contains('*')
+            lowered.starts_with("bash(") && lowered.contains("echo")
         }),
-        "expected descriptive search(<pattern>) tool_call title in {tool_call_titles:?}"
+        "expected descriptive bash(<command>) tool_call title in {tool_call_titles:?}"
     );
     assert!(
         tool_call_update_titles

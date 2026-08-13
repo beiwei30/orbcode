@@ -26,10 +26,6 @@ fn consecutive_bash_calls_propagate_cwd() {
         .env_remove("CLAUDE_CODE_USE_OPENAI")
         .env_remove("ORBCODE_ALLOWED_TOOLS")
         .env_remove("ORBCODE_DISALLOWED_TOOLS")
-        // This test exercises cwd propagation, not the platform sandbox. The
-        // default workspace-write preset requires bubblewrap on Linux CI.
-        .arg("--sandbox-mode")
-        .arg("danger-full-access")
         .arg("prompt")
         .arg(prompt)
         .output()
