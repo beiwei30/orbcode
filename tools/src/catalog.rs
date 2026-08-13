@@ -756,7 +756,7 @@ fn foundation_tool_capability(name: &str) -> ToolCapability {
         "file-write" | "file-edit" | "notebook-edit" => ToolCapability::WorkspaceWrite,
         "bash" => ToolCapability::SandboxedCommand,
         "web-fetch" | "web-search" => ToolCapability::Network,
-        "workflow" => ToolCapability::ExternalSideEffect,
+        "workflow" | "task-stop" => ToolCapability::ExternalSideEffect,
         "ask-user-question"
         | "enter-plan-mode"
         | "exit-plan-mode"
@@ -769,8 +769,7 @@ fn foundation_tool_capability(name: &str) -> ToolCapability {
         | "task-get"
         | "task-list"
         | "task-update"
-        | "task-output"
-        | "task-stop" => ToolCapability::Internal,
+        | "task-output" => ToolCapability::Internal,
         _ => ToolCapability::ExternalSideEffect,
     }
 }
@@ -1530,6 +1529,15 @@ mod tests {
         let registry = ToolRegistry::foundation();
         assert_eq!(
             registry.spec("Workflow").expect("workflow spec").capability,
+            ToolCapability::ExternalSideEffect
+        );
+    }
+
+    #[test]
+    fn task_stop_requires_external_side_effect_review() {
+        let registry = ToolRegistry::foundation();
+        assert_eq!(
+            registry.spec("TaskStop").expect("TaskStop spec").capability,
             ToolCapability::ExternalSideEffect
         );
     }

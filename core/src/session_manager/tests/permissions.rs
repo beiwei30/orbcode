@@ -208,6 +208,120 @@ async fn approve_for_me_executes_only_after_structured_reviewer_approval() {
 }
 
 #[tokio::test]
+async fn approve_for_me_does_not_issue_a_reviewer_request_at_the_spend_cap() {
+    let mut manager = test_manager().await;
+    manager.config.fallback_provider = None;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=review_approve".to_string(),
+    );
+    manager.config.settings.env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        "claude-sonnet-4-6".to_string(),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    manager
+        .append_message(
+            &session.session_id,
+            TranscriptMessage::new(MessageRole::User, "write the requested external file"),
+        )
+        .await
+        .expect("persist task");
+    manager
+        .append_message(
+            &session.session_id,
+            TranscriptMessage::new(MessageRole::Assistant, "boundary tool requested").with_usage(
+                TokenUsage {
+                    input_tokens: 200_000,
+                    output_tokens: 50_000,
+                    ..TokenUsage::default()
+                },
+            ),
+        )
+        .await
+        .expect("persist paid main-model usage");
+    let (total, pricing_known) = manager.live_cost_total(&session.session_id).await;
+    assert!(total > 0.0);
+    assert!(pricing_known);
+    manager.config.settings.max_budget_usd = Some(total);
+    manager
+        .set_session_permission_preset(&session.session_id, ModelPermissionPreset::ApproveForMe)
+        .await
+        .expect("set auto-review preset");
+
+    let outside = manager
+        .config
+        .cwd
+        .parent()
+        .expect("workspace parent")
+        .join(format!("orbcode-budget-review-{}.txt", Uuid::new_v4()));
+    let input = serde_json::json!({ "file_path": outside, "content": "reviewed" }).to_string();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let runner = (*manager).clone();
+    let session_id = session.session_id.clone();
+    let handle = tokio::spawn(async move {
+        runner
+            .execute_tool_use(
+                &session_id,
+                "tool-budget-review",
+                "file-write",
+                &input,
+                &tx,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+    });
+
+    let mut saw_review_started = false;
+    let mut saw_budget_escalation = false;
+    let mut saw_user_request = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::ApprovalReviewStarted { .. } => saw_review_started = true,
+            StreamEvent::ApprovalReviewCompleted {
+                kind: ApprovalReviewResolutionKind::EscalatedToUser,
+                rationale: Some(rationale),
+                ..
+            } => {
+                saw_budget_escalation = rationale.contains("maxBudgetUsd");
+            }
+            StreamEvent::PermissionRequested { request } => {
+                saw_user_request = true;
+                assert!(
+                    manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::Deny,
+                        )
+                        .await
+                );
+            }
+            _ => {}
+        }
+    }
+    handle
+        .await
+        .expect("budget review task join")
+        .expect("budget review tool resolution");
+
+    assert!(
+        saw_review_started,
+        "the review lifecycle must remain paired"
+    );
+    assert!(
+        saw_budget_escalation,
+        "the review must explain that maxBudgetUsd prevented the provider request"
+    );
+    assert!(saw_user_request, "a blocked auto-review must fail closed");
+    let overview = manager
+        .cost_overview(&session.session_id)
+        .await
+        .expect("cost overview");
+    assert!((overview.cost.total_cost_usd - total).abs() < 1e-12);
+    assert!(!outside.exists());
+}
+
+#[tokio::test]
 async fn approve_for_me_escalates_risky_or_invalid_review_output_to_user() {
     for scenario in ["review_escalate", "review_invalid", "fatal"] {
         let (events, saw_user_request, _cost) = run_auto_review_scenario(scenario).await;

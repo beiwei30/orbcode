@@ -11,8 +11,9 @@ pub use orbcode_protocol::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionMode {
+    #[serde(alias = "acceptEdits", alias = "accept-edits")]
     Default,
-    #[serde(alias = "bypass-permissions")]
+    #[serde(alias = "bypass-permissions", alias = "dontAsk", alias = "dont-ask")]
     BypassPermissions,
     Plan,
     Auto,
@@ -21,8 +22,10 @@ pub enum PermissionMode {
 impl PermissionMode {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
-            "default" => Some(Self::Default),
-            "bypassPermissions" | "bypass-permissions" => Some(Self::BypassPermissions),
+            "default" | "acceptEdits" | "accept-edits" => Some(Self::Default),
+            "bypassPermissions" | "bypass-permissions" | "dontAsk" | "dont-ask" => {
+                Some(Self::BypassPermissions)
+            }
             "plan" => Some(Self::Plan),
             "auto" => Some(Self::Auto),
             _ => None,
@@ -146,10 +149,19 @@ mod tests {
     use super::PermissionMode;
 
     #[test]
-    fn removed_permission_modes_are_rejected() {
-        for value in ["acceptEdits", "accept-edits", "dontAsk", "dont-ask"] {
-            assert_eq!(PermissionMode::parse(value), None);
-            assert!(serde_json::from_str::<PermissionMode>(&format!("\"{value}\"")).is_err());
+    fn legacy_permission_modes_map_to_current_policies() {
+        for (value, expected) in [
+            ("acceptEdits", PermissionMode::Default),
+            ("accept-edits", PermissionMode::Default),
+            ("dontAsk", PermissionMode::BypassPermissions),
+            ("dont-ask", PermissionMode::BypassPermissions),
+        ] {
+            assert_eq!(PermissionMode::parse(value), Some(expected));
+            assert_eq!(
+                serde_json::from_str::<PermissionMode>(&format!("\"{value}\""))
+                    .expect("deserialize legacy mode"),
+                expected
+            );
         }
     }
 }

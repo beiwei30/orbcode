@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use orbcode_config::mcp_permission_target;
 use orbcode_mcp::McpServerTrust;
 use orbcode_protocol::{
-    ApprovalReviewResolutionKind, McpTrustApprovalRequest, McpTrustResolutionKind, MessageRole,
-    PermissionRequest, PermissionResolutionKind, StreamEvent, ToolUseCompletionKind,
+    ApprovalReviewResolutionKind, BudgetOutcome, McpTrustApprovalRequest, McpTrustResolutionKind,
+    MessageRole, PermissionRequest, PermissionResolutionKind, StreamEvent, ToolUseCompletionKind,
     TranscriptBlock, TranscriptMessage,
 };
 use orbcode_tools::{
@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::session_goal_tools::persistent_goal_tool_spec;
+use super::session_turn_loop::BudgetDecision;
 use super::{LiveToolProgressReporter, SessionManager};
 use crate::{
     CoreError,
@@ -448,61 +449,98 @@ impl SessionManager {
         };
 
         let auto_review_outcome = if let PermissionEvaluation::AutoReview { reason } = evaluation {
+            let config = self.effective_config_for_session(session_id);
+            let budget_block = match self.budget_precheck(session_id, &config).await {
+                Some(BudgetDecision::Block {
+                    total_usd,
+                    max_budget_usd,
+                    ..
+                }) => Some(ApprovalReviewOutcome::EscalateToUser {
+                    kind: ApprovalReviewResolutionKind::EscalatedToUser,
+                    rationale: format!(
+                        "automatic permission review was not started because the session cost ${total_usd:.6} reached maxBudgetUsd ${max_budget_usd:.6}"
+                    ),
+                }),
+                Some(BudgetDecision::Warn {
+                    total_usd,
+                    max_budget_usd,
+                }) => {
+                    let _ = tx.send(StreamEvent::Budget {
+                        session_id: session_id.to_string(),
+                        outcome: BudgetOutcome::UnknownPricing,
+                        blocked: false,
+                        total_usd,
+                        max_budget_usd,
+                        pricing_known: false,
+                    });
+                    None
+                }
+                None => None,
+            };
             let _ = tx.send(StreamEvent::ApprovalReviewStarted {
                 session_id: session_id.to_string(),
                 request_id: request.request_id.clone(),
                 tool_use_id: tool_use_id.to_string(),
                 tool_name: tool_name.to_string(),
             });
-            if !self
-                .permission_runtime
-                .try_begin_approval_review(session_id, MAX_APPROVAL_REVIEWS_PER_TURN)
-                .await
-            {
-                let rationale = format!(
-                    "automatic permission review limit of {MAX_APPROVAL_REVIEWS_PER_TURN} was reached for this turn"
-                );
+            if let Some(review) = budget_block {
+                let (kind, rationale) = match &review {
+                    ApprovalReviewOutcome::EscalateToUser {
+                        kind, rationale, ..
+                    } => (*kind, Some(rationale.clone())),
+                    _ => unreachable!("a budget block always escalates automatic review"),
+                };
                 let _ = tx.send(StreamEvent::ApprovalReviewCompleted {
                     session_id: session_id.to_string(),
                     request_id: request.request_id.clone(),
-                    kind: ApprovalReviewResolutionKind::LimitExceeded,
-                    rationale: Some(rationale.clone()),
-                });
-                Some(ApprovalReviewOutcome::EscalateToUser {
-                    kind: ApprovalReviewResolutionKind::LimitExceeded,
+                    kind,
                     rationale,
-                })
+                });
+                Some(review)
             } else {
-                let original_task = self
-                    .load_session(session_id)
-                    .await
-                    .ok()
-                    .and_then(|session| original_task_for_approval_review(&session.messages))
-                    .unwrap_or_default();
-                let config = self.effective_config_for_session(session_id);
-                let review_result = review_permission_boundary(
-                    &config,
-                    &self.auth,
-                    session_id,
-                    &original_task,
-                    tool_name,
-                    tool_input,
-                    reason,
-                    cancel_flag.clone(),
-                    APPROVAL_REVIEW_TIMEOUT,
-                )
-                .await;
-                let review = match self
-                    .persist_approval_review_usage(session_id, &review_result)
+                let review = if !self
+                    .permission_runtime
+                    .try_begin_approval_review(session_id, MAX_APPROVAL_REVIEWS_PER_TURN)
                     .await
                 {
-                    Ok(()) => review_result.outcome,
-                    Err(error) => ApprovalReviewOutcome::EscalateToUser {
-                        kind: ApprovalReviewResolutionKind::Failed,
-                        rationale: format!(
-                            "automatic review usage could not be persisted: {error}"
-                        ),
-                    },
+                    let rationale = format!(
+                        "automatic permission review limit of {MAX_APPROVAL_REVIEWS_PER_TURN} was reached for this turn"
+                    );
+                    ApprovalReviewOutcome::EscalateToUser {
+                        kind: ApprovalReviewResolutionKind::LimitExceeded,
+                        rationale,
+                    }
+                } else {
+                    let original_task = self
+                        .load_session(session_id)
+                        .await
+                        .ok()
+                        .and_then(|session| original_task_for_approval_review(&session.messages))
+                        .unwrap_or_default();
+                    let review_result = review_permission_boundary(
+                        &config,
+                        &self.auth,
+                        session_id,
+                        &original_task,
+                        tool_name,
+                        tool_input,
+                        reason,
+                        cancel_flag.clone(),
+                        APPROVAL_REVIEW_TIMEOUT,
+                    )
+                    .await;
+                    match self
+                        .persist_approval_review_usage(session_id, &review_result)
+                        .await
+                    {
+                        Ok(()) => review_result.outcome,
+                        Err(error) => ApprovalReviewOutcome::EscalateToUser {
+                            kind: ApprovalReviewResolutionKind::Failed,
+                            rationale: format!(
+                                "automatic review usage could not be persisted: {error}"
+                            ),
+                        },
+                    }
                 };
                 let (kind, rationale) = match &review {
                     ApprovalReviewOutcome::Approved => {

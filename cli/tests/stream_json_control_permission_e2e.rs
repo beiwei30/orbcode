@@ -329,7 +329,7 @@ fn without_set_permission_mode_tool_is_denied() {
 }
 
 #[test]
-fn set_permission_mode_removed_values_return_error() {
+fn set_permission_mode_legacy_values_map_to_current_modes() {
     for (request_id, mode) in [("legacy-accept", "acceptEdits"), ("legacy-dont", "dontAsk")] {
         let harness = Harness::new();
         let stdin = format!(
@@ -340,12 +340,12 @@ fn set_permission_mode_removed_values_return_error() {
         let (code, stdout, stderr) = harness.run_eof(&stdin);
         assert_eq!(
             code, 0,
-            "removed control mode should not crash the process; stderr: {stderr}"
+            "legacy control mode should remain compatible; stderr: {stderr}"
         );
         let records = parse_lines(&stdout);
-        let response = control_response(&records, request_id)
-            .expect("removed permission mode control response");
-        assert_eq!(response["response"]["subtype"], "error", "mode {mode}");
+        let response =
+            control_response(&records, request_id).expect("legacy permission mode response");
+        assert_eq!(response["response"]["subtype"], "success", "mode {mode}");
     }
 }
 
