@@ -7,7 +7,7 @@ use orbcode_config::{
     update_model_setting, update_theme_setting,
 };
 use orbcode_model_provider::{ProviderDescriptor, supported_providers};
-use orbcode_protocol::EffortLevel;
+use orbcode_protocol::{EffortLevel, ModelPermissionPolicy, ModelPermissionPreset};
 use orbcode_tools::FileReadState;
 use std::sync::Arc;
 
@@ -37,11 +37,30 @@ impl SessionManager {
             config.apply_runtime_model_override(controls.model.requested_model());
         }
         config.permission_mode = Some(controls.permission_mode);
-        if let Some(allow_tools) = controls.permission_mode.default_allow_tools() {
-            config.allow_tools = allow_tools;
-        }
-        if let Some(allow_network) = controls.permission_mode.default_allow_network() {
-            config.allow_network = allow_network;
+        if controls.permission_preset.is_some() {
+            let explicit = config.explicit_permission_overrides;
+            if controls.permission_preset_overridden || !explicit.sandbox_mode {
+                config.sandbox_mode = controls.permission_policy.sandbox_mode;
+            }
+            if controls.permission_preset_overridden || !explicit.sandbox_allow_network {
+                config.sandbox_allow_network = controls.permission_policy.sandbox_allow_network;
+            }
+            if controls.permission_preset_overridden || !explicit.allow_tools {
+                config.allow_tools = true;
+            }
+            if controls.permission_preset_overridden || !explicit.allow_network {
+                config.allow_network = matches!(
+                    controls.permission_policy.preset,
+                    ModelPermissionPreset::FullAccess
+                );
+            }
+        } else {
+            if let Some(allow_tools) = controls.permission_mode.default_allow_tools() {
+                config.allow_tools = allow_tools;
+            }
+            if let Some(allow_network) = controls.permission_mode.default_allow_network() {
+                config.allow_network = allow_network;
+            }
         }
         config
     }
@@ -49,13 +68,17 @@ impl SessionManager {
     pub fn register_session_controls(&self, session: &orbcode_protocol::SessionRecord) {
         let config = self.effective_config();
         let configured_permission_mode = config.permission_mode.unwrap_or(PermissionMode::Default);
-        let permission_mode = match configured_permission_mode {
+        let permission_mode = if configured_permission_mode == PermissionMode::BypassPermissions
+            && config.policy.disable_bypass_permissions_mode
+        {
             PermissionMode::Default
-            | PermissionMode::AcceptEdits
-            | PermissionMode::Plan
-            | PermissionMode::DontAsk => configured_permission_mode,
-            PermissionMode::BypassPermissions | PermissionMode::Auto => PermissionMode::Default,
+        } else {
+            configured_permission_mode
         };
+        let permission_preset = permission_preset_for_legacy_mode(permission_mode);
+        let permission_policy = permission_preset
+            .unwrap_or(ModelPermissionPreset::AskForApproval)
+            .policy();
         let effort = session
             .session_effort
             .or_else(|| self.runtime_effort_override());
@@ -64,6 +87,9 @@ impl SessionManager {
             .or_insert(SessionControlOverrides {
                 permission_mode,
                 permission_mode_overridden: false,
+                permission_preset,
+                permission_policy,
+                permission_preset_overridden: false,
                 model: RuntimeModelOverride::Inherit,
                 effort,
             });
@@ -78,6 +104,42 @@ impl SessionManager {
             .get(session_id)
             .map(|controls| controls.permission_mode)
             .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))
+    }
+
+    pub fn session_permission_preset(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ModelPermissionPreset>, CoreError> {
+        self.session_controls_read()
+            .get(session_id)
+            .map(|controls| controls.permission_preset)
+            .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))
+    }
+
+    pub fn session_permission_policy(
+        &self,
+        session_id: &str,
+    ) -> Result<ModelPermissionPolicy, CoreError> {
+        self.session_controls_read()
+            .get(session_id)
+            .map(|controls| controls.permission_policy)
+            .ok_or_else(|| CoreError::SessionNotFound(session_id.to_string()))
+    }
+
+    pub fn permission_preset_disabled_reason(
+        &self,
+        preset: ModelPermissionPreset,
+    ) -> Option<String> {
+        if preset == ModelPermissionPreset::FullAccess
+            && self
+                .effective_config()
+                .policy
+                .disable_bypass_permissions_mode
+        {
+            Some("Full Access is disabled by managed policy".to_string())
+        } else {
+            None
+        }
     }
 
     pub fn session_effort_level(&self, session_id: &str) -> Result<Option<EffortLevel>, CoreError> {
@@ -142,17 +204,11 @@ impl SessionManager {
         session_id: &str,
         mode: PermissionMode,
     ) -> Result<(), CoreError> {
-        if !matches!(
-            mode,
-            PermissionMode::Default
-                | PermissionMode::AcceptEdits
-                | PermissionMode::Plan
-                | PermissionMode::DontAsk
-        ) {
-            return Err(CoreError::Config(format!(
-                "permission mode {} is not available for session controls",
-                mode.as_str()
-            )));
+        if mode == PermissionMode::BypassPermissions
+            && let Some(reason) =
+                self.permission_preset_disabled_reason(ModelPermissionPreset::FullAccess)
+        {
+            return Err(CoreError::PermissionDenied(reason));
         }
         self.ensure_session_controls_mutable(session_id).await?;
         let mut controls = self.session_controls_write();
@@ -161,6 +217,33 @@ impl SessionManager {
             .expect("session controls validated before mutation");
         controls.permission_mode = mode;
         controls.permission_mode_overridden = true;
+        controls.permission_preset = permission_preset_for_legacy_mode(mode);
+        controls.permission_policy = controls
+            .permission_preset
+            .unwrap_or(ModelPermissionPreset::AskForApproval)
+            .policy();
+        controls.permission_preset_overridden = false;
+        Ok(())
+    }
+
+    pub async fn set_session_permission_preset(
+        &self,
+        session_id: &str,
+        preset: ModelPermissionPreset,
+    ) -> Result<(), CoreError> {
+        if let Some(reason) = self.permission_preset_disabled_reason(preset) {
+            return Err(CoreError::PermissionDenied(reason));
+        }
+        self.ensure_session_controls_mutable(session_id).await?;
+        let mut controls = self.session_controls_write();
+        let controls = controls
+            .get_mut(session_id)
+            .expect("session controls validated before mutation");
+        controls.permission_mode = legacy_mode_for_permission_preset(preset);
+        controls.permission_mode_overridden = true;
+        controls.permission_preset = Some(preset);
+        controls.permission_policy = preset.policy();
+        controls.permission_preset_overridden = true;
         Ok(())
     }
 
@@ -272,12 +355,7 @@ impl SessionManager {
     }
 
     pub fn session_exposes_tools(&self, session_id: &str) -> bool {
-        !matches!(
-            self.session_controls_read()
-                .get(session_id)
-                .map(|controls| controls.permission_mode),
-            Some(PermissionMode::Plan)
-        )
+        self.effective_config_for_session(session_id).allow_tools
     }
 
     async fn ensure_session_controls_mutable(&self, session_id: &str) -> Result<(), CoreError> {
@@ -296,7 +374,7 @@ impl SessionManager {
         }
     }
 
-    fn session_controls_read(
+    pub(super) fn session_controls_read(
         &self,
     ) -> std::sync::RwLockReadGuard<'_, std::collections::HashMap<String, SessionControlOverrides>>
     {
@@ -454,7 +532,9 @@ impl SessionManager {
         if self
             .session_controls_read()
             .get(session_id)
-            .is_some_and(|controls| controls.permission_mode_overridden)
+            .is_some_and(|controls| {
+                controls.permission_mode_overridden || controls.permission_preset.is_some()
+            })
         {
             // A session-scoped mode must not inherit another client's
             // process-global allow-all switch.
@@ -539,8 +619,7 @@ impl SessionManager {
         let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
         let changed = self
             .permission_runtime
-            .record_session_permission_rule_remove(kind, &normalized)
-            .await;
+            .record_unscoped_session_permission_rule_remove(kind, &normalized);
         Ok(PermissionRuleSettingsUpdate {
             path: self.config.settings_path.clone(),
             rule: normalized,
@@ -554,7 +633,17 @@ impl SessionManager {
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> Result<PermissionRuleSettingsUpdate, CoreError> {
-        let update = self.remove_session_permission_rule(kind, rule).await?;
+        self.ensure_permission_rules_mutable()?;
+        let normalized = normalize_permission_rule_for_edit(rule).map_err(CoreError::Config)?;
+        let changed = self
+            .permission_runtime
+            .record_session_permission_rule_remove(session_id, kind, &normalized)
+            .await;
+        let update = PermissionRuleSettingsUpdate {
+            path: self.config.settings_path.clone(),
+            rule: normalized,
+            changed,
+        };
         if update.changed {
             self.persist_runtime_session_context(session_id).await?;
         }
@@ -565,14 +654,6 @@ impl SessionManager {
         self.config
             .ensure_setting_mutable("permissions")
             .map_err(|error| CoreError::PermissionDenied(error.message))
-    }
-
-    pub fn set_allow_all(&self, enabled: bool) {
-        self.permission_runtime.set_allow_all(enabled);
-    }
-
-    pub fn allow_all(&self) -> bool {
-        self.permission_runtime.allow_all()
     }
 
     pub fn additional_directories(&self) -> Vec<PathBuf> {
@@ -615,8 +696,10 @@ impl SessionManager {
         Ok(())
     }
 
-    pub async fn runtime_permission_rules(&self) -> Vec<String> {
-        self.permission_runtime.runtime_permission_rules().await
+    pub async fn runtime_permission_rules(&self, session_id: &str) -> Vec<String> {
+        self.permission_runtime
+            .runtime_permission_rules_for_session(session_id)
+            .await
     }
 
     pub fn settings_permission_rules(&self, kind: PermissionRuleSettingKind) -> Vec<String> {
@@ -635,5 +718,22 @@ impl SessionManager {
 
     pub fn runtime_added_permission_rules(&self, kind: PermissionRuleSettingKind) -> Vec<String> {
         self.permission_runtime.runtime_added_permission_rules(kind)
+    }
+}
+
+fn permission_preset_for_legacy_mode(mode: PermissionMode) -> Option<ModelPermissionPreset> {
+    match mode {
+        PermissionMode::Default => Some(ModelPermissionPreset::AskForApproval),
+        PermissionMode::Auto => Some(ModelPermissionPreset::ApproveForMe),
+        PermissionMode::BypassPermissions => Some(ModelPermissionPreset::FullAccess),
+        PermissionMode::Plan => None,
+    }
+}
+
+fn legacy_mode_for_permission_preset(preset: ModelPermissionPreset) -> PermissionMode {
+    match preset {
+        ModelPermissionPreset::AskForApproval => PermissionMode::Default,
+        ModelPermissionPreset::ApproveForMe => PermissionMode::Auto,
+        ModelPermissionPreset::FullAccess => PermissionMode::BypassPermissions,
     }
 }

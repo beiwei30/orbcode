@@ -522,6 +522,10 @@ async fn stream_error_after_streamed_tool_use_suppresses_fallback_after_complete
     set_openai_server_env(&mut manager, fallback_base_url);
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    manager
+        .set_session_permission_preset(&session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("enable full access for external side-effect test");
     let mut rx = manager
         .submit_turn(&session_id, "stream error after streamed tool")
         .await
@@ -699,6 +703,10 @@ async fn stream_error_after_started_slow_tool_interrupts_and_drains_without_fall
     set_anthropic_server_env(&mut manager, base_url);
     set_openai_server_env(&mut manager, fallback_base_url);
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    manager
+        .set_session_permission_preset(&session.session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("enable full access for external side-effect test");
     let mut rx = manager
         .submit_turn(&session.session_id, "stream error after slow tool")
         .await

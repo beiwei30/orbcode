@@ -19,7 +19,6 @@ pub(crate) mod dispatch;
 pub(crate) mod effort;
 pub(crate) mod goal;
 pub(crate) mod local_output;
-pub(crate) mod permissions;
 pub(crate) mod persisted_system;
 pub(crate) mod plan;
 pub(crate) mod registry;

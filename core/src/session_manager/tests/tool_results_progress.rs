@@ -1009,7 +1009,8 @@ async fn agent_loop_cancellation_synthesizes_remaining_tool_results_in_order() {
             TranscriptBlock::ToolUse {
                 id: "tool-second".to_string(),
                 name: "bash".to_string(),
-                input: r#"{"command":"printf second"}"#.to_string(),
+                input: r#"{"command":"printf second","sandbox_permissions":"require_escalated"}"#
+                    .to_string(),
             },
             TranscriptBlock::ToolUse {
                 id: "tool-third".to_string(),

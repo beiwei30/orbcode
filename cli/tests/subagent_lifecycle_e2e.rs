@@ -132,7 +132,7 @@ fn common_args(prompt: &str) -> Vec<String> {
         "stream-json".to_string(),
         "--verbose".to_string(),
         "--permission-mode".to_string(),
-        "acceptEdits".to_string(),
+        "default".to_string(),
         "--allowed-tools".to_string(),
         "Agent,Read,Bash".to_string(),
     ]

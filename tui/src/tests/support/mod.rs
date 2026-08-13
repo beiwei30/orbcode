@@ -24,7 +24,7 @@ pub(super) use std::time::{Duration as StdDuration, Instant};
 pub(super) use chrono::{NaiveDate, TimeZone, Utc};
 pub(super) use crossterm::{
     cursor::SetCursorStyle,
-    event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
 };
 pub(super) use orbcode_app_server::{
     AppServer, CostSummary, ModelOption, ModelUsage, OutputStyleOption,
@@ -40,11 +40,11 @@ pub(super) use orbcode_app_server_client::{
     ContextTokenSource, ContextUsageOverview, ContextWindowOptions, CostOverview, DoctorCheck,
     DoctorReport, DoctorStatus, MaxOutputTokenOptions, McpResourceSlashSuggestion,
     McpServerSlashSuggestion, McpSlashSuggestionCatalog, McpToolSlashSuggestion,
-    MemoryFileOverview, MemoryOverview, PermissionOverview,
-    PermissionRuleKind as PermissionRuleSettingKind, PermissionRuleOverview,
-    ProviderRequestDebugSnapshot, SandboxFilesystemLocalSettings, SandboxLocalSettings,
-    SandboxNetworkLocalSettings, StatsActivityDay, StatsOverview, StatusAuthOverview,
-    StatusOverview, ThemeSetting, TokenWarningOptions, UsageOverview, WorkspaceDiff,
+    MemoryFileOverview, MemoryOverview, ModelPermissionPreset, PermissionOverview,
+    PermissionPresetOption, ProviderRequestDebugSnapshot, SandboxFilesystemLocalSettings,
+    SandboxLocalSettings, SandboxNetworkLocalSettings, StatsActivityDay, StatsOverview,
+    StatusAuthOverview, StatusOverview, ThemeSetting, TokenWarningOptions, UsageOverview,
+    WorkspaceDiff,
 };
 pub(super) use orbcode_protocol::{MemorySource, MemorySourceKind};
 pub(super) use ratatui::{
@@ -70,7 +70,6 @@ pub(super) use crate::commands::async_local::{
     apply_local_command_event_for_redraw,
 };
 pub(super) use crate::commands::compact::compact_restored_file_detail_lines;
-pub(super) use crate::commands::permissions::{PERMISSIONS_USAGE, PermissionRuleScope};
 pub(super) use crate::commands::release_notes::CHANGELOG_URL;
 pub(super) use crate::custom_terminal::Terminal;
 pub(super) use crate::editor_mode::EditorMode;
@@ -113,7 +112,7 @@ pub(super) use crate::render::slash::render_recent_activity_detail_lines;
 pub(super) use crate::render::slash_output::{
     LAST_REQUEST_BODY_PREVIEW_CHARS, render_agent_definitions, render_auth_overview,
     render_context_overview, render_cost_overview, render_doctor_report, render_hook_discovery,
-    render_last_provider_request_snapshot, render_memory_overview, render_permission_overview,
+    render_last_provider_request_snapshot, render_memory_overview,
     render_provider_request_body_section, render_recent_activity_trace, render_skill_definitions,
     render_stats_overview, render_stats_summary, render_status_overview, render_turn_context,
     render_usage_overview, render_workspace_diff, workspace_diff_changed_path_count,
@@ -317,7 +316,6 @@ pub(super) fn normal_state(input: &str, cursor: usize) -> TuiState {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: String::new(),
         status_line_set_at: None,
         ui_version: "2.1.888".to_string(),

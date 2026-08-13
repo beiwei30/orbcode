@@ -67,8 +67,8 @@ pub(crate) use diagnostics::{
 };
 pub(crate) use settings::{
     format_release_notes, parse_changelog_release_notes, render_agent_definitions_with_warnings,
-    render_auth_overview, render_hook_discovery, render_permission_overview, render_plan_overview,
-    render_skill_definitions, render_status_overview, workspace_diff_changed_path_count,
+    render_auth_overview, render_hook_discovery, render_plan_overview, render_skill_definitions,
+    render_status_overview, workspace_diff_changed_path_count,
 };
 #[cfg(test)]
 pub(crate) use settings::{

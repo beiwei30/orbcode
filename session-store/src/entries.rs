@@ -100,6 +100,9 @@ pub fn transcript_entries(
                     .to_string(),
                 );
             }
+            if message.is_synthetic {
+                entry["isSynthetic"] = Value::Bool(true);
+            }
             apply_loaded_provenance(&mut entry, message.transcript_provenance.as_ref());
             vec![entry]
         }

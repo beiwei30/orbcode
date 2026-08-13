@@ -186,7 +186,7 @@ fn control_response<'a>(records: &'a [Value], request_id: &str) -> Option<&'a Va
     })
 }
 
-const BASH_PROMPT: &str = "#tool:bash {\"command\":\"echo permission_test\"}";
+const BASH_PROMPT: &str = "#tool:bash {\"command\":\"echo permission_test\",\"sandbox_permissions\":\"require_escalated\"}";
 
 #[test]
 fn can_use_tool_callback_approves_real_permission_request() {
@@ -329,23 +329,24 @@ fn without_set_permission_mode_tool_is_denied() {
 }
 
 #[test]
-fn set_permission_mode_accept_edits_still_allows_bash_with_allowed_tools() {
-    let harness = Harness::new();
-    let stdin = format!(
-        "{}\n{}\n",
-        set_permission_mode_frame("perm-2", "acceptEdits"),
-        user_frame(BASH_PROMPT),
-    );
-    let (code, stdout, stderr) = harness.run_eof(&stdin);
-    // acceptEdits + --allowed-tools bash should allow the bash tool
-    assert_eq!(
-        code, 0,
-        "acceptEdits + allowed-tools bash should succeed; stderr: {stderr}\nstdout:\n{stdout}"
-    );
-    let records = parse_lines(&stdout);
-    let ack =
-        control_response(&records, "perm-2").expect("control_response for set_permission_mode");
-    assert_eq!(ack["response"]["subtype"], "success");
+fn set_permission_mode_legacy_values_map_to_current_modes() {
+    for (request_id, mode) in [("legacy-accept", "acceptEdits"), ("legacy-dont", "dontAsk")] {
+        let harness = Harness::new();
+        let stdin = format!(
+            "{}\n{}\n",
+            set_permission_mode_frame(request_id, mode),
+            user_frame("say hi"),
+        );
+        let (code, stdout, stderr) = harness.run_eof(&stdin);
+        assert_eq!(
+            code, 0,
+            "legacy control mode should remain compatible; stderr: {stderr}"
+        );
+        let records = parse_lines(&stdout);
+        let response =
+            control_response(&records, request_id).expect("legacy permission mode response");
+        assert_eq!(response["response"]["subtype"], "success", "mode {mode}");
+    }
 }
 
 #[test]

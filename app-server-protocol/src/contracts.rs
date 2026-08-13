@@ -13,7 +13,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AgentDefinition, AgentLoadWarning, AuthMethod, PermissionMode, SkillDefinition};
+use crate::{
+    AgentDefinition, AgentLoadWarning, AuthMethod, ModelPermissionPreset, PermissionMode,
+    SkillDefinition,
+};
 
 macro_rules! impl_list_result {
     ($name:ident, $item:ty) => {
@@ -146,6 +149,12 @@ where
 pub struct SetSessionPermissionModeParams {
     pub session_id: String,
     pub mode: PermissionMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SetSessionPermissionPresetParams {
+    pub session_id: String,
+    pub preset: ModelPermissionPreset,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -524,16 +533,6 @@ pub struct SandboxExcludedCommandParams {
 pub struct SandboxExcludedCommandResult {
     pub pattern: String,
     pub path: PathBuf,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct AllowAllParams {
-    pub allow_all: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct AllowAllResult {
-    pub allow_all: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

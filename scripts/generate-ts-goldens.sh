@@ -61,7 +61,7 @@ RS_GOLDEN_FILES[tool-round-trip]="tool_round_trip.jsonl"
 
 declare -A EXTRA_FLAGS
 EXTRA_FLAGS[simple-text]=""
-EXTRA_FLAGS[tool-round-trip]="--permission-mode acceptEdits --allowedTools Bash"
+EXTRA_FLAGS[tool-round-trip]="--permission-mode default --allowedTools Bash"
 
 run_scenario() {
     local name=$1

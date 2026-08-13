@@ -59,16 +59,14 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
     if std::env::var_os("ORBCODE_TUI_FINAL_ANSWER_FIXTURE").is_some() {
         install_final_answer_fixture(&mut state);
     }
-    if let Ok(result) = client.permission_mode().await {
-        state.status.permission_mode = result.mode;
-    }
-    if let Ok(allow) = client.allow_all().await {
-        state.status.allow_all = allow;
-    }
     if let Ok(overview) = client.status_overview(&state.session_id).await {
         state.status.sandbox_mode = overview.sandbox_mode;
         state.status.bg_job_count = overview.background_job_count;
         state.status.effort = overview.effort_level;
+        state.status.permission_mode =
+            crate::overlays::InteractivePermissionMode::from_active_preset(
+                overview.active_permission_preset,
+            );
     }
     state.status.git_branch = detect_git_branch(&state.cwd);
     let mut render_metrics = RenderMetricsRecorder::from_env()?;

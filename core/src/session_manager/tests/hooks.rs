@@ -1581,10 +1581,6 @@ async fn pre_tool_hook_updated_input_cannot_bypass_configured_deny() {
 #[tokio::test]
 async fn pre_tool_hook_updated_input_cannot_bypass_previous_user_denial() {
     let mut manager = test_manager().await;
-    manager
-        .permission_runtime
-        .remember_denied_tool_call("bash", r#"{"command":"printf updated"}"#)
-        .await;
     manager.config.settings.hooks.insert(
             "PreToolUse".to_string(),
             vec![HookMatcher {
@@ -1598,6 +1594,14 @@ async fn pre_tool_hook_updated_input_cannot_bypass_previous_user_denial() {
         );
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    manager
+        .permission_runtime
+        .remember_denied_tool_call_for_session(
+            &session_id,
+            "bash",
+            r#"{"command":"printf updated"}"#,
+        )
+        .await;
     manager
         .append_message(
             &session_id,
@@ -1634,6 +1638,161 @@ async fn pre_tool_hook_updated_input_cannot_bypass_previous_user_denial() {
 
     assert_eq!(outcome, ToolUseOutcome::Denied);
     assert!(saw_user_denial);
+}
+
+#[tokio::test]
+async fn pre_tool_hook_updated_input_rechecks_workspace_boundary() {
+    let mut manager = test_manager().await;
+    let outside = manager
+        .config
+        .cwd
+        .parent()
+        .expect("test workspace parent")
+        .join(format!("hook-outside-{}.txt", Uuid::new_v4()));
+    let hook_output = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "updatedInput": {
+                "file_path": outside,
+                "content": "must not be written"
+            }
+        }
+    })
+    .to_string();
+    manager.config.settings.hooks.insert(
+        "PreToolUse".to_string(),
+        vec![HookMatcher {
+            matcher: Some("Write".to_string()),
+            hooks: vec![HookCommand::Command {
+                command: format!("printf '%s' '{hook_output}'"),
+                r#if: None,
+                timeout: Some(5.0),
+            }],
+        }],
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    manager
+        .append_message(
+            &session_id,
+            TranscriptMessage::new(MessageRole::User, "hook boundary update test"),
+        )
+        .await
+        .expect("seed session");
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let worker = {
+        let manager = manager.clone();
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            manager
+                .execute_tool_use(
+                    &session_id,
+                    "tool-hook-boundary-update",
+                    "Write",
+                    r#"{"file_path":"inside.txt","content":"original"}"#,
+                    &tx,
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .await
+        })
+    };
+
+    let mut requested_updated_input = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::PermissionRequested { request } => {
+                requested_updated_input = request.tool_input.contains("hook-outside-");
+                assert!(
+                    manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::Deny,
+                        )
+                        .await
+                );
+            }
+            StreamEvent::ToolUseCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        worker.await.expect("join tool task").expect("execute tool"),
+        ToolUseOutcome::Denied
+    );
+    assert!(requested_updated_input);
+    assert!(!outside.exists());
+}
+
+#[tokio::test]
+async fn pre_tool_hook_ask_remains_interactive_under_full_access() {
+    let mut manager = test_manager().await;
+    manager.config.settings.hooks.insert(
+        "PreToolUse".to_string(),
+        vec![HookMatcher {
+            matcher: Some("bash".to_string()),
+            hooks: vec![HookCommand::Command {
+                command: r#"printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"confirm in test"}}'"#.to_string(),
+                r#if: None,
+                timeout: Some(5.0),
+            }],
+        }],
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    manager
+        .set_session_permission_preset(&session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set full access");
+    manager
+        .append_message(
+            &session_id,
+            TranscriptMessage::new(MessageRole::User, "hook ask full access test"),
+        )
+        .await
+        .expect("seed session");
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let worker = {
+        let manager = manager.clone();
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            manager
+                .execute_tool_use(
+                    &session_id,
+                    "tool-hook-ask-full-access",
+                    "bash",
+                    r#"{"command":"printf safe"}"#,
+                    &tx,
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .await
+        })
+    };
+
+    let mut saw_permission_request = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            StreamEvent::PermissionRequested { request } => {
+                saw_permission_request = true;
+                assert!(
+                    manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::Deny,
+                        )
+                        .await
+                );
+            }
+            StreamEvent::ToolUseCompleted { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        worker.await.expect("join tool task").expect("execute tool"),
+        ToolUseOutcome::Denied
+    );
+    assert!(saw_permission_request);
 }
 
 #[tokio::test]
@@ -2124,10 +2283,6 @@ async fn pre_tool_hook_allow_cannot_override_configured_deny_on_original_input()
 #[tokio::test]
 async fn pre_tool_hook_allow_cannot_override_user_denial_on_original_input() {
     let mut manager = test_manager().await;
-    manager
-        .permission_runtime
-        .remember_denied_tool_call("bash", r#"{"command":"printf original"}"#)
-        .await;
     let marker_path = manager
         .config
         .cwd
@@ -2148,6 +2303,14 @@ async fn pre_tool_hook_allow_cannot_override_user_denial_on_original_input() {
     );
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    manager
+        .permission_runtime
+        .remember_denied_tool_call_for_session(
+            &session_id,
+            "bash",
+            r#"{"command":"printf original"}"#,
+        )
+        .await;
     manager
         .append_message(
             &session_id,

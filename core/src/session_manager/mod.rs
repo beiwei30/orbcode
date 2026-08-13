@@ -33,9 +33,10 @@ use orbcode_protocol::PermissionResolutionKind;
 #[cfg(test)]
 use orbcode_protocol::TurnCancellationKind;
 use orbcode_protocol::{
-    AskUserCancellationReason, AskUserResponseOutcome, MessageRole, ProviderId, SessionRecord,
-    SessionSummary, StreamEvent, ToolResultContent, TranscriptBlock, TranscriptMessage,
-    TurnContext, visible_content_from_blocks,
+    AskUserCancellationReason, AskUserResponseOutcome, MessageRole, ModelPermissionPolicy,
+    ModelPermissionPreset, ProviderId, SessionRecord, SessionSummary, StreamEvent,
+    ToolResultContent, TranscriptBlock, TranscriptMessage, TurnContext,
+    visible_content_from_blocks,
 };
 #[cfg(test)]
 use orbcode_session_store::PERSISTED_OUTPUT_TAG;
@@ -276,6 +277,9 @@ pub struct SessionManager {
 struct SessionControlOverrides {
     permission_mode: PermissionMode,
     permission_mode_overridden: bool,
+    permission_preset: Option<ModelPermissionPreset>,
+    permission_policy: ModelPermissionPolicy,
+    permission_preset_overridden: bool,
     model: orbcode_config::RuntimeModelOverride,
     effort: Option<orbcode_protocol::EffortLevel>,
 }
@@ -1461,13 +1465,24 @@ impl SessionManager {
         &self,
         previous_session_id: &str,
     ) -> Result<SessionRecord, CoreError> {
+        let inherited_preset = self
+            .session_controls_read()
+            .get(previous_session_id)
+            .and_then(|controls| {
+                controls
+                    .permission_preset_overridden
+                    .then_some(controls.permission_preset)
+                    .flatten()
+            });
         // Signal the driver to stop (via the cancel flag) as well as freeing the
         // slot. `remove_session` alone would leave the detached driver running —
         // it would keep issuing provider requests and appending to the now
         // abandoned session id.
         self.active_turns.interrupt(previous_session_id).await;
+        self.permission_runtime
+            .remove_session_state(previous_session_id)
+            .await;
         self.remove_session_controls(previous_session_id);
-        self.permission_runtime.clear_denied_tool_calls().await;
 
         let session = SessionRecord::new();
         self.runtime_state.set_cwd_override(None);
@@ -1478,6 +1493,10 @@ impl SessionManager {
         self.runtime_state.set_effort_override(None);
         self.runtime_state.set_max_thinking_tokens(None);
         self.register_session_controls(&session);
+        if let Some(preset) = inherited_preset {
+            self.set_session_permission_preset(&session.session_id, preset)
+                .await?;
+        }
         let config = self.effective_config_for_session(&session.session_id);
         self.transcript_store
             .record_session_cwd(&session.session_id, &config.cwd);
@@ -1783,6 +1802,9 @@ impl SessionManager {
         self.active_turns
             .insert(session_id, turn_id, cancel_flag.clone(), interaction)
             .await?;
+        self.permission_runtime
+            .begin_permission_turn(session_id)
+            .await;
 
         // The active-turn entry is normally cleared by the detached driver task
         // when it exits. If any of the fallible setup below errors, that task is
@@ -1808,6 +1830,9 @@ impl SessionManager {
             self.active_turns
                 .clear_if_matching(session_id, turn_id)
                 .await;
+            self.permission_runtime
+                .end_permission_turn(session_id)
+                .await;
             return Err(error);
         }
 
@@ -1822,6 +1847,10 @@ impl SessionManager {
         let _turn_handle = tokio::spawn(async move {
             manager
                 .run_turn_loop(&session_id, turn_id, &prompt, &config, cancel_flag, &tx)
+                .await;
+            manager
+                .permission_runtime
+                .end_permission_turn(&session_id)
                 .await;
             manager.interaction_runtime.cancel_turn(
                 &turn_id.to_string(),

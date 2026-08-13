@@ -783,8 +783,6 @@ fn method_constants_are_stable() {
         "settings/set_auto_memory",
         "settings/ensure_memory_file",
         "settings/add_sandbox_excluded",
-        "settings/allow_all",
-        "settings/set_allow_all",
         // Context / Usage
         "context/preview",
         "context/overview",
@@ -842,6 +840,8 @@ fn method_constants_are_stable() {
         "session/acp_close",
         "session/control_state",
         "session/set_permission_mode",
+        "session/permission_presets",
+        "session/set_permission_preset",
         "session/set_model",
         "session/set_effort",
         "session/goal/get",
@@ -899,6 +899,14 @@ fn method_strings_pinned() {
     assert_eq!(
         method::SESSION_SET_PERMISSION_MODE,
         "session/set_permission_mode"
+    );
+    assert_eq!(
+        method::SESSION_PERMISSION_PRESETS,
+        "session/permission_presets"
+    );
+    assert_eq!(
+        method::SESSION_SET_PERMISSION_PRESET,
+        "session/set_permission_preset"
     );
     assert_eq!(method::SESSION_SET_MODEL, "session/set_model");
     assert_eq!(method::SESSION_SET_EFFORT, "session/set_effort");

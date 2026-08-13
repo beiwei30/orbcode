@@ -210,6 +210,7 @@ config	pub_use	config::AppConfig
 config	pub_use	config::AppConfigOverrides
 config	pub_use	config::ContextWindowOptions
 config	pub_use	config::EffectiveModelSelection
+config	pub_use	config::ExplicitPermissionOverrides
 config	pub_use	config::MaxOutputTokenOptions
 config	pub_use	config::ModelOption
 config	pub_use	config::ModelSelectionSource
@@ -270,8 +271,10 @@ config	pub_use	permission_rules::mcp_permission_target
 config	pub_use	permission_rules::normalize_permission_rule_for_edit
 config	pub_use	permission_rules::PermissionRule
 config	pub_use	permission_rules::PermissionRuleMatchMode
+config	pub_use	permission_rules::ToolPathBoundary
 config	pub_use	permission_rules::suggested_bash_permission_rules
 config	pub_use	permission_rules::tool_path_allowed_by_additional_directory
+config	pub_use	permission_rules::tool_path_boundary
 config	pub_use	plugins::bundled_skills_dir
 config	pub_use	plugins::load_plugin_registry
 config	pub_use	plugins::LoadedPlugin
@@ -582,8 +585,13 @@ protocol	pub_use	overview::CostOverview
 protocol	pub_use	overview::StatsActivityDay
 protocol	pub_use	overview::StatsOverview
 protocol	pub_use	overview::UsageOverview
+protocol	pub_use	permission::ApprovalPolicy
+protocol	pub_use	permission::ApprovalReviewResolutionKind
+protocol	pub_use	permission::ApprovalReviewer
 protocol	pub_use	permission::McpTrustApprovalRequest
 protocol	pub_use	permission::McpTrustResolutionKind
+protocol	pub_use	permission::ModelPermissionPolicy
+protocol	pub_use	permission::ModelPermissionPreset
 protocol	pub_use	permission::PermissionRequest
 protocol	pub_use	permission::PermissionResolutionKind
 protocol	pub_use	provider::EffortLevel
@@ -750,6 +758,7 @@ tools	pub_use	types::AskUserRequest
 tools	pub_use	types::InteractionToolVisibility
 tools	pub_use	types::PluginDispatchError
 tools	pub_use	types::ToolCancellationToken
+tools	pub_use	types::ToolCapability
 tools	pub_use	types::ToolContext
 tools	pub_use	types::ToolError
 tools	pub_use	types::ToolOutcome

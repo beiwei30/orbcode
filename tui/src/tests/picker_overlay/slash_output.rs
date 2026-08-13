@@ -88,25 +88,20 @@ fn slash_command_output_note_hides_default_summary_and_renders_direct_detail() {
 }
 
 #[test]
-fn slash_command_output_note_can_render_extended_tip_pool() {
-    let message = local_slash_command_output_message(
-        "/permissions".to_string(),
-        "Permissions loaded.".to_string(),
-        None,
-        slash_commands::SlashCommandDeferredFeedback::Direct,
+fn slash_command_tip_pool_contains_permission_preset_guidance() {
+    assert_eq!(
+        crate::render::slash::slash_command_tip_for_line("/permissions").as_deref(),
+        Some("Tip: Use /permissions to choose the session approval preset.")
     );
-    let note = parse_local_transcript_note(&message).expect("slash command note");
+}
 
-    let rendered = plain_text_lines(&render_local_transcript_note_lines(note, 100, false));
-    let rendered_text = rendered.join("\n");
-
-    assert!(
-        rendered_text.contains("  └  Tip: Use /allowed-tools as an alias for /permissions."),
-        "{rendered_text}"
-    );
-    assert!(
-        !rendered_text.contains("Permissions loaded."),
-        "{rendered_text}"
+#[test]
+fn slash_command_tip_pool_contains_shift_tab_mode_guidance() {
+    assert_eq!(
+        crate::render::slash::slash_command_tip_for_line("/b").as_deref(),
+        Some(
+            "Tip: Press Shift-Tab to cycle Ask for approval, Approve for me, Full Access, and Plan modes."
+        )
     );
 }
 

@@ -1842,15 +1842,9 @@ impl HeadlessRun {
         self.permission_mode = mode;
         self.allow_tools = matches!(
             mode,
-            PermissionMode::AcceptEdits
-                | PermissionMode::BypassPermissions
-                | PermissionMode::DontAsk
-                | PermissionMode::Auto
+            PermissionMode::BypassPermissions | PermissionMode::Auto
         );
-        self.allow_network = matches!(
-            mode,
-            PermissionMode::BypassPermissions | PermissionMode::DontAsk
-        );
+        self.allow_network = matches!(mode, PermissionMode::BypassPermissions);
     }
 
     fn emit_control_response(&self, response: serde_json::Value) -> Result<()> {
@@ -2060,12 +2054,16 @@ async fn stdin_control_reader(tx: tokio::sync::mpsc::UnboundedSender<ControlFram
 }
 
 pub(crate) fn headless_permission_decision(
-    request: &orbcode_protocol::PermissionRequest,
-    allow_tools: bool,
-    allow_network: bool,
+    _request: &orbcode_protocol::PermissionRequest,
+    _allow_tools: bool,
+    _allow_network: bool,
 ) -> bool {
-    (!request.requires_tools_permission || allow_tools)
-        && (!request.requires_network_permission || allow_network)
+    // The core evaluator has already allowed workspace-safe operations,
+    // configured rules, Full Access, and successful automatic reviews. Any
+    // request that reaches a non-interactive headless runner still requires a
+    // human decision, so the only fail-closed answer is deny. Duplex
+    // stream-json uses the separate `can_use_tool` server-request flow.
+    false
 }
 
 pub(crate) fn context_compacted_log_line(
@@ -2091,4 +2089,24 @@ pub(crate) fn context_compacted_log_line(
         line.push_str(reason);
     }
     line
+}
+
+#[cfg(test)]
+mod permission_decision_tests {
+    use super::*;
+
+    #[test]
+    fn non_interactive_headless_never_auto_approves_boundary_requests() {
+        let request = orbcode_protocol::PermissionRequest {
+            request_id: "request".to_string(),
+            session_id: "session".to_string(),
+            tool_use_id: "tool".to_string(),
+            tool_name: "Write".to_string(),
+            tool_input: r#"{"file_path":"../outside.txt"}"#.to_string(),
+            requires_tools_permission: true,
+            requires_network_permission: false,
+        };
+
+        assert!(!headless_permission_decision(&request, true, true));
+    }
 }

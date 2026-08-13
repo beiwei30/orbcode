@@ -5,26 +5,32 @@ use async_trait::async_trait;
 use orbcode_config::mcp_permission_target;
 use orbcode_mcp::McpServerTrust;
 use orbcode_protocol::{
-    McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,
-    StreamEvent, ToolUseCompletionKind,
+    ApprovalReviewResolutionKind, BudgetOutcome, McpTrustApprovalRequest, McpTrustResolutionKind,
+    MessageRole, PermissionRequest, PermissionResolutionKind, StreamEvent, ToolUseCompletionKind,
+    TranscriptBlock, TranscriptMessage,
 };
 use orbcode_tools::{
-    SkillDefinition, ToolCancellationToken, ToolContext, ToolOutcome, ToolProgressReporter,
-    ToolSpec, ToolStatus, load_skill_definitions_with_bounded_mcp_for_session,
-    parse_mcp_provider_tool_name, read_background_task_record, task_record_to_view,
-    tool_result_metadata,
+    SkillDefinition, ToolCancellationToken, ToolCapability, ToolContext, ToolOutcome,
+    ToolProgressReporter, ToolSpec, ToolStatus,
+    load_skill_definitions_with_bounded_mcp_for_session, parse_mcp_provider_tool_name,
+    read_background_task_record, task_record_to_view, tool_result_metadata,
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::session_goal_tools::persistent_goal_tool_spec;
+use super::session_turn_loop::BudgetDecision;
 use super::{LiveToolProgressReporter, SessionManager};
 use crate::{
     CoreError,
+    approval_review::{
+        APPROVAL_REVIEW_TIMEOUT, ApprovalReviewOutcome, ApprovalReviewResult,
+        review_permission_boundary,
+    },
     hooks::PreToolPhaseOutcome,
     interaction_runtime::InteractionRuntime,
     permission_state::PermissionDecision,
-    permissions::PermissionContext,
+    permissions::{PermissionContext, PermissionEvaluation},
     tool_flow::{
         BufferedToolResult, BufferedToolUseCompletion, McpTrustResolutionOutcome,
         ToolDenyPrecedenceStage, ToolLookupOutcome, ToolPermissionResolutionOutcome,
@@ -35,6 +41,7 @@ use crate::{
 };
 
 const PERMISSION_POLL_MS: u64 = 100;
+const MAX_APPROVAL_REVIEWS_PER_TURN: usize = 8;
 const MCP_SKILL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKFLOW_TOOL_SPEC: ToolSpec = ToolSpec {
     name: "Workflow",
@@ -42,8 +49,25 @@ const WORKFLOW_TOOL_SPEC: ToolSpec = ToolSpec {
     summary: "Start a generated dynamic workflow as a durable background task.",
     requires_tools_permission: true,
     requires_network_permission: false,
+    capability: ToolCapability::ExternalSideEffect,
     provider_hidden: false,
 };
+
+fn original_task_for_approval_review(messages: &[TranscriptMessage]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.role == MessageRole::User
+                && !message.is_synthetic
+                && !message.content.trim().is_empty()
+                && !message
+                    .blocks
+                    .iter()
+                    .any(|block| matches!(block, TranscriptBlock::ToolResult { .. }))
+        })
+        .map(|message| message.content.clone())
+}
 
 #[derive(Debug, serde::Deserialize)]
 struct WorkflowToolInput {
@@ -241,6 +265,7 @@ const MCP_PROVIDER_TOOL_SPEC: ToolSpec = ToolSpec {
     summary: "MCP server tool invoked through the model tool-use path.",
     requires_tools_permission: true,
     requires_network_permission: false,
+    capability: ToolCapability::ExternalSideEffect,
     provider_hidden: false,
 };
 
@@ -249,7 +274,7 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Vec<SkillDefinition>, CoreError> {
-        let config = self.effective_config();
+        let config = self.effective_config_for_session(session_id);
         let cwd = self.cwd_for_session(session_id).await?;
         Ok(load_skill_definitions_with_bounded_mcp_for_session(
             &config.home_dir,
@@ -409,6 +434,7 @@ impl SessionManager {
         tool_name: &str,
         tool_input: &str,
         spec: &ToolSpec,
+        evaluation: &PermissionEvaluation,
         tx: &mpsc::UnboundedSender<StreamEvent>,
         cancel_flag: Arc<AtomicBool>,
     ) -> ToolPermissionResolutionOutcome {
@@ -422,26 +448,149 @@ impl SessionManager {
             requires_network_permission: spec.requires_network_permission,
         };
 
-        let outcome = match self
-            .permission_runtime
-            .await_permission_decision(
-                &request,
-                || {
-                    tx.send(StreamEvent::PermissionRequested {
-                        request: request.clone(),
-                    })
-                    .is_ok()
-                },
-                cancel_flag,
-                Duration::from_millis(PERMISSION_POLL_MS),
-            )
-            .await
-        {
+        let auto_review_outcome = if let PermissionEvaluation::AutoReview { reason } = evaluation {
+            let config = self.effective_config_for_session(session_id);
+            let budget_block = match self.budget_precheck(session_id, &config).await {
+                Some(BudgetDecision::Block {
+                    total_usd,
+                    max_budget_usd,
+                    ..
+                }) => Some(ApprovalReviewOutcome::EscalateToUser {
+                    kind: ApprovalReviewResolutionKind::EscalatedToUser,
+                    rationale: format!(
+                        "automatic permission review was not started because the session cost ${total_usd:.6} reached maxBudgetUsd ${max_budget_usd:.6}"
+                    ),
+                }),
+                Some(BudgetDecision::Warn {
+                    total_usd,
+                    max_budget_usd,
+                }) => {
+                    let _ = tx.send(StreamEvent::Budget {
+                        session_id: session_id.to_string(),
+                        outcome: BudgetOutcome::UnknownPricing,
+                        blocked: false,
+                        total_usd,
+                        max_budget_usd,
+                        pricing_known: false,
+                    });
+                    None
+                }
+                None => None,
+            };
+            let _ = tx.send(StreamEvent::ApprovalReviewStarted {
+                session_id: session_id.to_string(),
+                request_id: request.request_id.clone(),
+                tool_use_id: tool_use_id.to_string(),
+                tool_name: tool_name.to_string(),
+            });
+            if let Some(review) = budget_block {
+                let (kind, rationale) = match &review {
+                    ApprovalReviewOutcome::EscalateToUser {
+                        kind, rationale, ..
+                    } => (*kind, Some(rationale.clone())),
+                    _ => unreachable!("a budget block always escalates automatic review"),
+                };
+                let _ = tx.send(StreamEvent::ApprovalReviewCompleted {
+                    session_id: session_id.to_string(),
+                    request_id: request.request_id.clone(),
+                    kind,
+                    rationale,
+                });
+                Some(review)
+            } else {
+                let review = if !self
+                    .permission_runtime
+                    .try_begin_approval_review(session_id, MAX_APPROVAL_REVIEWS_PER_TURN)
+                    .await
+                {
+                    let rationale = format!(
+                        "automatic permission review limit of {MAX_APPROVAL_REVIEWS_PER_TURN} was reached for this turn"
+                    );
+                    ApprovalReviewOutcome::EscalateToUser {
+                        kind: ApprovalReviewResolutionKind::LimitExceeded,
+                        rationale,
+                    }
+                } else {
+                    let original_task = self
+                        .load_session(session_id)
+                        .await
+                        .ok()
+                        .and_then(|session| original_task_for_approval_review(&session.messages))
+                        .unwrap_or_default();
+                    let review_result = review_permission_boundary(
+                        &config,
+                        &self.auth,
+                        session_id,
+                        &original_task,
+                        tool_name,
+                        tool_input,
+                        reason,
+                        cancel_flag.clone(),
+                        APPROVAL_REVIEW_TIMEOUT,
+                    )
+                    .await;
+                    match self
+                        .persist_approval_review_usage(session_id, &review_result)
+                        .await
+                    {
+                        Ok(()) => review_result.outcome,
+                        Err(error) => ApprovalReviewOutcome::EscalateToUser {
+                            kind: ApprovalReviewResolutionKind::Failed,
+                            rationale: format!(
+                                "automatic review usage could not be persisted: {error}"
+                            ),
+                        },
+                    }
+                };
+                let (kind, rationale) = match &review {
+                    ApprovalReviewOutcome::Approved => {
+                        (ApprovalReviewResolutionKind::Approved, None)
+                    }
+                    ApprovalReviewOutcome::EscalateToUser {
+                        kind, rationale, ..
+                    } => (*kind, Some(rationale.clone())),
+                    ApprovalReviewOutcome::Cancelled => {
+                        (ApprovalReviewResolutionKind::Cancelled, None)
+                    }
+                };
+                let _ = tx.send(StreamEvent::ApprovalReviewCompleted {
+                    session_id: session_id.to_string(),
+                    request_id: request.request_id.clone(),
+                    kind,
+                    rationale,
+                });
+                Some(review)
+            }
+        } else {
+            None
+        };
+
+        let user_decision = match auto_review_outcome {
+            Some(ApprovalReviewOutcome::Approved) => Some(PermissionDecision::Approve),
+            Some(ApprovalReviewOutcome::Cancelled) => None,
+            Some(ApprovalReviewOutcome::EscalateToUser { .. }) | None => {
+                self.permission_runtime
+                    .await_permission_decision(
+                        &request,
+                        || {
+                            tx.send(StreamEvent::PermissionRequested {
+                                request: request.clone(),
+                            })
+                            .is_ok()
+                        },
+                        cancel_flag,
+                        Duration::from_millis(PERMISSION_POLL_MS),
+                    )
+                    .await
+            }
+        };
+
+        let outcome = match user_decision {
             Some(PermissionDecision::Approve) => ToolPermissionResolutionOutcome::Approved,
             Some(PermissionDecision::ApproveAlways(rule)) => {
                 if !self.config.policy.allow_managed_permission_rules_only {
                     self.permission_runtime
-                        .remember_permission_rule(tool_name, &rule)
+                        .remember_permission_rule_for_session(session_id, tool_name, &rule)
                         .await;
                 }
                 ToolPermissionResolutionOutcome::Approved
@@ -450,7 +599,7 @@ impl SessionManager {
                 if !self.config.policy.allow_managed_permission_rules_only {
                     for rule in rules {
                         self.permission_runtime
-                            .remember_permission_rule(tool_name, &rule)
+                            .remember_permission_rule_for_session(session_id, tool_name, &rule)
                             .await;
                     }
                 }
@@ -458,7 +607,7 @@ impl SessionManager {
             }
             Some(PermissionDecision::Deny) => {
                 self.permission_runtime
-                    .remember_denied_tool_call(tool_name, tool_input)
+                    .remember_denied_tool_call_for_session(session_id, tool_name, tool_input)
                     .await;
                 ToolPermissionResolutionOutcome::Denied
             }
@@ -479,8 +628,53 @@ impl SessionManager {
         outcome
     }
 
+    async fn persist_approval_review_usage(
+        &self,
+        session_id: &str,
+        review: &ApprovalReviewResult,
+    ) -> Result<(), CoreError> {
+        if review.usage.component_total_tokens() == 0 {
+            return Ok(());
+        }
+        let subscription = self.uses_chatgpt_subscription_for(review.provider);
+        let cost_message = TranscriptMessage::new(MessageRole::Assistant, "")
+            .with_usage(review.usage.clone())
+            .with_synthetic(true)
+            .with_cost_attribution(review.provider, review.model.clone(), subscription);
+        self.append_message(session_id, cost_message).await
+    }
+
+    pub(super) async fn evaluate_tool_permission_call(
+        &self,
+        session_id: &str,
+        permissions: &PermissionContext,
+        tool_name: &str,
+        tool_input: &str,
+        spec: &ToolSpec,
+        hook_allowed: bool,
+    ) -> PermissionEvaluation {
+        let policy = self
+            .session_permission_preset(session_id)
+            .ok()
+            .flatten()
+            .and_then(|_| self.session_permission_policy(session_id).ok());
+        let remembered_allowed = self
+            .permission_runtime
+            .matches_permission_rule_for_session(session_id, tool_name, tool_input)
+            .await;
+        permissions.evaluate_tool_call(
+            policy,
+            spec,
+            tool_name,
+            tool_input,
+            hook_allowed,
+            remembered_allowed,
+        )
+    }
+
     pub(super) async fn tool_deny_precedence_reason(
         &self,
+        session_id: &str,
         permissions: &PermissionContext,
         tool_name: &str,
         tool_input: &str,
@@ -496,7 +690,7 @@ impl SessionManager {
         }
         if self
             .permission_runtime
-            .matches_denied_tool_call(tool_name, tool_input)
+            .matches_denied_tool_call_for_session(session_id, tool_name, tool_input)
             .await
         {
             return Some(format!(
@@ -594,13 +788,21 @@ impl ToolRuntimeHost for SessionManager {
 
     async fn tool_deny_precedence_reason(
         &self,
+        session_id: &str,
         permissions: &PermissionContext,
         tool_name: &str,
         tool_input: &str,
         stage: ToolDenyPrecedenceStage,
     ) -> Option<String> {
-        SessionManager::tool_deny_precedence_reason(self, permissions, tool_name, tool_input, stage)
-            .await
+        SessionManager::tool_deny_precedence_reason(
+            self,
+            session_id,
+            permissions,
+            tool_name,
+            tool_input,
+            stage,
+        )
+        .await
     }
 
     async fn run_pre_tool_phase(
@@ -636,10 +838,24 @@ impl ToolRuntimeHost for SessionManager {
         .await
     }
 
-    async fn matches_permission_rule(&self, tool_name: &str, tool_input: &str) -> bool {
-        self.permission_runtime
-            .matches_permission_rule(tool_name, tool_input)
-            .await
+    async fn evaluate_tool_permission(
+        &self,
+        session_id: &str,
+        permissions: &PermissionContext,
+        tool_name: &str,
+        tool_input: &str,
+        spec: &ToolSpec,
+        hook_allowed: bool,
+    ) -> PermissionEvaluation {
+        self.evaluate_tool_permission_call(
+            session_id,
+            permissions,
+            tool_name,
+            tool_input,
+            spec,
+            hook_allowed,
+        )
+        .await
     }
 
     async fn resolve_tool_permission_request(
@@ -649,6 +865,7 @@ impl ToolRuntimeHost for SessionManager {
         tool_name: &str,
         tool_input: &str,
         spec: &ToolSpec,
+        evaluation: &PermissionEvaluation,
         tx: &mpsc::UnboundedSender<StreamEvent>,
         cancel_flag: Arc<AtomicBool>,
     ) -> ToolPermissionResolutionOutcome {
@@ -659,6 +876,7 @@ impl ToolRuntimeHost for SessionManager {
             tool_name,
             tool_input,
             spec,
+            evaluation,
             tx,
             cancel_flag,
         )
@@ -805,10 +1023,15 @@ impl ToolRuntimeHost for SessionManager {
         session_id: &str,
         allow_tools: bool,
         allow_network: bool,
+        boundary_override: bool,
         progress: Arc<dyn ToolProgressReporter>,
         cancel_flag: Arc<AtomicBool>,
     ) -> ToolContext {
-        let config = self.effective_config();
+        let mut config = self.effective_config_for_session(session_id);
+        if boundary_override {
+            config.sandbox_mode = orbcode_protocol::SandboxMode::DangerFullAccess;
+            config.sandbox_allow_network = true;
+        }
         ToolContext {
             cwd: config.cwd.clone(),
             additional_directories: self.additional_directories(),
@@ -1095,6 +1318,29 @@ impl ToolRuntimeHost for SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_review_uses_the_turn_prompt_after_tool_results_and_synthetic_messages() {
+        let messages = vec![
+            TranscriptMessage::new(MessageRole::User, "write the external report"),
+            TranscriptMessage::from_blocks(
+                MessageRole::User,
+                vec![TranscriptBlock::ToolResult {
+                    tool_use_id: "tool-1".to_string(),
+                    content: "done".into(),
+                    is_error: false,
+                    metadata: None,
+                }],
+            ),
+            TranscriptMessage::new(MessageRole::User, "synthetic hook context")
+                .with_synthetic(true),
+        ];
+
+        assert_eq!(
+            original_task_for_approval_review(&messages).as_deref(),
+            Some("write the external report")
+        );
+    }
 
     #[test]
     fn parse_workflow_tool_input_accepts_valid_object() {

@@ -726,10 +726,10 @@ fn first_drawn_history_flush_appends_through_native_scrollback() {
     terminal.set_viewport_area(Rect::new(0, 6, 80, 2));
     terminal.last_known_cursor_pos = Position::new(11, 9);
     state.push_local_slash_command_output(
-        "/allow-all on",
-        "Allow-all mode enabled.",
+        "/permissions",
+        "Permissions updated to Full Access.",
         Some(
-            "Tool and network permission prompts are bypassed; configured deny rules still apply."
+            "Full Access enables unrestricted tool boundaries; configured deny and ask rules still apply."
                 .to_string(),
         ),
     );
@@ -1310,31 +1310,6 @@ fn transcript_lines_pad_submitted_user_prompt_vertically() {
 }
 
 #[test]
-fn allow_all_history_output_keeps_summary_without_long_detail() {
-    // With the AllowAll command's feedback set to SUMMARY_HIDDEN_DEFERRED, the
-    // committed transcript keeps the short summary but hides the long detail, so
-    // /allow-all doesn't pollute the preserved scrollback.
-    let mut state = normal_state("", 0);
-    state.push_local_slash_command_output(
-        "/allow-all on",
-        "Allow-all mode enabled.",
-        Some(
-            "Tool and network permission prompts are bypassed; configured deny rules still apply."
-                .to_string(),
-        ),
-    );
-
-    let rendered = plain_text_lines(&state.transcript_lines(90)).join("\n");
-
-    assert!(rendered.contains("❯ /allow-all on"), "{rendered}");
-    assert!(rendered.contains("Allow-all mode enabled."), "{rendered}");
-    assert!(
-        !rendered.contains("Tool and network permission prompts"),
-        "{rendered}"
-    );
-}
-
-#[test]
 fn intro_banner_flushes_as_first_history_cell() {
     let mut state = normal_state("", 0);
     state.pending_history_flush = true;
@@ -1604,7 +1579,6 @@ fn intro_banner_lines_use_actual_logo_width_for_info_budget() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: String::new(),
         status_line_set_at: None,
         ui_version: "2.1.888".to_string(),

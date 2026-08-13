@@ -22,18 +22,32 @@ pub(crate) enum PermissionRuleMutation {
 
 impl AppServer {
     pub fn permissions(&self) -> orbcode_core::PermissionContext {
-        self.sessions.permission_context()
+        self.active_session_id().map_or_else(
+            || self.sessions.permission_context(),
+            |session_id| self.sessions.permission_context_for_session(&session_id),
+        )
     }
 
     pub fn permission_mode(&self) -> PermissionMode {
-        self.sessions
-            .effective_config()
-            .permission_mode
+        self.active_session_id()
+            .and_then(|session_id| self.sessions.session_permission_mode(&session_id).ok())
             .unwrap_or(PermissionMode::Default)
     }
 
     pub async fn permission_overview(&self) -> PermissionOverview {
-        let remembered_allowed_rules = self.sessions.runtime_permission_rules().await;
+        let active_session_id = self.active_session_id();
+        self.permission_overview_for_session(active_session_id.as_deref())
+            .await
+    }
+
+    pub(crate) async fn permission_overview_for_session(
+        &self,
+        session_id: Option<&str>,
+    ) -> PermissionOverview {
+        let remembered_allowed_rules = match session_id {
+            Some(session_id) => self.sessions.runtime_permission_rules(session_id).await,
+            None => Vec::new(),
+        };
         let session_allowed_rules = self
             .sessions
             .session_permission_rules(PermissionRuleSettingKind::Allow);
@@ -59,8 +73,10 @@ impl AppServer {
             &remembered_allowed_rules,
         );
         PermissionOverview {
-            permissions: permission_context_to_wire(self.permissions()),
-            allow_all: self.allow_all(),
+            permissions: permission_context_to_wire(session_id.map_or_else(
+                || self.sessions.permission_context(),
+                |session_id| self.sessions.permission_context_for_session(session_id),
+            )),
             effective_rules,
             settings_allowed_rules,
             settings_denied_rules,
@@ -309,31 +325,14 @@ impl AppServer {
         Ok(AddedDirectory { path: directory })
     }
 
-    pub fn set_allow_all(&self, enabled: bool) {
-        self.sessions.set_allow_all(enabled);
-    }
-
-    pub fn allow_all(&self) -> bool {
-        self.sessions.allow_all()
-    }
-
-    /// Apply an SDK `set_permission_mode` control request at runtime.
-    ///
-    /// Reuses the existing allow-all escalation rather than threading a new
-    /// runtime permission mode through core: modes that grant unprompted tool
-    /// access (`acceptEdits` / `bypassPermissions` / `dontAsk` / `auto`) enable
-    /// allow-all so subsequent tool calls run without a permission prompt, while
-    /// `default` / `plan` disable it so the normal allow/deny gating applies. The
-    /// mapping mirrors `permission_mode_default_allow_tools` in config.
-    pub fn set_permission_mode(&self, mode: PermissionMode) {
-        let allow_all = matches!(
-            mode,
-            PermissionMode::AcceptEdits
-                | PermissionMode::BypassPermissions
-                | PermissionMode::DontAsk
-                | PermissionMode::Auto
-        );
-        self.set_allow_all(allow_all);
+    /// Apply the legacy SDK mode endpoint to the currently active session.
+    pub async fn set_permission_mode(&self, mode: PermissionMode) -> Result<(), CoreError> {
+        let session_id = self
+            .active_session_id()
+            .ok_or_else(|| CoreError::SessionNotFound("no active session".to_string()))?;
+        self.sessions
+            .set_session_permission_mode(&session_id, mode)
+            .await
     }
 }
 

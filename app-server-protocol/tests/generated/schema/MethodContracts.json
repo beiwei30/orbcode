@@ -220,9 +220,7 @@
         "type": "string",
         "enum": [
           "default",
-          "acceptEdits",
           "bypassPermissions",
-          "dontAsk",
           "plan",
           "auto"
         ]
@@ -364,32 +362,6 @@
         ]
       }
     }
-  },
-  "AllowAllParams": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "AllowAllParams",
-    "type": "object",
-    "properties": {
-      "allow_all": {
-        "type": "boolean"
-      }
-    },
-    "required": [
-      "allow_all"
-    ]
-  },
-  "AllowAllResult": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "AllowAllResult",
-    "type": "object",
-    "properties": {
-      "allow_all": {
-        "type": "boolean"
-      }
-    },
-    "required": [
-      "allow_all"
-    ]
   },
   "AuthLoginParams": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1517,6 +1489,64 @@
           {
             "type": "object",
             "properties": {
+              "session_id": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "tool_use_id": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string",
+                "const": "approval_review_started"
+              }
+            },
+            "required": [
+              "event",
+              "session_id",
+              "request_id",
+              "tool_use_id",
+              "tool_name"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/ApprovalReviewResolutionKind"
+              },
+              "rationale": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "event": {
+                "type": "string",
+                "const": "approval_review_completed"
+              }
+            },
+            "required": [
+              "event",
+              "session_id",
+              "request_id",
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
               "request": {
                 "$ref": "#/$defs/McpTrustApprovalRequest"
               },
@@ -2518,6 +2548,17 @@
           "approved",
           "denied",
           "interrupted"
+        ]
+      },
+      "ApprovalReviewResolutionKind": {
+        "type": "string",
+        "enum": [
+          "approved",
+          "escalated_to_user",
+          "failed",
+          "timed_out",
+          "cancelled",
+          "limit_exceeded"
         ]
       },
       "McpTrustApprovalRequest": {
@@ -4873,11 +4914,121 @@
         "type": "string",
         "enum": [
           "default",
-          "acceptEdits",
           "bypassPermissions",
-          "dontAsk",
           "plan",
           "auto"
+        ]
+      }
+    }
+  },
+  "PermissionPresetOption": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionPresetOption",
+    "type": "object",
+    "properties": {
+      "value": {
+        "$ref": "#/$defs/ModelPermissionPreset"
+      },
+      "label": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "current": {
+        "type": "boolean"
+      },
+      "disabled_reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "value",
+      "label",
+      "description",
+      "current"
+    ],
+    "$defs": {
+      "ModelPermissionPreset": {
+        "description": "The three user-facing permission presets. These values describe a complete\nruntime policy; they are not aliases for the legacy `PermissionMode` wire\nvalues or for configured allow/ask/deny rules.",
+        "type": "string",
+        "enum": [
+          "ask_for_approval",
+          "approve_for_me",
+          "full_access"
+        ]
+      }
+    }
+  },
+  "PermissionPresetsResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "PermissionPresetsResult",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "active_preset": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelPermissionPreset"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PermissionPresetOption"
+        }
+      }
+    },
+    "required": [
+      "session_id",
+      "options"
+    ],
+    "$defs": {
+      "ModelPermissionPreset": {
+        "description": "The three user-facing permission presets. These values describe a complete\nruntime policy; they are not aliases for the legacy `PermissionMode` wire\nvalues or for configured allow/ask/deny rules.",
+        "type": "string",
+        "enum": [
+          "ask_for_approval",
+          "approve_for_me",
+          "full_access"
+        ]
+      },
+      "PermissionPresetOption": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "$ref": "#/$defs/ModelPermissionPreset"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description",
+          "current"
         ]
       }
     }
@@ -5102,9 +5253,7 @@
         "type": "string",
         "enum": [
           "default",
-          "acceptEdits",
           "bypassPermissions",
-          "dontAsk",
           "plan",
           "auto"
         ]
@@ -5441,6 +5590,22 @@
       "permission_mode": {
         "$ref": "#/$defs/PermissionMode"
       },
+      "active_permission_preset": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelPermissionPreset"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "permission_presets": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/PermissionPresetOption"
+        }
+      },
       "model_selection": {
         "$ref": "#/$defs/EffectiveModelSelection"
       },
@@ -5466,6 +5631,7 @@
     "required": [
       "session_id",
       "permission_mode",
+      "permission_presets",
       "model_selection",
       "model_options",
       "effort_options"
@@ -5476,11 +5642,47 @@
         "type": "string",
         "enum": [
           "default",
-          "acceptEdits",
           "bypassPermissions",
-          "dontAsk",
           "plan",
           "auto"
+        ]
+      },
+      "ModelPermissionPreset": {
+        "description": "The three user-facing permission presets. These values describe a complete\nruntime policy; they are not aliases for the legacy `PermissionMode` wire\nvalues or for configured allow/ask/deny rules.",
+        "type": "string",
+        "enum": [
+          "ask_for_approval",
+          "approve_for_me",
+          "full_access"
+        ]
+      },
+      "PermissionPresetOption": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "$ref": "#/$defs/ModelPermissionPreset"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description",
+          "current"
         ]
       },
       "EffectiveModelSelection": {
@@ -7210,11 +7412,37 @@
         "type": "string",
         "enum": [
           "default",
-          "acceptEdits",
           "bypassPermissions",
-          "dontAsk",
           "plan",
           "auto"
+        ]
+      }
+    }
+  },
+  "SetSessionPermissionPresetParams": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "SetSessionPermissionPresetParams",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string"
+      },
+      "preset": {
+        "$ref": "#/$defs/ModelPermissionPreset"
+      }
+    },
+    "required": [
+      "session_id",
+      "preset"
+    ],
+    "$defs": {
+      "ModelPermissionPreset": {
+        "description": "The three user-facing permission presets. These values describe a complete\nruntime policy; they are not aliases for the legacy `PermissionMode` wire\nvalues or for configured allow/ask/deny rules.",
+        "type": "string",
+        "enum": [
+          "ask_for_approval",
+          "approve_for_me",
+          "full_access"
         ]
       }
     }

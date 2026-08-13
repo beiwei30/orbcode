@@ -800,7 +800,7 @@ mod tests {
         let mut env = orbcode_config::sealed_provider_env_overrides();
         env.insert(
             "ANTHROPIC_BASE_URL".to_string(),
-            "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi".to_string(),
+            "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D".to_string(),
         );
         env.insert("ANTHROPIC_API_KEY".to_string(), "test-key".to_string());
 

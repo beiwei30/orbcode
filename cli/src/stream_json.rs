@@ -912,14 +912,14 @@ mod tests {
                 name: "context7".to_string(),
                 status: "ready".to_string(),
             }],
-            permission_mode: PermissionMode::AcceptEdits,
+            permission_mode: PermissionMode::Auto,
         };
         let value = emitter.build_system_init(&meta);
         assert_eq!(value["type"], "system");
         assert_eq!(value["subtype"], "init");
         assert_eq!(value["session_id"], "session-123");
         assert_eq!(value["model"], "claude-opus");
-        assert_eq!(value["permissionMode"], "acceptEdits");
+        assert_eq!(value["permissionMode"], "auto");
         assert_eq!(value["tools"], json!(["read", "bash"]));
         assert_eq!(
             value["mcp_servers"],

@@ -530,6 +530,7 @@ impl SessionManager {
         let permissions = self.permission_context_for_session(session_id);
         if self
             .tool_deny_precedence_reason(
+                session_id,
                 &permissions,
                 tool_name,
                 tool_input,
@@ -541,47 +542,36 @@ impl SessionManager {
             return None;
         }
 
-        if spec.requires_tools_permission || spec.requires_network_permission {
-            // An `ask` rule forces an interactive prompt (deny > ask > allow),
-            // suppressing the config-allow and blanket auto-approve fast paths.
-            // An explicit in-session grant (a remembered runtime rule) still
-            // wins, so the user is not re-prompted for something they already
-            // chose to always allow this session.
-            let should_ask = permissions.tool_should_ask(tool_name, tool_input);
-            if !should_ask && permissions.tool_allowed_without_prompt(tool_name, tool_input) {
-                return Some(ToolInvocationPermissions::after_explicit_allow(
-                    &permissions,
-                    &spec,
-                ));
+        let evaluation = self
+            .evaluate_tool_permission_call(
+                session_id,
+                &permissions,
+                tool_name,
+                tool_input,
+                &spec,
+                false,
+            )
+            .await;
+        match evaluation {
+            crate::permissions::PermissionEvaluation::Allow { .. } => {
+                if evaluation.is_explicit_allow() {
+                    Some(ToolInvocationPermissions::after_explicit_allow(
+                        &permissions,
+                        &spec,
+                        permissions
+                            .requires_sandbox_boundary_override(&spec, tool_name, tool_input),
+                    ))
+                } else {
+                    Some(ToolInvocationPermissions::from_permission_context(
+                        &permissions,
+                        &spec,
+                    ))
+                }
             }
-            if !should_ask
-                && permissions.allows_tool_request(
-                    spec.requires_tools_permission,
-                    spec.requires_network_permission,
-                )
-            {
-                return Some(ToolInvocationPermissions::from_permission_context(
-                    &permissions,
-                    &spec,
-                ));
-            }
-            if self
-                .permission_runtime
-                .matches_permission_rule(tool_name, tool_input)
-                .await
-            {
-                return Some(ToolInvocationPermissions::after_explicit_allow(
-                    &permissions,
-                    &spec,
-                ));
-            }
-            return None;
+            crate::permissions::PermissionEvaluation::AskUser { .. }
+            | crate::permissions::PermissionEvaluation::AutoReview { .. }
+            | crate::permissions::PermissionEvaluation::Deny { .. } => None,
         }
-
-        Some(ToolInvocationPermissions::after_explicit_allow(
-            &permissions,
-            &spec,
-        ))
     }
 
     fn has_matching_tool_lifecycle_hooks(&self, tool_name: &str, tool_input: &str) -> bool {

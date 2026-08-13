@@ -44,7 +44,9 @@ use wrappers::vcs_cmd::{
     hg_editor_command_config_body, hg_ssh_command_config_body,
 };
 
-pub use path_rules::tool_path_allowed_by_additional_directory;
+pub use path_rules::{
+    ToolPathBoundary, tool_path_allowed_by_additional_directory, tool_path_boundary,
+};
 
 use serde::Deserialize;
 

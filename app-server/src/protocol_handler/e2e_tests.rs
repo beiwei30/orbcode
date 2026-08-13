@@ -463,7 +463,10 @@ async fn permission_overview_returns_permission_data() {
                 .as_object()
                 .expect("permission overview should be object");
             // Check that expected fields exist
-            assert!(obj.contains_key("allow_all"), "should have allow_all field");
+            assert!(
+                !obj.contains_key("allow_all"),
+                "global allow_all field should be removed"
+            );
             assert!(
                 obj.contains_key("settings_allowed_rules"),
                 "should have settings_allowed_rules field"
@@ -1019,7 +1022,7 @@ async fn permission_remove_rule() {
 }
 
 // ---------------------------------------------------------------------------
-// 21. permission/set_mode affects allow_all in overview
+// 21. permission/set_mode remains a session-scoped compatibility endpoint
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1031,22 +1034,22 @@ async fn permission_set_mode_round_trips() {
         .handle_request(make_request_no_params("session/bootstrap"))
         .await;
 
-    // Default state: allow_all should be false
+    // Default state uses the default legacy mode.
     let resp = app
-        .handle_request(make_request_no_params("permission/overview"))
+        .handle_request(make_request_no_params("permission/mode"))
         .await;
     match &resp.result {
         ResponseResult::Success { data: Some(data) } => {
             assert_eq!(
-                data["allow_all"].as_bool(),
-                Some(false),
-                "allow_all should start as false"
+                data["mode"].as_str(),
+                Some("default"),
+                "legacy mode should start at default"
             );
         }
         other => panic!("expected permission overview success, got: {other:?}"),
     }
 
-    // Set mode to "bypassPermissions" which should enable allow_all
+    // Set mode to the legacy Full Access mapping.
     let resp = app
         .handle_request(make_request(
             "permission/set_mode",
@@ -1058,16 +1061,16 @@ async fn permission_set_mode_round_trips() {
         other => panic!("expected set_mode success, got: {other:?}"),
     }
 
-    // Verify allow_all is now true
+    // Verify the active session mode changed.
     let resp = app
-        .handle_request(make_request_no_params("permission/overview"))
+        .handle_request(make_request_no_params("permission/mode"))
         .await;
     match &resp.result {
         ResponseResult::Success { data: Some(data) } => {
             assert_eq!(
-                data["allow_all"].as_bool(),
-                Some(true),
-                "allow_all should be true after setting bypassPermissions mode"
+                data["mode"].as_str(),
+                Some("bypassPermissions"),
+                "mode should change for the active session"
             );
         }
         other => {
@@ -1075,7 +1078,7 @@ async fn permission_set_mode_round_trips() {
         }
     }
 
-    // Set back to "default" which should disable allow_all
+    // Set back to the default preset mapping.
     let resp = app
         .handle_request(make_request(
             "permission/set_mode",
@@ -1087,16 +1090,16 @@ async fn permission_set_mode_round_trips() {
         other => panic!("expected set_mode success, got: {other:?}"),
     }
 
-    // Verify allow_all is false again
+    // Verify the active session mode changed back.
     let resp = app
-        .handle_request(make_request_no_params("permission/overview"))
+        .handle_request(make_request_no_params("permission/mode"))
         .await;
     match &resp.result {
         ResponseResult::Success { data: Some(data) } => {
             assert_eq!(
-                data["allow_all"].as_bool(),
-                Some(false),
-                "allow_all should be false after resetting to default mode"
+                data["mode"].as_str(),
+                Some("default"),
+                "mode should reset to default"
             );
         }
         other => panic!("expected permission overview success after default, got: {other:?}"),

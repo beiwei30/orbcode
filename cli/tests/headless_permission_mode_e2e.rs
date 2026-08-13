@@ -1,8 +1,7 @@
 //! End-to-end tests verifying `--permission-mode` output differences.
 //! Each mode changes how tool calls are gated:
-//! - `default`: tools require explicit permission → denied in headless
+//! - `default`: workspace-safe tools run; boundary requests are denied in headless
 //! - `bypassPermissions`: all tools run without permission requests
-//! - `acceptEdits`: edit tools run but bash still requires permission
 //! - `plan`: no tool execution at all (plan mode only generates plans)
 //!
 //! Tests assert on exit codes, presence/absence of permission_request events,
@@ -39,7 +38,12 @@ impl Harness {
     }
 
     fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let output = Command::new(ORBCODE_BIN)
+        self.run_with_env(args, &[])
+    }
+
+    fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+        let mut command = Command::new(ORBCODE_BIN);
+        command
             .args(args)
             .current_dir(self.cwd.path())
             .env_clear()
@@ -49,11 +53,11 @@ impl Harness {
             .env("ANTHROPIC_BASE_URL", "stub://test")
             .env("ANTHROPIC_API_KEY", "stub-key")
             .env("RUST_LOG", "warn")
+            .envs(env.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("spawn orbcode");
+            .stderr(Stdio::piped());
+        let output = command.output().expect("spawn orbcode");
         let code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
         let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
@@ -112,11 +116,11 @@ fn bypass_permissions_runs_tool_without_permission_request() {
 }
 
 #[test]
-fn default_mode_denies_tool_in_headless() {
+fn default_mode_denies_boundary_request_in_headless() {
     let harness = Harness::new();
     let (code, stdout, stderr) = harness.run(&[
         "-p",
-        "#tool:bash {\"command\":\"echo hello\"}",
+        "#tool:bash {\"command\":\"echo hello\",\"sandbox_permissions\":\"require_escalated\"}",
         "--output-format",
         "stream-json",
         "--verbose",
@@ -125,7 +129,7 @@ fn default_mode_denies_tool_in_headless() {
     ]);
     assert_eq!(
         code, 4,
-        "default mode should deny tool (exit 4); stderr: {stderr}"
+        "default mode should deny a boundary request (exit 4); stderr: {stderr}"
     );
     let records = parse_lines(&stdout);
 
@@ -134,7 +138,124 @@ fn default_mode_denies_tool_in_headless() {
     assert_eq!(result["is_error"], true);
     assert!(
         !result["permission_denials"].as_array().unwrap().is_empty(),
-        "result must record the permission denial in default mode"
+        "result must record the boundary denial in default mode"
+    );
+}
+
+#[test]
+fn default_mode_runs_workspace_safe_bash_without_permission_request() {
+    let harness = Harness::new();
+    let (code, stdout, stderr) = harness.run(&[
+        "-p",
+        "#tool:bash {\"command\":\"echo workspace-safe\"}",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "default",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    let records = parse_lines(&stdout);
+    assert!(
+        !records.iter().any(|record| record["type"] == "stream_event"
+            && record["event"]["type"] == "permission_requested")
+    );
+    assert!(records.iter().any(|record| {
+        record["type"] == "stream_event"
+            && record["event"]["type"] == "tool_use_completed"
+            && record["event"]["kind"] == "success"
+    }));
+}
+
+#[test]
+fn implicit_default_preserves_explicit_read_only_sandbox() {
+    let harness = Harness::new();
+    let target = harness.cwd.path().join("must-not-be-written.txt");
+    let prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": target, "content": "blocked"})
+    );
+    let (code, stdout, stderr) = harness.run(&[
+        "-p",
+        &prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--sandbox-mode",
+        "read-only",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    assert!(!target.exists(), "read-only sandbox must block the write");
+    let records = parse_lines(&stdout);
+    assert!(records.iter().any(|record| {
+        record["type"] == "stream_event"
+            && record["event"]["type"] == "tool_use_completed"
+            && record["event"]["kind"] == "execution_failed"
+    }));
+}
+
+#[test]
+fn implicit_default_preserves_explicit_allow_tools_false() {
+    let harness = Harness::new();
+    let target = harness.cwd.path().join("tools-disabled.txt");
+    let prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": target, "content": "blocked"})
+    );
+    let (code, stdout, stderr) = harness.run(&[
+        "-p",
+        &prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--allow-tools",
+        "false",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    assert!(!target.exists(), "allow-tools=false must block the write");
+    let records = parse_lines(&stdout);
+    assert!(
+        records.iter().any(|record| {
+            record["type"] == "stream_event"
+                && record["event"]["type"] == "tool_use_completed"
+                && record["event"]["kind"] == "execution_failed"
+        }),
+        "a simulated tool call must still fail at the execution boundary"
+    );
+}
+
+#[test]
+fn implicit_default_preserves_environment_read_only_sandbox() {
+    let harness = Harness::new();
+    let target = harness.cwd.path().join("env-must-not-be-written.txt");
+    let prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": target, "content": "blocked"})
+    );
+    let (code, stdout, stderr) = harness.run_with_env(
+        &["-p", &prompt, "--output-format", "stream-json", "--verbose"],
+        &[("ORBCODE_SANDBOX_MODE", "read-only")],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    assert!(!target.exists(), "environment read-only must block writes");
+}
+
+#[test]
+fn implicit_default_preserves_environment_allow_tools_false() {
+    let harness = Harness::new();
+    let target = harness.cwd.path().join("env-tools-disabled.txt");
+    let prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": target, "content": "blocked"})
+    );
+    let (code, stdout, stderr) = harness.run_with_env(
+        &["-p", &prompt, "--output-format", "stream-json", "--verbose"],
+        &[("ORBCODE_ALLOW_TOOLS", "false")],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}\nstdout:\n{stdout}");
+    assert!(
+        !target.exists(),
+        "environment allow-tools=false must block writes"
     );
 }
 
@@ -146,7 +267,7 @@ fn json_format_records_permission_denial() {
     let harness = Harness::new();
     let (code, stdout, stderr) = harness.run(&[
         "-p",
-        "#tool:bash {\"command\":\"echo hello\"}",
+        "#tool:bash {\"command\":\"echo hello\",\"sandbox_permissions\":\"require_escalated\"}",
         "--output-format",
         "json",
         "--permission-mode",
@@ -206,20 +327,27 @@ fn default_mode_init_record_shows_default() {
 }
 
 #[test]
-fn accept_edits_mode_reflected_in_init() {
-    let harness = Harness::new();
-    let (code, stdout, stderr) = harness.run(&[
-        "-p",
-        "say hi",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--permission-mode",
-        "acceptEdits",
-    ]);
-    assert_eq!(code, 0, "stderr: {stderr}");
-    let records = parse_lines(&stdout);
-    assert_eq!(records[0]["permissionMode"], "acceptEdits");
+fn legacy_permission_modes_map_to_current_policies() {
+    for (mode, expected) in [
+        ("acceptEdits", "default"),
+        ("accept-edits", "default"),
+        ("dontAsk", "bypassPermissions"),
+        ("dont-ask", "bypassPermissions"),
+    ] {
+        let harness = Harness::new();
+        let (code, stdout, stderr) = harness.run(&[
+            "-p",
+            "say hi",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--permission-mode",
+            mode,
+        ]);
+        assert_eq!(code, 0, "mode {mode} should remain compatible: {stderr}");
+        let records = parse_lines(&stdout);
+        assert_eq!(records[0]["permissionMode"], expected, "mode {mode}");
+    }
 }
 
 #[test]

@@ -8,9 +8,102 @@
 //!   - the same prompt persists a `.jsonl` transcript under the project dir.
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 const ORBCODE_BIN: &str = env!("CARGO_BIN_EXE_orbcode");
+
+#[test]
+fn pr_and_release_workflows_build_each_platform_once() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let workflow = fs::read_to_string(repo_root.join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+    let pr_workflow = fs::read_to_string(repo_root.join(".github/workflows/pr-build.yml"))
+        .expect("read PR build workflow");
+    let binary_smoke = fs::read_to_string(repo_root.join("scripts/smoke-release.sh"))
+        .expect("read binary smoke script");
+    let sandbox_smoke = fs::read_to_string(repo_root.join("scripts/ci-cross-platform-smoke.sh"))
+        .expect("read sandbox smoke script");
+    let build_script =
+        fs::read_to_string(repo_root.join("cli/build.rs")).expect("read orbcode build script");
+
+    assert_eq!(
+        workflow
+            .matches("cargo build --release -p orbcode --target")
+            .count(),
+        1,
+        "release workflow should build the platform binary exactly once"
+    );
+    assert_eq!(
+        pr_workflow
+            .matches("cargo build -p orbcode --target")
+            .count(),
+        1,
+        "PR workflow should build the platform binary exactly once"
+    );
+    assert!(
+        workflow.contains("smoke-release.sh --binary target/${{ matrix.target }}/release/orbcode"),
+        "packaged smoke must reuse the prebuilt target binary"
+    );
+    assert!(
+        workflow.contains(
+            "ci-cross-platform-smoke.sh --binary target/${{ matrix.target }}/release/orbcode"
+        ),
+        "sandbox smoke must receive the same target binary"
+    );
+    assert!(
+        !workflow.contains("pull_request:"),
+        "distribution release workflow must not run for pull requests"
+    );
+    assert!(
+        workflow.contains("schedule:") && workflow.contains("workflow_dispatch:"),
+        "full release verification should remain scheduled and manually runnable"
+    );
+    assert!(
+        pr_workflow.contains("pull_request:")
+            && pr_workflow
+                .contains("smoke-release.sh --binary target/${{ matrix.target }}/debug/orbcode")
+            && pr_workflow.contains(
+                "ci-cross-platform-smoke.sh --binary target/${{ matrix.target }}/debug/orbcode"
+            ),
+        "PR workflow must reuse its fast-profile binary for every smoke check"
+    );
+    assert_eq!(
+        pr_workflow.matches("cargo build ").count(),
+        1,
+        "PR workflow must contain exactly one Cargo build command"
+    );
+    assert_eq!(
+        workflow.matches("cargo build ").count(),
+        1,
+        "distribution workflow must contain exactly one Cargo build command"
+    );
+    assert!(
+        !pr_workflow.contains("package-release.sh")
+            && !pr_workflow.contains("upload-artifact")
+            && !pr_workflow.contains("cargo build --release"),
+        "PR workflow must skip distribution packaging and full release builds"
+    );
+    assert!(
+        !workflow.contains("cargo test -p orbcode --test build_smoke --release"),
+        "release workflow must not compile a separate build_smoke harness"
+    );
+    assert!(
+        !sandbox_smoke.contains("cargo build") && !sandbox_smoke.contains("cargo test"),
+        "sandbox smoke must execute the prebuilt binary without invoking Cargo"
+    );
+    assert!(
+        !binary_smoke.contains("cargo build") && !binary_smoke.contains("cargo test"),
+        "binary smoke must be profile-independent and never invoke Cargo"
+    );
+    assert!(
+        build_script.contains("target.ends_with(\"-pc-windows-msvc\")")
+            && build_script.contains("rustc-link-arg-bin=orbcode=/STACK:8388608"),
+        "Windows debug binaries need enough main-thread stack for black-box smoke"
+    );
+}
 
 #[test]
 fn version_long_form_exposes_git_sha_target_and_providers() {

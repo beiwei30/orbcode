@@ -4,13 +4,12 @@ use orbcode_config::{AppConfig, PermissionRuleSettingKind};
 
 use super::RuntimePermissionRuleEdits;
 use super::rules::parsed_permission_rule_strings;
-use crate::permissions::{PermissionContext, PermissionRule};
+use crate::permissions::PermissionContext;
 
 pub(crate) fn permission_context_from_edits(
     config: &AppConfig,
     edits: RuntimePermissionRuleEdits,
     additional_directories: Vec<PathBuf>,
-    allow_all: bool,
 ) -> PermissionContext {
     let mut config = config.clone();
     config
@@ -25,22 +24,7 @@ pub(crate) fn permission_context_from_edits(
     push_unique_rules(&mut config.disallowed_tools, edits.session_deny);
 
     let mut permissions = PermissionContext::from_config(&config);
-    for rule in edits.remembered_allow {
-        let parsed = PermissionRule::for_tool(&rule.tool_name, &rule.rule);
-        if !permissions
-            .allowed_rules
-            .iter()
-            .any(|existing| existing == &parsed)
-        {
-            permissions.allowed_rules.push(parsed);
-        }
-    }
     permissions.additional_directories = additional_directories;
-    if allow_all {
-        permissions.allow_tools = true;
-        permissions.allow_network = true;
-        permissions.provider_allow_network = true;
-    }
     permissions
 }
 

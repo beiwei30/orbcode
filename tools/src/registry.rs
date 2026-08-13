@@ -3,7 +3,9 @@ use crate::catalog::{
 };
 use crate::permissions::ensure_not_cancelled;
 use crate::types::PluginDispatchError;
-use crate::{ToolContext, ToolError, ToolOutcome, ToolRegistry};
+use crate::{ToolCapability, ToolContext, ToolError, ToolOutcome, ToolRegistry};
+use orbcode_config::{ToolPathBoundary, tool_path_boundary};
+use orbcode_protocol::SandboxMode;
 
 impl ToolRegistry {
     pub async fn invoke(
@@ -14,6 +16,30 @@ impl ToolRegistry {
     ) -> Result<ToolOutcome, ToolError> {
         ensure_not_cancelled(context)?;
         let canonical = canonical_tool_name(name);
+        if let Some(spec) = self.spec(canonical)
+            && matches!(
+                spec.capability,
+                ToolCapability::WorkspaceRead | ToolCapability::WorkspaceWrite
+            )
+            && context.sandbox_mode.is_restrictive()
+        {
+            if context.sandbox_mode == SandboxMode::ReadOnly
+                && spec.capability == ToolCapability::WorkspaceWrite
+            {
+                return Err(ToolError::PermissionDenied);
+            }
+            if !matches!(
+                tool_path_boundary(
+                    &context.cwd,
+                    &context.additional_directories,
+                    canonical,
+                    input,
+                ),
+                ToolPathBoundary::InsideAllowedRoots
+            ) {
+                return Err(ToolError::PermissionDenied);
+            }
+        }
         if self.spec(canonical).is_none() && parse_mcp_provider_tool_name(name).is_some() {
             let result = self.invoke_mcp_provider_tool(name, input, context).await;
             if result.is_ok() {

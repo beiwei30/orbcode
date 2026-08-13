@@ -685,6 +685,32 @@ async fn nested_agent_skill_tool_loads_trusted_mcp_prompt_skill() {
 }
 
 #[tokio::test]
+async fn nested_agent_network_tool_requires_inherited_parent_grant() {
+    let manager = test_manager().await;
+    let (tx, _rx) = mpsc::unbounded_channel::<StreamEvent>();
+
+    let result = manager
+        .invoke_nested_agent_tool(
+            "session-1",
+            "parent-tool-use",
+            "child-agent-1",
+            "WebFetch",
+            r#"{"url":"https://example.com"}"#,
+            None,
+            true,
+            false,
+            &tx,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+
+    let Err(ToolError::ExecutionFailed(message)) = result else {
+        panic!("expected the nested network tool to be blocked, got {result:?}");
+    };
+    assert!(message.contains("permission this agent was not granted"));
+}
+
+#[tokio::test]
 async fn agent_with_mcp_server_names_completes_with_filtered_registry() {
     let mut manager = test_manager_with_overrides(AppConfigOverrides {
         allow_network: Some(true),

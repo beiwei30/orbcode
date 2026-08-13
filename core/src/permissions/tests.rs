@@ -1,9 +1,197 @@
 use orbcode_config::parse_tool_rule_list;
+use orbcode_protocol::ModelPermissionPreset;
+use orbcode_tools::ToolRegistry;
 
 use super::{
-    PermissionContext, PermissionRule, normalize_permission_rule_for_edit,
-    suggested_bash_permission_rules,
+    PermissionBoundaryReason, PermissionContext, PermissionEvaluation, PermissionGrantSource,
+    PermissionRule, normalize_permission_rule_for_edit, suggested_bash_permission_rules,
 };
+
+#[test]
+fn preset_evaluator_applies_workspace_and_network_boundaries() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace = temp.path().join("workspace");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    std::fs::create_dir_all(&outside).expect("outside");
+    let permissions = PermissionContext {
+        cwd: workspace.clone(),
+        allow_tools: true,
+        ..PermissionContext::default()
+    };
+    let registry = ToolRegistry::foundation();
+    let write = registry.spec("file-write").expect("write spec");
+    let bash = registry.spec("bash").expect("bash spec");
+    let network = registry.spec("web-fetch").expect("network spec");
+
+    assert_eq!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            write,
+            "file-write",
+            r#"{"file_path":"src/lib.rs","content":"x"}"#,
+            false,
+            false,
+        ),
+        PermissionEvaluation::Allow {
+            source: PermissionGrantSource::WorkspaceBoundary
+        }
+    );
+    let outside_input = serde_json::json!({
+        "file_path": outside.join("new.txt"),
+        "content": "x"
+    })
+    .to_string();
+    assert!(matches!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            write,
+            "file-write",
+            &outside_input,
+            false,
+            false,
+        ),
+        PermissionEvaluation::AskUser {
+            reason: PermissionBoundaryReason::OutsideWorkspace { .. }
+        }
+    ));
+    assert!(matches!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::ApproveForMe.policy()),
+            write,
+            "file-write",
+            &outside_input,
+            false,
+            false,
+        ),
+        PermissionEvaluation::AutoReview {
+            reason: PermissionBoundaryReason::OutsideWorkspace { .. }
+        }
+    ));
+    assert_eq!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::FullAccess.policy()),
+            write,
+            "file-write",
+            &outside_input,
+            false,
+            false,
+        ),
+        PermissionEvaluation::Allow {
+            source: PermissionGrantSource::FullAccess
+        }
+    );
+    assert_eq!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            bash,
+            "bash",
+            r#"{"command":"cargo test"}"#,
+            false,
+            false,
+        ),
+        PermissionEvaluation::Allow {
+            source: PermissionGrantSource::WorkspaceBoundary
+        }
+    );
+    assert!(matches!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            bash,
+            "bash",
+            r#"{"command":"cargo test","sandbox_permissions":"require_escalated"}"#,
+            false,
+            false,
+        ),
+        PermissionEvaluation::AskUser {
+            reason: PermissionBoundaryReason::SandboxEscalation
+        }
+    ));
+    assert!(matches!(
+        permissions.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            network,
+            "web-fetch",
+            r#"{"url":"https://example.com"}"#,
+            false,
+            false,
+        ),
+        PermissionEvaluation::AskUser {
+            reason: PermissionBoundaryReason::Network
+        }
+    ));
+}
+
+#[test]
+fn explicit_rules_and_hook_authorization_keep_precedence_over_presets() {
+    let registry = ToolRegistry::foundation();
+    let network = registry.spec("web-fetch").expect("network spec");
+    let input = r#"{"url":"https://example.com"}"#;
+    let deny = PermissionContext {
+        denied_rules: vec![PermissionRule::parse("WebFetch")],
+        ..PermissionContext::default()
+    };
+    assert!(matches!(
+        deny.evaluate_tool_call(
+            Some(ModelPermissionPreset::FullAccess.policy()),
+            network,
+            "web-fetch",
+            input,
+            true,
+            true,
+        ),
+        PermissionEvaluation::Deny { .. }
+    ));
+
+    let ask = PermissionContext {
+        ask_rules: vec![PermissionRule::parse("WebFetch")],
+        ..PermissionContext::default()
+    };
+    assert!(matches!(
+        ask.evaluate_tool_call(
+            Some(ModelPermissionPreset::FullAccess.policy()),
+            network,
+            "web-fetch",
+            input,
+            false,
+            false,
+        ),
+        PermissionEvaluation::AskUser {
+            reason: PermissionBoundaryReason::ExplicitAskRule
+        }
+    ));
+    assert_eq!(
+        ask.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            network,
+            "web-fetch",
+            input,
+            true,
+            false,
+        ),
+        PermissionEvaluation::Allow {
+            source: PermissionGrantSource::Hook
+        }
+    );
+
+    let allow = PermissionContext {
+        allowed_rules: vec![PermissionRule::parse("WebFetch")],
+        ..PermissionContext::default()
+    };
+    assert_eq!(
+        allow.evaluate_tool_call(
+            Some(ModelPermissionPreset::AskForApproval.policy()),
+            network,
+            "web-fetch",
+            input,
+            false,
+            false,
+        ),
+        PermissionEvaluation::Allow {
+            source: PermissionGrantSource::ConfiguredRule
+        }
+    );
+}
 
 #[test]
 fn ask_rule_matches_tool_call_to_force_prompt() {

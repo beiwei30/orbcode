@@ -1,6 +1,7 @@
 use orbcode_app_server_protocol::{
     AcpDeleteSessionParams, AcpLoadReplayPreflight, BootstrapState, ContextOverview,
-    PermissionMode, SessionControlState, SessionModelOption,
+    ModelPermissionPreset, PermissionMode, PermissionPresetOption, PermissionPresetsResult,
+    SessionControlState, SessionModelOption,
 };
 use orbcode_core::{
     CompactDecision, CompactSessionResult, CoreError, CostOverview, GoalContinuationOutcome,
@@ -179,11 +180,14 @@ impl AppServer {
             .sessions
             .effective_config_for_session(session_id)
             .effective_model_selection();
+        let active_permission_preset = self.sessions.session_permission_preset(session_id)?;
         Ok(SessionControlState {
             session_id: session_id.to_string(),
             permission_mode: permission_mode_to_wire(
                 self.sessions.session_permission_mode(session_id)?,
             ),
+            active_permission_preset,
+            permission_presets: self.permission_preset_options(active_permission_preset),
             model_selection: effective_model_selection_to_wire(model_selection),
             model_options: self
                 .sessions
@@ -201,6 +205,58 @@ impl AppServer {
         })
     }
 
+    pub fn permission_presets(
+        &self,
+        session_id: &str,
+    ) -> Result<PermissionPresetsResult, CoreError> {
+        let active_preset = self.sessions.session_permission_preset(session_id)?;
+        Ok(PermissionPresetsResult {
+            session_id: session_id.to_string(),
+            active_preset,
+            options: self.permission_preset_options(active_preset),
+        })
+    }
+
+    fn permission_preset_options(
+        &self,
+        active: Option<ModelPermissionPreset>,
+    ) -> Vec<PermissionPresetOption> {
+        let managed_lock_reason = self
+            .sessions
+            .config()
+            .ensure_setting_mutable("permissions")
+            .err()
+            .map(|error| error.message);
+        [
+            (
+                ModelPermissionPreset::AskForApproval,
+                "Ask for approval",
+                "Orb Code can read and edit files in the current workspace, and run commands. Approval is required to access the internet or edit other files.",
+            ),
+            (
+                ModelPermissionPreset::ApproveForMe,
+                "Approve for me",
+                "Only ask for actions detected as potentially unsafe.",
+            ),
+            (
+                ModelPermissionPreset::FullAccess,
+                "Full Access",
+                "Orb Code can edit files outside this workspace and access the internet without asking for approval. Exercise caution when using.",
+            ),
+        ]
+        .into_iter()
+        .map(|(value, label, description)| PermissionPresetOption {
+            value,
+            label: label.to_string(),
+            description: description.to_string(),
+            current: active == Some(value),
+            disabled_reason: managed_lock_reason
+                .clone()
+                .or_else(|| self.sessions.permission_preset_disabled_reason(value)),
+        })
+        .collect()
+    }
+
     pub async fn set_session_permission_mode(
         &self,
         session_id: &str,
@@ -209,6 +265,18 @@ impl AppServer {
         self.ensure_setting_mutable("permissions")?;
         self.sessions
             .set_session_permission_mode(session_id, permission_mode_from_wire(mode))
+            .await?;
+        self.session_control_state(session_id)
+    }
+
+    pub async fn set_session_permission_preset(
+        &self,
+        session_id: &str,
+        preset: ModelPermissionPreset,
+    ) -> Result<SessionControlState, CoreError> {
+        self.ensure_setting_mutable("permissions")?;
+        self.sessions
+            .set_session_permission_preset(session_id, preset)
             .await?;
         self.session_control_state(session_id)
     }
@@ -408,12 +476,17 @@ impl AppServer {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use orbcode_config::{AppConfigOverrides, sanitize_path};
+    use orbcode_app_server_protocol::ModelPermissionPreset;
+    use orbcode_config::{AppConfig, AppConfigOverrides, AuthManager, sanitize_path};
+    use orbcode_core::{CoreError, SessionManager};
+    use orbcode_mcp::McpRegistry;
+    use orbcode_tools::ToolRegistry;
     use serde_json::json;
 
-    use super::super::AppServer;
+    use super::super::{AppServer, BackgroundManager};
 
     fn test_path(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -424,6 +497,76 @@ mod tests {
             "orbcode-app-server-{label}-{}-{unique}",
             std::process::id()
         ))
+    }
+
+    async fn app_server_with_managed_permission_lock(home: PathBuf, cwd: PathBuf) -> AppServer {
+        let mut config = AppConfig::load(
+            cwd.clone(),
+            AppConfigOverrides {
+                home_dir: Some(home.clone()),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("config");
+        config
+            .policy
+            .managed_locked_keys
+            .insert("permissions".to_string());
+        let tools = ToolRegistry::foundation();
+        let mcp = McpRegistry::load(home.clone(), cwd)
+            .await
+            .expect("mcp registry");
+        let auth = AuthManager::new(home.clone());
+        let sessions =
+            SessionManager::new_with_auth(config, tools.clone(), mcp.clone(), auth.clone())
+                .await
+                .expect("session manager");
+        let read_state = sessions.read_state();
+        AppServer {
+            sessions,
+            auth,
+            background: BackgroundManager::new(home),
+            tools,
+            mcp,
+            read_state,
+            active_session_id: Arc::new(std::sync::RwLock::new(None)),
+            active_streams: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    #[tokio::test]
+    async fn managed_permissions_lock_disables_and_rejects_preset_changes() {
+        let home = test_path("managed-permission-home");
+        let cwd = test_path("managed-permission-cwd");
+        for path in [&home, &cwd] {
+            tokio::fs::create_dir_all(path)
+                .await
+                .expect("create test dir");
+        }
+        let app = app_server_with_managed_permission_lock(home, cwd).await;
+        let session = app.bootstrap(None).await.expect("bootstrap").session;
+        let presets = app
+            .permission_presets(&session.session_id)
+            .expect("permission presets");
+        assert!(presets.options.iter().all(|option| {
+            option
+                .disabled_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("locked by managed policy"))
+        }));
+
+        let error = app
+            .set_session_permission_preset(&session.session_id, ModelPermissionPreset::ApproveForMe)
+            .await
+            .expect_err("managed permission preset must be immutable");
+        assert!(matches!(error, CoreError::PermissionDenied(_)));
+        assert_eq!(
+            app.permission_presets(&session.session_id)
+                .expect("permission presets after rejection")
+                .active_preset,
+            Some(ModelPermissionPreset::AskForApproval)
+        );
     }
 
     #[tokio::test]

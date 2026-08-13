@@ -100,7 +100,7 @@ fn task_create_and_list_round_trip_produces_ts_compatible_output() {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowed-tools",
         "task-create,task-list",
     ]);
@@ -162,7 +162,7 @@ fn task_update_changes_status_and_list_reflects_it() {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowed-tools",
         "task-create,task-update,task-list",
     ]);
@@ -209,7 +209,7 @@ fn task_update_state_transition_error_surfaces_in_tool_result() {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowed-tools",
         "task-create,task-update",
     ]);
@@ -250,7 +250,7 @@ fn task_list_filters_completed_blockers_in_blocked_by() {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowed-tools",
         "task-create,task-update,task-list",
     ]);

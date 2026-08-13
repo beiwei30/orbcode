@@ -150,8 +150,14 @@ impl SessionManager {
     pub(super) async fn model_visible_messages_with_tool_result_budget(
         &self,
         session_id: &str,
-        messages: Vec<TranscriptMessage>,
+        mut messages: Vec<TranscriptMessage>,
     ) -> Result<Vec<TranscriptMessage>, CoreError> {
+        messages.retain(|message| {
+            !(message.is_synthetic
+                && message.usage.is_some()
+                && message.content.is_empty()
+                && message.blocks.is_empty())
+        });
         let mut messages = add_tool_round_summaries(repair_missing_tool_results(messages));
         self.transcript_store
             .apply_tool_result_budget(session_id, &mut messages)

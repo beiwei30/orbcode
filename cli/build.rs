@@ -13,6 +13,16 @@ fn main() {
     println!("cargo:rustc-env=ORBCODE_PROFILE={profile}");
     println!("cargo:rustc-env=ORBCODE_BUILD_TIMESTAMP={timestamp}");
 
+    // The unoptimized Windows binary has substantially larger stack frames
+    // than its release counterpart. Reserve the same practical headroom used
+    // by Rust worker threads so the standard debug binary can reach even the
+    // lightweight CLI paths (for example `--version`) without overflowing the
+    // PE default main-thread stack. The reservation consumes virtual address
+    // space only; Windows commits pages on demand.
+    if target.ends_with("-pc-windows-msvc") {
+        println!("cargo:rustc-link-arg-bin=orbcode=/STACK:8388608");
+    }
+
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(repo_root) = git_top_level() {
         println!("cargo:rerun-if-changed={repo_root}/.git/HEAD");

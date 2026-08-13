@@ -315,9 +315,7 @@ pub(crate) fn agent_load_warning_to_wire(
 fn agent_permission_mode_to_wire(mode: orbcode_config::PermissionMode) -> AgentPermissionMode {
     match mode {
         orbcode_config::PermissionMode::Default => AgentPermissionMode::Default,
-        orbcode_config::PermissionMode::AcceptEdits => AgentPermissionMode::AcceptEdits,
         orbcode_config::PermissionMode::BypassPermissions => AgentPermissionMode::BypassPermissions,
-        orbcode_config::PermissionMode::DontAsk => AgentPermissionMode::DontAsk,
         orbcode_config::PermissionMode::Plan => AgentPermissionMode::Plan,
         orbcode_config::PermissionMode::Auto => AgentPermissionMode::Auto,
     }
@@ -326,9 +324,7 @@ fn agent_permission_mode_to_wire(mode: orbcode_config::PermissionMode) -> AgentP
 pub(crate) fn permission_mode_from_wire(mode: PermissionMode) -> orbcode_config::PermissionMode {
     match mode {
         PermissionMode::Default => orbcode_config::PermissionMode::Default,
-        PermissionMode::AcceptEdits => orbcode_config::PermissionMode::AcceptEdits,
         PermissionMode::BypassPermissions => orbcode_config::PermissionMode::BypassPermissions,
-        PermissionMode::DontAsk => orbcode_config::PermissionMode::DontAsk,
         PermissionMode::Plan => orbcode_config::PermissionMode::Plan,
         PermissionMode::Auto => orbcode_config::PermissionMode::Auto,
     }
@@ -337,9 +333,7 @@ pub(crate) fn permission_mode_from_wire(mode: PermissionMode) -> orbcode_config:
 pub(crate) fn permission_mode_to_wire(mode: orbcode_config::PermissionMode) -> PermissionMode {
     match mode {
         orbcode_config::PermissionMode::Default => PermissionMode::Default,
-        orbcode_config::PermissionMode::AcceptEdits => PermissionMode::AcceptEdits,
         orbcode_config::PermissionMode::BypassPermissions => PermissionMode::BypassPermissions,
-        orbcode_config::PermissionMode::DontAsk => PermissionMode::DontAsk,
         orbcode_config::PermissionMode::Plan => PermissionMode::Plan,
         orbcode_config::PermissionMode::Auto => PermissionMode::Auto,
     }

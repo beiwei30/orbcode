@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use orbcode_config::{AppConfig, PermissionRuleSettingKind};
+use orbcode_config::{AppConfig, PermissionRuleSettingKind, bash_command_allowed_by_rules};
 use orbcode_protocol::PermissionRequest;
 use tokio::{
     sync::{Mutex, oneshot},
@@ -48,16 +48,15 @@ pub(crate) struct RuntimePermissionRuleEdits {
     pub(crate) removed_deny: Vec<String>,
     pub(crate) session_allow: Vec<String>,
     pub(crate) session_deny: Vec<String>,
-    pub(crate) remembered_allow: Vec<SessionPermissionRule>,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct PermissionRuntimeState {
     pending_permissions: Arc<Mutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
-    permission_rules: Arc<Mutex<Vec<SessionPermissionRule>>>,
-    denied_tool_calls: Arc<Mutex<Vec<SessionDeniedToolCall>>>,
+    permission_rules: Arc<Mutex<HashMap<String, Vec<SessionPermissionRule>>>>,
+    denied_tool_calls: Arc<Mutex<HashMap<String, Vec<SessionDeniedToolCall>>>>,
+    approval_review_counts: Arc<Mutex<HashMap<String, usize>>>,
     runtime_permission_rule_edits: Arc<RwLock<RuntimePermissionRuleEdits>>,
-    allow_all: Arc<AtomicBool>,
 }
 
 impl PermissionRuntimeState {
@@ -70,12 +69,7 @@ impl PermissionRuntimeState {
         config: &AppConfig,
         additional_directories: Vec<PathBuf>,
     ) -> PermissionContext {
-        edits::permission_context_from_edits(
-            config,
-            self.edits(),
-            additional_directories,
-            self.allow_all(),
-        )
+        edits::permission_context_from_edits(config, self.edits(), additional_directories)
     }
 
     pub(crate) async fn respond_to_permission_request(
@@ -128,8 +122,25 @@ impl PermissionRuntimeState {
         }
     }
 
-    pub(crate) async fn clear_denied_tool_calls(&self) {
-        self.denied_tool_calls.lock().await.clear();
+    pub(crate) async fn begin_permission_turn(&self, session_id: &str) {
+        self.approval_review_counts
+            .lock()
+            .await
+            .insert(session_id.to_string(), 0);
+    }
+
+    pub(crate) async fn try_begin_approval_review(&self, session_id: &str, limit: usize) -> bool {
+        let mut counts = self.approval_review_counts.lock().await;
+        let count = counts.entry(session_id.to_string()).or_insert(0);
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    pub(crate) async fn end_permission_turn(&self, session_id: &str) {
+        self.approval_review_counts.lock().await.remove(session_id);
     }
 
     pub(crate) fn record_runtime_permission_rule_add(
@@ -161,37 +172,51 @@ impl PermissionRuntimeState {
         edits::record_session_permission_rule_add(&mut edits, kind, rule)
     }
 
-    pub(crate) async fn record_session_permission_rule_remove(
+    pub(crate) fn record_unscoped_session_permission_rule_remove(
         &self,
         kind: PermissionRuleSettingKind,
         rule: &str,
     ) -> bool {
-        let mut changed = {
-            let mut edits = self.write_edits();
-            edits::record_session_permission_rule_remove(&mut edits, kind, rule)
-        };
+        let mut edits = self.write_edits();
+        edits::record_session_permission_rule_remove(&mut edits, kind, rule)
+    }
 
+    pub(crate) async fn record_session_permission_rule_remove(
+        &self,
+        session_id: &str,
+        kind: PermissionRuleSettingKind,
+        rule: &str,
+    ) -> bool {
+        let mut changed = self.record_unscoped_session_permission_rule_remove(kind, rule);
         if kind == PermissionRuleSettingKind::Allow {
-            changed |= self.remove_remembered_permission_rule(rule).await;
+            let mut rules_by_session = self.permission_rules.lock().await;
+            let mut remove_session_entry = false;
+            if let Some(rules) = rules_by_session.get_mut(session_id) {
+                let before = rules.len();
+                rules.retain(|existing| {
+                    PermissionRule::for_tool(&existing.tool_name, &existing.rule).raw != rule
+                });
+                changed |= rules.len() != before;
+                remove_session_entry = rules.is_empty();
+            }
+            if remove_session_entry {
+                rules_by_session.remove(session_id);
+            }
         }
-
         changed
     }
 
-    pub(crate) fn set_allow_all(&self, enabled: bool) {
-        self.allow_all.store(enabled, Ordering::SeqCst);
-    }
-
-    pub(crate) fn allow_all(&self) -> bool {
-        self.allow_all.load(Ordering::SeqCst)
-    }
-
-    pub(crate) async fn runtime_permission_rules(&self) -> Vec<String> {
+    pub(crate) async fn runtime_permission_rules_for_session(
+        &self,
+        session_id: &str,
+    ) -> Vec<String> {
         let rules = self.permission_rules.lock().await;
-        compact_session_permission_rules(&rules)
-            .into_iter()
-            .map(|rule| PermissionRule::for_tool(&rule.tool_name, &rule.rule).raw)
-            .collect()
+        compact_session_permission_rules(
+            rules.get(session_id).map(Vec::as_slice).unwrap_or_default(),
+        )
+        .into_iter()
+        .map(|rule| PermissionRule::for_tool(&rule.tool_name, &rule.rule).raw)
+        .collect()
     }
 
     pub(crate) fn settings_permission_rules(
@@ -229,38 +254,47 @@ impl PermissionRuntimeState {
         edits::runtime_added_permission_rules(self.edits(), kind)
     }
 
-    pub(crate) async fn remember_permission_rule(&self, tool_name: &str, rule: &str) {
+    pub(crate) async fn remember_permission_rule_for_session(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        rule: &str,
+    ) {
         if rule.trim().is_empty() {
             return;
         }
 
-        let remembered = {
-            let mut rules = self.permission_rules.lock().await;
-            let candidate = SessionPermissionRule {
-                tool_name: tool_name.to_string(),
-                rule: PermissionRule::for_tool(tool_name, rule).raw,
-            };
-            if !rules.iter().any(|existing| {
-                session_permission_rule_covers(&existing.tool_name, &existing.rule, &candidate.rule)
-            }) {
-                rules.retain(|existing| {
-                    !session_permission_rule_covers(
-                        &candidate.tool_name,
-                        &candidate.rule,
-                        &existing.rule,
-                    )
-                });
-                if !rules.iter().any(|existing| existing == &candidate) {
-                    rules.push(candidate);
-                }
-            }
-            compact_session_permission_rules(&rules)
+        let mut rules_by_session = self.permission_rules.lock().await;
+        let rules = rules_by_session.entry(session_id.to_string()).or_default();
+        let candidate = SessionPermissionRule {
+            tool_name: tool_name.to_string(),
+            rule: PermissionRule::for_tool(tool_name, rule).raw,
         };
-        self.record_remembered_permission_rules(remembered);
+        if !rules.iter().any(|existing| {
+            session_permission_rule_covers(&existing.tool_name, &existing.rule, &candidate.rule)
+        }) {
+            rules.retain(|existing| {
+                !session_permission_rule_covers(
+                    &candidate.tool_name,
+                    &candidate.rule,
+                    &existing.rule,
+                )
+            });
+            if !rules.iter().any(|existing| existing == &candidate) {
+                rules.push(candidate);
+            }
+        }
+        *rules = compact_session_permission_rules(rules);
     }
 
-    pub(crate) async fn remember_denied_tool_call(&self, tool_name: &str, tool_input: &str) {
-        let mut denied = self.denied_tool_calls.lock().await;
+    pub(crate) async fn remember_denied_tool_call_for_session(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+    ) {
+        let mut denied_by_session = self.denied_tool_calls.lock().await;
+        let denied = denied_by_session.entry(session_id.to_string()).or_default();
         let candidate = SessionDeniedToolCall {
             tool_name: tool_name.to_string(),
             tool_input: tool_input.to_string(),
@@ -270,42 +304,71 @@ impl PermissionRuntimeState {
         }
     }
 
-    pub(crate) async fn matches_denied_tool_call(&self, tool_name: &str, tool_input: &str) -> bool {
-        let denied = self.denied_tool_calls.lock().await;
-        denied.iter().any(|call| {
-            call.tool_name.eq_ignore_ascii_case(tool_name) && call.tool_input == tool_input
-        })
+    pub(crate) async fn matches_denied_tool_call_for_session(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+    ) -> bool {
+        let denied_by_session = self.denied_tool_calls.lock().await;
+        denied_by_session
+            .get(session_id)
+            .into_iter()
+            .flatten()
+            .any(|call| {
+                call.tool_name.eq_ignore_ascii_case(tool_name) && call.tool_input == tool_input
+            })
     }
 
-    pub(crate) async fn matches_permission_rule(&self, tool_name: &str, tool_input: &str) -> bool {
+    pub(crate) async fn matches_permission_rule_for_session(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &str,
+    ) -> bool {
         if tool_name.eq_ignore_ascii_case("bash")
             && orbcode_tools::bash_input_requests_sandbox_escalation(tool_input)
         {
             return false;
         }
-        let rules = self.permission_rules.lock().await;
-        rules.iter().any(|rule| {
-            PermissionRule::for_tool(&rule.tool_name, &rule.rule)
-                .matches_tool_call(tool_name, tool_input)
-        })
+        let rules_by_session = self.permission_rules.lock().await;
+        let parsed = rules_by_session
+            .get(session_id)
+            .into_iter()
+            .flatten()
+            .map(|rule| PermissionRule::for_tool(&rule.tool_name, &rule.rule))
+            .collect::<Vec<_>>();
+        if tool_name.eq_ignore_ascii_case("bash") {
+            bash_command_allowed_by_rules(&parsed, tool_name, tool_input).is_some()
+        } else {
+            parsed
+                .iter()
+                .any(|rule| rule.matches_tool_call(tool_name, tool_input))
+        }
     }
 
-    async fn remove_remembered_permission_rule(&self, rule: &str) -> bool {
-        let (changed, remembered) = {
-            let mut rules = self.permission_rules.lock().await;
-            let before = rules.len();
-            rules.retain(|existing| existing.rule != rule);
-            (
-                before != rules.len(),
-                compact_session_permission_rules(&rules),
-            )
-        };
-        self.record_remembered_permission_rules(remembered);
-        changed
+    pub(crate) async fn remove_session_state(&self, session_id: &str) {
+        self.permission_rules.lock().await.remove(session_id);
+        self.denied_tool_calls.lock().await.remove(session_id);
+        self.approval_review_counts.lock().await.remove(session_id);
     }
 
-    fn record_remembered_permission_rules(&self, rules: Vec<SessionPermissionRule>) {
-        self.write_edits().remembered_allow = rules;
+    #[cfg(test)]
+    async fn remember_permission_rule(&self, tool_name: &str, rule: &str) {
+        self.remember_permission_rule_for_session("test-session", tool_name, rule)
+            .await;
+    }
+
+    #[cfg(test)]
+    async fn matches_permission_rule(&self, tool_name: &str, tool_input: &str) -> bool {
+        self.matches_permission_rule_for_session("test-session", tool_name, tool_input)
+            .await
+    }
+
+    #[cfg(test)]
+    async fn runtime_permission_rules(&self) -> Vec<String> {
+        self.runtime_permission_rules_for_session("test-session")
+            .await
     }
 
     fn edits(&self) -> RuntimePermissionRuleEdits {
@@ -369,6 +432,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn automatic_review_budget_is_per_session_and_resets_each_turn() {
+        let runtime = PermissionRuntimeState::new();
+        runtime.begin_permission_turn("session-a").await;
+        runtime.begin_permission_turn("session-b").await;
+
+        assert!(runtime.try_begin_approval_review("session-a", 2).await);
+        assert!(runtime.try_begin_approval_review("session-a", 2).await);
+        assert!(!runtime.try_begin_approval_review("session-a", 2).await);
+        assert!(runtime.try_begin_approval_review("session-b", 2).await);
+
+        runtime.end_permission_turn("session-a").await;
+        runtime.begin_permission_turn("session-a").await;
+        assert!(runtime.try_begin_approval_review("session-a", 2).await);
+    }
+
+    #[tokio::test]
     async fn remembered_rules_compact_overlapping_bash_prefixes() {
         let runtime = PermissionRuntimeState::new();
 
@@ -394,16 +473,49 @@ mod tests {
             runtime.runtime_permission_rules().await,
             vec!["grep:*", "head:*"]
         );
-        let config = test_config();
-        let permissions = runtime.permission_context(&config, Vec::new());
         assert!(
-            permissions.tool_allowed_without_prompt(
-                "bash",
-                &serde_json::json!({
-                    "command": r#"grep -n "ApproveAlways" orbcode/core/src/session_manager/mod.rs | head -3"#
-                })
-                .to_string(),
-            )
+            runtime
+                .matches_permission_rule(
+                    "bash",
+                    &serde_json::json!({
+                        "command": r#"grep -n "ApproveAlways" orbcode/core/src/session_manager/mod.rs | head -3"#
+                    })
+                    .to_string(),
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn remembered_rules_and_denials_are_session_isolated() {
+        let runtime = PermissionRuntimeState::new();
+        let input = r#"{"command":"cargo test"}"#;
+        runtime
+            .remember_permission_rule_for_session("session-a", "bash", "cargo test:*")
+            .await;
+        runtime
+            .remember_denied_tool_call_for_session("session-a", "bash", input)
+            .await;
+
+        assert!(
+            runtime
+                .matches_permission_rule_for_session("session-a", "bash", input)
+                .await
+        );
+        assert!(
+            !runtime
+                .matches_permission_rule_for_session("session-b", "bash", input)
+                .await
+        );
+        assert!(
+            runtime
+                .matches_denied_tool_call_for_session("session-a", "bash", input)
+                .await
+        );
+        assert!(
+            !runtime
+                .matches_denied_tool_call_for_session("session-b", "bash", input)
+                .await
         );
     }
 
@@ -497,43 +609,5 @@ mod tests {
                 )
                 .await
         );
-    }
-
-    fn test_config() -> AppConfig {
-        let root = std::path::PathBuf::from("/tmp/orbcode-permission-state-test");
-        AppConfig {
-            cwd: root.clone(),
-            home_dir: root.clone(),
-            sessions_dir: root.join("sessions"),
-            projects_dir: root.join("projects"),
-            current_project_dir: root.join("projects/project"),
-            history_path: root.join("history.jsonl"),
-            settings_path: root.join("settings.json"),
-            default_provider: orbcode_protocol::ProviderId::Anthropic,
-            fallback_provider: None,
-            max_retries: 0,
-            sandbox_mode: orbcode_protocol::SandboxMode::DangerFullAccess,
-            sandbox_allow_network: true,
-            allow_network: true,
-            provider_allow_network: true,
-            allow_tools: false,
-            allowed_tools: Vec::new(),
-            disallowed_tools: Vec::new(),
-            ask_tools: Vec::new(),
-            additional_directories: Vec::new(),
-            mcp_config_inputs: Vec::new(),
-            settings: orbcode_config::ClaudeSettings::default(),
-            settings_layers: orbcode_config::SettingsLayers::default(),
-            resolved_settings: Default::default(),
-            settings_warnings: Vec::new(),
-            policy: orbcode_config::EffectivePolicy::default(),
-            policy_conflicts: Vec::new(),
-            runtime_model_override: orbcode_config::RuntimeModelOverride::Inherit,
-            refreshed_persisted_model_setting: None,
-            env_overrides: std::collections::HashMap::new(),
-            append_system_prompt: None,
-            permission_mode: None,
-            trusted_project: true,
-        }
     }
 }

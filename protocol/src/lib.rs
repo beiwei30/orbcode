@@ -48,7 +48,9 @@ pub use overview::{
     CostOverview, StatsActivityDay, StatsOverview, UsageOverview,
 };
 pub use permission::{
-    McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,
+    ApprovalPolicy, ApprovalReviewResolutionKind, ApprovalReviewer, McpTrustApprovalRequest,
+    McpTrustResolutionKind, ModelPermissionPolicy, ModelPermissionPreset, PermissionRequest,
+    PermissionResolutionKind,
 };
 pub use provider::{EffortLevel, ProviderId, ProviderToolDefinition, SandboxMode};
 pub use session::{

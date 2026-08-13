@@ -3,34 +3,25 @@ name: release-build
 # Cross-platform build matrix for the orbcode binary.
 #
 # - Builds a release binary on Linux, macOS, and Windows native targets.
-# - Runs the black-box build_smoke integration tests (cli/tests/build_smoke.rs)
-#   on every platform.
+# - Runs black-box smoke checks against that exact prebuilt binary on every
+#   platform without compiling a separate Rust test harness.
 # - Packages a stably-named archive (orbcode-<version>-<target>.<ext>) plus a
 #   sha256 checksum and uploads them as workflow artifacts.
 #
-# Triggers: tag pushes (v*), manual dispatch, and PRs that touch the build or
-# packaging surface. Tag builds additionally attach the archives to a GitHub
-# Release.
+# Triggers: tag pushes (v*), manual dispatch, and a weekly verification build.
+# Pull requests use the faster pr-build.yml workflow. Tag builds additionally
+# attach the archives to a GitHub Release.
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch: {}
-  pull_request:
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "cli/build.rs"
-      - "cli/src/build_info.rs"
-      - "cli/tests/build_smoke.rs"
-      - "scripts/**"
-      - ".github/workflows/release.yml"
+  schedule:
+    - cron: "17 3 * * 1"
 
 # Read-only by default. Only the `release` job needs `contents: write` (it creates
-# the GitHub Release), and it declares that itself. Keeping the default narrow
-# matters because this workflow also runs on pull requests, where the build and
-# packaging jobs execute code from the PR.
+# the GitHub Release), and it declares that itself.
 permissions:
   contents: read
 
@@ -61,10 +52,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            bin_suffix: ""
           - os: macos-latest
             target: aarch64-apple-darwin
+            bin_suffix: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            bin_suffix: ".exe"
     steps:
       - name: Checkout (full history for git SHA metadata)
         uses: actions/checkout@v4
@@ -79,13 +73,10 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release -p orbcode --target ${{ matrix.target }}
-
-      - name: Run build_smoke integration tests
-        run: cargo test -p orbcode --test build_smoke --release --target ${{ matrix.target }}
 
       - name: Install bubblewrap (Linux)
         if: runner.os == 'Linux'
@@ -96,17 +87,13 @@ jobs:
           # its network namespace on GitHub-hosted runners.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Cross-platform smoke tests (path normalization + sandbox host validation)
+      - name: Binary smoke tests
         shell: bash
-        run: scripts/ci-cross-platform-smoke.sh --release
+        run: scripts/smoke-release.sh --binary target/${{ matrix.target }}/release/orbcode${{ matrix.bin_suffix }} --expected-target ${{ matrix.target }}
 
-      # The bash smoke pipeline (version <-> doctor cross-check + TUI startup
-      # smoke) runs natively on the Unix runners. Windows relies on the
-      # cross-platform cargo build_smoke step above.
-      - name: Smoke-release pipeline (Unix)
-        if: runner.os != 'Windows'
+      - name: Cross-platform sandbox host validation
         shell: bash
-        run: scripts/smoke-release.sh --release
+        run: scripts/ci-cross-platform-smoke.sh --binary target/${{ matrix.target }}/release/orbcode${{ matrix.bin_suffix }}
 
       - name: Package release artifact
         shell: bash

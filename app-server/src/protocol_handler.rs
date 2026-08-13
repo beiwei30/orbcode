@@ -58,8 +58,12 @@ impl AppServer {
             method::SESSION_ACP_DELETE => self.handle_session_acp_delete(params).await,
             method::SESSION_ACP_CLOSE => self.handle_session_acp_close(params).await,
             method::SESSION_CONTROL_STATE => self.handle_session_control_state(params),
+            method::SESSION_PERMISSION_PRESETS => self.handle_session_permission_presets(params),
             method::SESSION_SET_PERMISSION_MODE => {
                 self.handle_session_set_permission_mode(params).await
+            }
+            method::SESSION_SET_PERMISSION_PRESET => {
+                self.handle_session_set_permission_preset(params).await
             }
             method::SESSION_SET_MODEL => self.handle_session_set_model(params).await,
             method::SESSION_SET_EFFORT => self.handle_session_set_effort(params).await,
@@ -79,7 +83,7 @@ impl AppServer {
             method::PERMISSION_RESPOND => self.handle_permission_respond(params).await,
             method::PERMISSION_OVERVIEW => self.handle_permission_overview(params).await,
             method::PERMISSION_MODE => self.handle_permission_mode(params),
-            method::PERMISSION_SET_MODE => self.handle_permission_set_mode(params),
+            method::PERMISSION_SET_MODE => self.handle_permission_set_mode(params).await,
             method::PERMISSION_ADD_RULE => self.handle_permission_add_rule(params).await,
             method::PERMISSION_REMOVE_RULE => self.handle_permission_remove_rule(params).await,
             method::PERMISSION_ADD_SESSION_RULE => {
@@ -128,8 +132,6 @@ impl AppServer {
             method::SETTINGS_ADD_SANDBOX_EXCLUDED => {
                 self.handle_settings_add_sandbox_excluded(params).await
             }
-            method::SETTINGS_ALLOW_ALL => self.handle_settings_allow_all(params),
-            method::SETTINGS_SET_ALLOW_ALL => self.handle_settings_set_allow_all(params),
             // Context / Usage
             method::CONTEXT_PREVIEW => self.handle_context_preview(params).await,
             method::CONTEXT_OVERVIEW => self.handle_context_overview(params).await,

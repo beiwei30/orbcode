@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use orbcode_app_server_client::{
-    AgentDefinition, AgentLoadWarning, AuthOverview, HookDiscovery, PermissionOverview,
-    PermissionRuleKind, PlanOverview, PolicyOverview, SkillDefinition, StatusAuthOverview,
-    StatusOverview, WorkspaceDiff,
+    AgentDefinition, AgentLoadWarning, AuthOverview, HookDiscovery, ModelPermissionPreset,
+    PlanOverview, PolicyOverview, SkillDefinition, StatusAuthOverview, StatusOverview,
+    WorkspaceDiff,
 };
 #[cfg(test)]
 use orbcode_app_server_client::{MemoryFileOverview, MemoryOverview};
@@ -15,6 +15,13 @@ pub(crate) fn render_status_overview(overview: &StatusOverview) -> String {
     let mut lines = vec![
         "Status:".to_string(),
         format!("session: {}", short_session_id(&overview.session_id)),
+        format!(
+            "permissions: {}",
+            overview
+                .active_permission_preset
+                .map(permission_preset_status_label)
+                .unwrap_or("legacy")
+        ),
         format!("cwd: {}", overview.cwd.display()),
         format!("home: {}", overview.home_dir.display()),
         format!("model: {}", overview.model_display_name),
@@ -58,7 +65,6 @@ pub(crate) fn render_status_overview(overview: &StatusOverview) -> String {
             "sandbox network: {}",
             bool_label(overview.sandbox_allow_network)
         ),
-        format!("allow-all: {}", bool_label(overview.permissions.allow_all)),
         format!("tools permission: {}", bool_label(permissions.allow_tools)),
         format!("tool network: {}", bool_label(permissions.allow_network)),
         format!(
@@ -78,6 +84,14 @@ pub(crate) fn render_status_overview(overview: &StatusOverview) -> String {
     lines.push(String::new());
     lines.push(render_status_auth_overview(&overview.auth));
     lines.join("\n")
+}
+
+fn permission_preset_status_label(preset: ModelPermissionPreset) -> &'static str {
+    match preset {
+        ModelPermissionPreset::AskForApproval => "Ask for approval",
+        ModelPermissionPreset::ApproveForMe => "Approve for me",
+        ModelPermissionPreset::FullAccess => "Full Access",
+    }
 }
 
 fn render_policy_overview(overview: &PolicyOverview) -> String {
@@ -224,84 +238,6 @@ fn render_auth_entries<'a>(
             }
         }
     }
-    lines.join("\n")
-}
-
-pub(crate) fn render_permission_overview(overview: &PermissionOverview) -> String {
-    let permissions = &overview.permissions;
-    let configured_allow = overview.configured_rules(PermissionRuleKind::Allow);
-    let startup_allow = overview.startup_rules(PermissionRuleKind::Allow);
-    let edited_allow = overview.runtime_added_rules(PermissionRuleKind::Allow);
-    let session_allow = overview.session_rules(PermissionRuleKind::Allow);
-    let configured_deny = overview.configured_rules(PermissionRuleKind::Deny);
-    let startup_deny = overview.startup_rules(PermissionRuleKind::Deny);
-    let edited_deny = overview.runtime_added_rules(PermissionRuleKind::Deny);
-    let session_deny = overview.session_rules(PermissionRuleKind::Deny);
-    let allow_layers = [
-        (&configured_allow[..], "configured · settings"),
-        (&startup_allow[..], "configured · env/CLI"),
-        (&edited_allow[..], "configured · settings edit"),
-        (&session_allow[..], "session"),
-    ];
-    let deny_layers = [
-        (&configured_deny[..], "configured · settings"),
-        (&startup_deny[..], "configured · env/CLI"),
-        (&edited_deny[..], "configured · settings edit"),
-        (&session_deny[..], "session"),
-    ];
-    let mut lines = vec![
-        "Permissions:".to_string(),
-        format!("  allow-all: {}", bool_label(overview.allow_all)),
-        format!("  tools: {}", bool_label(permissions.allow_tools)),
-        format!("  tool network: {}", bool_label(permissions.allow_network)),
-        format!(
-            "  provider network: {}",
-            bool_label(permissions.provider_allow_network)
-        ),
-        format!("  allow rules: {}", sourced_rule_count(&allow_layers)),
-        format!("  deny rules: {}", sourced_rule_count(&deny_layers)),
-        format!(
-            "  additional directories: {}",
-            permissions.additional_directories.len()
-        ),
-        format!(
-            "  configured directories: {}",
-            overview.configured_additional_directories.len()
-        ),
-        format!(
-            "  session-only directories: {}",
-            overview.session_additional_directories.len()
-        ),
-    ];
-    append_sourced_rule_section(&mut lines, "Allow rules", &allow_layers);
-    append_sourced_rule_section(&mut lines, "Deny rules", &deny_layers);
-    if !overview.configured_additional_directories.is_empty() {
-        lines.push(String::new());
-        lines.push("Configured directories:".to_string());
-        for directory in &overview.configured_additional_directories {
-            lines.push(format!("  - {}", directory.display()));
-        }
-    }
-    if !overview.session_additional_directories.is_empty() {
-        lines.push(String::new());
-        lines.push("Session-only directories:".to_string());
-        for directory in &overview.session_additional_directories {
-            lines.push(format!("  - {}", directory.display()));
-        }
-    }
-    lines.push(String::new());
-    lines.push("Usage:".to_string());
-    lines.push("  /permissions add allow Bash(cargo test:*)".to_string());
-    lines.push("  /permissions add settings allow Bash(cargo test:*)".to_string());
-    lines.push("  /permissions add deny Bash(rm:*)".to_string());
-    lines.push("  /permissions add session allow Read(src/**)".to_string());
-    lines.push("  /permissions remove allow Bash(cargo test:*)".to_string());
-    lines.push("  /permissions remove session allow Read(src/**)".to_string());
-    lines.push(String::new());
-    lines.push("Editable sources:".to_string());
-    lines.push("  - settings: writes home settings.json".to_string());
-    lines.push("  - session: current session only, including approve-always rules".to_string());
-    lines.push("Read-only here: env/CLI rules and project-local or managed settings.".to_string());
     lines.join("\n")
 }
 
@@ -489,42 +425,6 @@ pub(crate) fn workspace_diff_changed_path_count(diff: &WorkspaceDiff) -> usize {
         }
     }
     paths.len()
-}
-
-fn append_sourced_rule_section(lines: &mut Vec<String>, title: &str, layers: &[(&[String], &str)]) {
-    lines.push(String::new());
-    lines.push(format!("{title}:"));
-    let mut rendered = Vec::<(String, Vec<&str>)>::new();
-    for (rules, source) in layers {
-        for rule in *rules {
-            if let Some((_, sources)) = rendered.iter_mut().find(|(existing, _)| existing == rule) {
-                if !sources.iter().any(|existing| existing == source) {
-                    sources.push(*source);
-                }
-            } else {
-                rendered.push((rule.clone(), vec![*source]));
-            }
-        }
-    }
-    if rendered.is_empty() {
-        lines.push("  none".to_string());
-        return;
-    }
-    for (rule, sources) in rendered {
-        lines.push(format!("  - {rule} ({})", sources.join(" · ")));
-    }
-}
-
-fn sourced_rule_count(layers: &[(&[String], &str)]) -> usize {
-    let mut rendered = Vec::<&str>::new();
-    for (rules, _) in layers {
-        for rule in *rules {
-            if !rendered.iter().any(|existing| existing == rule) {
-                rendered.push(rule);
-            }
-        }
-    }
-    rendered.len()
 }
 
 fn bool_label(value: bool) -> &'static str {

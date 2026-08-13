@@ -1,7 +1,7 @@
 use orbcode_protocol::{
     ProviderToolDefinition, SessionGoal, SessionGoalStatus, ToolUseCompletionKind,
 };
-use orbcode_tools::{ToolSpec, ToolStatus};
+use orbcode_tools::{ToolCapability, ToolSpec, ToolStatus};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -14,6 +14,7 @@ const GET_GOAL_SPEC: ToolSpec = ToolSpec {
     summary: "Read the current persistent goal and its revision, status, budget, usage, elapsed time, and last supervised turn.",
     requires_tools_permission: false,
     requires_network_permission: false,
+    capability: ToolCapability::Internal,
     provider_hidden: false,
 };
 
@@ -23,6 +24,7 @@ const CREATE_GOAL_SPEC: ToolSpec = ToolSpec {
     summary: "Create one active persistent session goal. This rejects an unfinished existing goal and may replace a completed goal.",
     requires_tools_permission: false,
     requires_network_permission: false,
+    capability: ToolCapability::Internal,
     provider_hidden: false,
 };
 
@@ -32,6 +34,7 @@ const UPDATE_GOAL_SPEC: ToolSpec = ToolSpec {
     summary: "Mark the current persistent goal complete or blocked using its identity and revision. Use blocked only after the same blocking condition has recurred for at least three consecutive goal turns; include that condition as stop_reason.",
     requires_tools_permission: false,
     requires_network_permission: false,
+    capability: ToolCapability::Internal,
     provider_hidden: false,
 };
 

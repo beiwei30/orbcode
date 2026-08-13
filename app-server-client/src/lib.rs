@@ -695,6 +695,19 @@ impl AppClient {
         .await
     }
 
+    pub async fn session_permission_presets(
+        &self,
+        session_id: &str,
+    ) -> Result<PermissionPresetsResult, ClientError> {
+        self.request_typed(
+            method::SESSION_PERMISSION_PRESETS,
+            Some(serde_json::to_value(SessionIdParams {
+                session_id: session_id.to_string(),
+            })?),
+        )
+        .await
+    }
+
     pub async fn set_session_permission_mode(
         &self,
         session_id: &str,
@@ -705,6 +718,21 @@ impl AppClient {
             Some(serde_json::to_value(SetSessionPermissionModeParams {
                 session_id: session_id.to_string(),
                 mode,
+            })?),
+        )
+        .await
+    }
+
+    pub async fn set_session_permission_preset(
+        &self,
+        session_id: &str,
+        preset: ModelPermissionPreset,
+    ) -> Result<SessionControlState, ClientError> {
+        self.request_typed(
+            method::SESSION_SET_PERMISSION_PRESET,
+            Some(serde_json::to_value(SetSessionPermissionPresetParams {
+                session_id: session_id.to_string(),
+                preset,
             })?),
         )
         .await
@@ -1912,21 +1940,6 @@ impl AppClient {
     // Extended settings (TUI migration)
     // =========================================================================
 
-    /// Get whether all permissions are bypassed.
-    pub async fn allow_all(&self) -> Result<bool, ClientError> {
-        let result: AllowAllResult = self.request_typed(method::SETTINGS_ALLOW_ALL, None).await?;
-        Ok(result.allow_all)
-    }
-
-    /// Set the allow-all permission bypass flag.
-    pub async fn set_allow_all(&self, enabled: bool) -> Result<AllowAllResult, ClientError> {
-        self.request_typed(
-            method::SETTINGS_SET_ALLOW_ALL,
-            Some(serde_json::to_value(AllowAllParams { allow_all: enabled })?),
-        )
-        .await
-    }
-
     /// Get the current editor mode setting.
     pub async fn editor_mode_setting(&self) -> Result<EditorModeResult, ClientError> {
         self.request_typed(method::SETTINGS_EDITOR_MODE, None).await
@@ -2497,9 +2510,10 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use orbcode_app_server_protocol::{
-        EditorModeSetting, ErrorCode, ModelSelectionSource, NoData, PermissionMode,
-        PermissionRuleEffect, PermissionRuleKind, PermissionRuleTargetScope, RuntimeModelOverride,
-        SessionGoalNotStartedReason, SessionGoalSetParams, SettingSource, ThemeSetting, method,
+        EditorModeSetting, ErrorCode, ModelPermissionPreset, ModelSelectionSource, NoData,
+        PermissionMode, PermissionRuleEffect, PermissionRuleKind, PermissionRuleTargetScope,
+        RuntimeModelOverride, SessionGoalNotStartedReason, SessionGoalSetParams, SettingSource,
+        ThemeSetting, method,
     };
     use orbcode_config::{AppConfigOverrides, sanitize_path};
     use orbcode_protocol::{BackgroundTaskViewStatus, SessionGoalStatus, StreamEvent};
@@ -3089,6 +3103,52 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn session_permission_presets_round_trip() {
+        let home = test_path("permission-presets-home");
+        let cwd = test_path("permission-presets-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+
+        let client = AppClient::from_cwd(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("client");
+        let bootstrap = client.bootstrap(None).await.expect("bootstrap");
+        let session_id = &bootstrap.session.session_id;
+
+        let presets = client
+            .session_permission_presets(session_id)
+            .await
+            .expect("permission presets");
+        assert_eq!(presets.options.len(), 3);
+        assert_eq!(
+            presets.active_preset,
+            Some(ModelPermissionPreset::AskForApproval)
+        );
+
+        let controls = client
+            .set_session_permission_preset(session_id, ModelPermissionPreset::ApproveForMe)
+            .await
+            .expect("set preset");
+        assert_eq!(controls.permission_mode, PermissionMode::Auto);
+        assert_eq!(
+            controls.active_permission_preset,
+            Some(ModelPermissionPreset::ApproveForMe)
+        );
+        assert!(
+            controls
+                .permission_presets
+                .iter()
+                .any(|option| option.value == ModelPermissionPreset::ApproveForMe && option.current)
+        );
+    }
+
     // -----------------------------------------------------------------------
     // 5. List tools includes foundation tools
     // -----------------------------------------------------------------------
@@ -3347,8 +3407,8 @@ mod tests {
             .await
             .expect("permission_overview");
         assert!(
-            !overview.allow_all,
-            "fresh server should not have allow_all"
+            !overview.permissions.allow_tools,
+            "the default ambient permission context remains closed; workspace-safe access comes from the active preset"
         );
         assert_eq!(
             overview.effective_rules.precedence,
@@ -3774,8 +3834,11 @@ mod tests {
         use orbcode_app_server_protocol::ResponseResult;
         use serde_json::json;
 
-        let (client, session_id) =
-            client_with_mock("perm-roundtrip", "tool_use&key=bash&command=echo+hi").await;
+        let (client, session_id) = client_with_mock(
+            "perm-roundtrip",
+            "tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+        )
+        .await;
 
         let mut notif_rx = client
             .take_notification_receiver()
@@ -3896,8 +3959,11 @@ mod tests {
     async fn permission_respond_sent_true_via_public_api() {
         use orbcode_app_server_protocol::PermissionDecisionWire;
 
-        let (client, session_id) =
-            client_with_mock("perm-sent-true", "tool_use&key=bash&command=echo+hi").await;
+        let (client, session_id) = client_with_mock(
+            "perm-sent-true",
+            "tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+        )
+        .await;
 
         let mut notif_rx = client
             .take_notification_receiver()
@@ -3975,8 +4041,11 @@ mod tests {
         use orbcode_app_server_protocol::ResponseResult;
         use serde_json::json;
 
-        let (client, session_id) =
-            client_with_mock("perm-full-flow", "tool_use&key=bash&command=echo+hi").await;
+        let (client, session_id) = client_with_mock(
+            "perm-full-flow",
+            "tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+        )
+        .await;
 
         let mut notif_rx = client
             .take_notification_receiver()
@@ -4218,25 +4287,29 @@ mod tests {
         )
         .await
         .expect("client");
+        let session = client.bootstrap(None).await.expect("bootstrap").session;
 
-        // Default: allow_all should be false
-        let overview = client.permission_overview().await.expect("overview");
-        assert!(!overview.allow_all);
+        assert_eq!(
+            client.permission_mode().await.expect("initial mode").mode,
+            PermissionMode::Default
+        );
 
-        // Set to bypassPermissions mode (sets allow_all = true)
         client
             .set_permission_mode(PermissionMode::BypassPermissions)
             .await
             .expect("set_permission_mode bypassPermissions");
+        assert_eq!(
+            client
+                .session_control_state(&session.session_id)
+                .await
+                .expect("session controls")
+                .permission_mode,
+            PermissionMode::BypassPermissions
+        );
 
-        // Verify allow_all changed
-        let overview = client
-            .permission_overview()
-            .await
-            .expect("overview after set");
-        assert!(
-            overview.allow_all,
-            "bypass_permissions should set allow_all=true"
+        assert_eq!(
+            client.permission_mode().await.expect("updated mode").mode,
+            PermissionMode::BypassPermissions
         );
 
         // Invalid mode should return InvalidParams

@@ -6,7 +6,7 @@ use std::time::Instant;
 use crossterm::cursor::SetCursorStyle;
 use orbcode_app_server_client::{
     AppClient, BootstrapState, ContextWindowOptions, MaxOutputTokenOptions,
-    McpSlashSuggestionCatalog, PermissionMode, TokenWarningOptions,
+    McpSlashSuggestionCatalog, TokenWarningOptions,
 };
 use orbcode_protocol::{EffortLevel, ProviderId, StreamEvent, TokenUsage, TranscriptMessage};
 use ratatui::prelude::Rect;
@@ -18,7 +18,7 @@ use crate::bottom_pane::vim::{LastFind, VimRuntimeState};
 use crate::editor_mode::{EditorMode, editor_mode_from_setting};
 use crate::external_editor::ExternalEditorRequest;
 use crate::history_cell::state::TranscriptUiState;
-use crate::overlays::{OverlayState, RecentlyDeniedPermission, overlay_cursor_style};
+use crate::overlays::{InteractivePermissionMode, OverlayState, overlay_cursor_style};
 use crate::prompt_state::{
     ActiveThinkingState, DeferredAssistantMessage, InputSelectionState, NormalPending,
 };
@@ -39,11 +39,9 @@ pub(crate) struct ClearSessionInfo {
     pub(crate) usage: Option<TokenUsage>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct StatusLineState {
     pub(crate) context_percent_left: Option<u32>,
-    pub(crate) permission_mode: PermissionMode,
-    pub(crate) allow_all: bool,
     pub(crate) sandbox_mode: String,
     pub(crate) bg_job_count: usize,
     pub(crate) has_rate_limit_warning: bool,
@@ -53,23 +51,10 @@ pub(crate) struct StatusLineState {
     /// Runtime reasoning-effort override, shown next to the model name. `None`
     /// means the model's default effort (nothing is displayed).
     pub(crate) effort: Option<EffortLevel>,
-}
-
-impl Default for StatusLineState {
-    fn default() -> Self {
-        Self {
-            context_percent_left: None,
-            permission_mode: PermissionMode::Default,
-            allow_all: false,
-            sandbox_mode: String::new(),
-            bg_job_count: 0,
-            has_rate_limit_warning: false,
-            has_auth_warning: false,
-            git_branch: None,
-            custom_command_output: None,
-            effort: None,
-        }
-    }
+    /// Cached current Shift-Tab mode, refreshed from session controls.
+    pub(crate) permission_mode: InteractivePermissionMode,
+    /// Whether this session has started its deterministic Shift-Tab cycle.
+    pub(crate) permission_mode_cycle_started: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -120,7 +105,6 @@ pub(crate) struct TuiState {
     pub(crate) focus_latest_message_start: bool,
     pub(crate) pending_history_flush: bool,
     pub(crate) overlay: Option<OverlayState>,
-    pub(crate) recent_denied_permissions: Vec<RecentlyDeniedPermission>,
     pub(crate) status_line: String,
     pub(crate) status_line_set_at: Option<Instant>,
     pub(crate) ui_version: String,
@@ -229,7 +213,6 @@ impl TuiState {
             focus_latest_message_start: false,
             pending_history_flush: false,
             overlay: None,
-            recent_denied_permissions: Vec::new(),
             status_line,
             status_line_set_at: None,
             ui_version,

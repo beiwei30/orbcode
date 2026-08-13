@@ -559,6 +559,55 @@ async fn cost_overview_restores_across_resume_without_double_counting() {
 }
 
 #[tokio::test]
+async fn cost_only_synthetic_usage_restores_without_entering_model_context() {
+    let mut manager = test_manager().await;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        "claude-sonnet-4-6".to_string(),
+    );
+    let session_id = "cost-only-synthetic-session";
+    let usage = assistant_usage(20_000, 1_000, 0, 0, 0);
+    manager
+        .append_message(
+            session_id,
+            TranscriptMessage::new(MessageRole::Assistant, "")
+                .with_usage(usage)
+                .with_synthetic(true),
+        )
+        .await
+        .expect("append cost-only usage");
+
+    let live = manager
+        .cost_overview(session_id)
+        .await
+        .expect("live cost")
+        .cost
+        .total_cost_usd;
+    assert!(live > 0.0);
+
+    let resumed = resumed_manager(&manager).await;
+    let restored = resumed
+        .cost_overview(session_id)
+        .await
+        .expect("restored cost")
+        .cost
+        .total_cost_usd;
+    assert!((restored - live).abs() < 1e-12);
+
+    let session = resumed
+        .load_session(session_id)
+        .await
+        .expect("load session");
+    assert_eq!(session.messages.len(), 1);
+    assert!(session.messages[0].is_synthetic);
+    let visible = resumed
+        .model_visible_messages_with_tool_result_budget(session_id, session.messages)
+        .await
+        .expect("filter model context");
+    assert!(visible.is_empty());
+}
+
+#[tokio::test]
 async fn cost_overview_flags_unknown_model_pricing() {
     // Default test manager uses the unpriced "stub-model".
     let manager = test_manager().await;

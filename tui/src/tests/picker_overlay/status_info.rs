@@ -583,6 +583,7 @@ fn render_status_overview_includes_session_and_runtime_summary() {
     let overview = StatusOverview {
         max_thinking_tokens: None,
         session_id: "12345678-90ab-cdef-1234-567890abcdef".to_string(),
+        active_permission_preset: Some(ModelPermissionPreset::AskForApproval),
         cwd: PathBuf::from("/tmp/project"),
         home_dir: PathBuf::from("/tmp/home"),
         model_display_name: "test-model".to_string(),
@@ -606,7 +607,6 @@ fn render_status_overview_includes_session_and_runtime_summary() {
                 ask_rules: Vec::new(),
                 additional_directories: vec![PathBuf::from("/tmp/extra")],
             },
-            allow_all: false,
             effective_rules: Default::default(),
             settings_allowed_rules: Vec::new(),
             settings_denied_rules: Vec::new(),
@@ -647,6 +647,7 @@ fn render_status_overview_includes_session_and_runtime_summary() {
     };
 
     let rendered = render_status_overview(&overview);
+    assert!(rendered.contains("permissions: Ask for approval"));
 
     assert!(rendered.contains("Status:"));
     assert!(rendered.contains("session: 12345678"));
@@ -678,6 +679,7 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
     let overview = StatusOverview {
         max_thinking_tokens: None,
         session_id: "policy-session".to_string(),
+        active_permission_preset: Some(ModelPermissionPreset::FullAccess),
         cwd: PathBuf::from("/tmp/project"),
         home_dir: PathBuf::from("/tmp/home"),
         model_display_name: "opus".to_string(),
@@ -701,7 +703,6 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
                 ask_rules: Vec::new(),
                 additional_directories: Vec::new(),
             },
-            allow_all: false,
             effective_rules: Default::default(),
             settings_allowed_rules: Vec::new(),
             settings_denied_rules: Vec::new(),
@@ -764,6 +765,7 @@ fn render_status_overview_shows_managed_policy_and_conflicts() {
     };
 
     let rendered = render_status_overview(&overview);
+    assert!(rendered.contains("permissions: Full Access"));
 
     assert!(rendered.contains("Managed policy:"));
     assert!(rendered.contains("source: file + drop-in"));

@@ -8,8 +8,8 @@ use orbcode_protocol::ProviderToolDefinition;
 
 use crate::payload::{parse_payload, string_field, usize_field_keys};
 use crate::{
-    InteractionToolVisibility, ToolContext, ToolError, ToolOutcome, ToolRegistry, ToolSpec,
-    ToolStatus,
+    InteractionToolVisibility, ToolCapability, ToolContext, ToolError, ToolOutcome, ToolRegistry,
+    ToolSpec, ToolStatus,
 };
 
 impl ToolRegistry {
@@ -728,6 +728,7 @@ pub(crate) fn tool(
         summary,
         requires_tools_permission,
         requires_network_permission,
+        capability: foundation_tool_capability(name),
         provider_hidden: false,
     }
 }
@@ -744,7 +745,32 @@ pub(crate) fn hidden_tool(
         summary,
         requires_tools_permission,
         requires_network_permission,
+        capability: foundation_tool_capability(name),
         provider_hidden: true,
+    }
+}
+
+fn foundation_tool_capability(name: &str) -> ToolCapability {
+    match canonical_tool_name(name) {
+        "file-read" | "glob" | "grep" | "lsp" => ToolCapability::WorkspaceRead,
+        "file-write" | "file-edit" | "notebook-edit" => ToolCapability::WorkspaceWrite,
+        "bash" => ToolCapability::SandboxedCommand,
+        "web-fetch" | "web-search" => ToolCapability::Network,
+        "workflow" | "task-stop" => ToolCapability::ExternalSideEffect,
+        "ask-user-question"
+        | "enter-plan-mode"
+        | "exit-plan-mode"
+        | "verify-plan-execution"
+        | "Agent"
+        | "skill"
+        | "tool-search"
+        | "todo-write"
+        | "task-create"
+        | "task-get"
+        | "task-list"
+        | "task-update"
+        | "task-output" => ToolCapability::Internal,
+        _ => ToolCapability::ExternalSideEffect,
     }
 }
 
@@ -1496,6 +1522,24 @@ mod tests {
                 canonical
             );
         }
+    }
+
+    #[test]
+    fn workflow_requires_external_side_effect_review() {
+        let registry = ToolRegistry::foundation();
+        assert_eq!(
+            registry.spec("Workflow").expect("workflow spec").capability,
+            ToolCapability::ExternalSideEffect
+        );
+    }
+
+    #[test]
+    fn task_stop_requires_external_side_effect_review() {
+        let registry = ToolRegistry::foundation();
+        assert_eq!(
+            registry.spec("TaskStop").expect("TaskStop spec").capability,
+            ToolCapability::ExternalSideEffect
+        );
     }
 
     #[test]

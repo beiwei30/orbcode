@@ -79,7 +79,7 @@ async fn app_with_many_deltas(label: &str) -> AppServer {
 async fn app_with_tool_use(label: &str) -> AppServer {
     app_with_mock_url(
         label,
-        "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi",
+        "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
     )
     .await
 }

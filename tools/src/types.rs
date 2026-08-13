@@ -53,6 +53,19 @@ pub enum ToolStatus {
     Available,
 }
 
+/// Static permission capability for a tool. Call-specific boundaries (for
+/// example a path outside the workspace or a Bash sandbox escalation) are
+/// derived by core from this capability and the tool input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolCapability {
+    Internal,
+    WorkspaceRead,
+    WorkspaceWrite,
+    SandboxedCommand,
+    Network,
+    ExternalSideEffect,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolSpec {
     pub name: &'static str,
@@ -60,6 +73,7 @@ pub struct ToolSpec {
     pub summary: &'static str,
     pub requires_tools_permission: bool,
     pub requires_network_permission: bool,
+    pub capability: ToolCapability,
     pub provider_hidden: bool,
 }
 

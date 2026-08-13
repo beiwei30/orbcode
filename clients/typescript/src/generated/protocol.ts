@@ -143,6 +143,8 @@ their protocol-specific shapes. */
 export type SessionControlState = {
   session_id: string;
   permission_mode: PermissionMode;
+  active_permission_preset?: ModelPermissionPreset | null;
+  permission_presets: PermissionPresetOption[];
   model_selection: EffectiveModelSelection;
   model_options: SessionModelOption[];
   effort_level?: string | null;
@@ -214,6 +216,18 @@ export type StreamEvent = {
   request_id: string;
   kind: PermissionResolutionKind;
   event: "permission_resolved";
+} | {
+  session_id: string;
+  request_id: string;
+  tool_use_id: string;
+  tool_name: string;
+  event: "approval_review_started";
+} | {
+  session_id: string;
+  request_id: string;
+  kind: ApprovalReviewResolutionKind;
+  rationale?: string | null;
+  event: "approval_review_completed";
 } | {
   request: McpTrustApprovalRequest;
   event: "mcp_trust_approval_requested";
@@ -567,6 +581,25 @@ export type SessionModelOption = {
   current: boolean;
 };
 
+export type PermissionPresetOption = {
+  value: ModelPermissionPreset;
+  label: string;
+  description: string;
+  current: boolean;
+  disabled_reason?: string | null;
+};
+
+export type PermissionPresetsResult = {
+  session_id: string;
+  active_preset?: ModelPermissionPreset | null;
+  options: PermissionPresetOption[];
+};
+
+export interface SetSessionPermissionPresetParams {
+  session_id: string;
+  preset: ModelPermissionPreset;
+}
+
 export interface SessionRenameParams {
   session_id: string;
   new_title: string;
@@ -648,7 +681,6 @@ export interface PermissionRuleUpdateResult {
 
 export interface PermissionOverview {
   permissions: PermissionContext;
-  allow_all: boolean;
   effective_rules?: EffectivePermissionRules;
   settings_allowed_rules: string[];
   settings_denied_rules: string[];
@@ -784,14 +816,6 @@ export interface SandboxExcludedCommandParams {
 export interface SandboxExcludedCommandResult {
   pattern: string;
   path: string;
-}
-
-export interface AllowAllParams {
-  allow_all: boolean;
-}
-
-export interface AllowAllResult {
-  allow_all: boolean;
 }
 
 export type ToolsListResult = ToolOverview[];
@@ -1167,7 +1191,7 @@ export type AgentLoadWarning = {
   message: string;
 };
 
-export type AgentPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
+export type AgentPermissionMode = "default" | "bypassPermissions" | "plan" | "auto";
 
 export type AgentSource = "built_in" | "user_settings" | "project_settings" | {
   plugin: {
@@ -1181,6 +1205,8 @@ export interface AgentSummary {
 }
 
 export type AgentWarningKind = "missing_field" | "duplicate_name";
+
+export type ApprovalReviewResolutionKind = "approved" | "escalated_to_user" | "failed" | "timed_out" | "cancelled" | "limit_exceeded";
 
 /** A typed answer to one canonical question. */
 export type AskUserAnswerValue = {
@@ -1541,6 +1567,11 @@ export type ModelOptionOverview = {
   current: boolean;
 };
 
+/** The three user-facing permission presets. These values describe a complete
+runtime policy; they are not aliases for the legacy `PermissionMode` wire
+values or for configured allow/ask/deny rules. */
+export type ModelPermissionPreset = "ask_for_approval" | "approve_for_me" | "full_access";
+
 export type ModelSelectionSource = "runtime" | "environment" | "persisted" | "provider_default";
 
 export interface OutputStyleOptionOverview {
@@ -1551,7 +1582,7 @@ export interface OutputStyleOptionOverview {
 }
 
 /** Protocol-owned permission mode used by session-scoped client controls. */
-export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "dontAsk" | "plan" | "auto";
+export type PermissionMode = "default" | "bypassPermissions" | "plan" | "auto";
 
 export interface PermissionRequest {
   request_id: string;
@@ -1905,8 +1936,6 @@ export const STABLE_METHODS = [
   "settings/set_auto_memory",
   "settings/ensure_memory_file",
   "settings/add_sandbox_excluded",
-  "settings/allow_all",
-  "settings/set_allow_all",
   "context/preview",
   "context/overview",
   "usage/overview",
@@ -1960,6 +1989,8 @@ export const EXPERIMENTAL_METHODS = [
   "session/acp_close",
   "session/control_state",
   "session/set_permission_mode",
+  "session/permission_presets",
+  "session/set_permission_preset",
   "session/set_model",
   "session/set_effort",
   "session/goal/get",

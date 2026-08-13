@@ -365,6 +365,25 @@ mod tests {
     }
 
     #[test]
+    fn set_permission_mode_request_maps_legacy_modes() {
+        for (request_id, mode, expected) in [
+            ("legacy-accept", "acceptEdits", PermissionMode::Default),
+            ("legacy-dont", "dontAsk", PermissionMode::BypassPermissions),
+        ] {
+            let frame = parse_control_line(&format!(
+                r#"{{"type":"control_request","request_id":"{request_id}","request":{{"subtype":"set_permission_mode","mode":"{mode}"}}}}"#,
+            ));
+            assert_eq!(
+                frame,
+                ControlFrame::SetPermissionMode {
+                    request_id: request_id.to_string(),
+                    mode: expected,
+                }
+            );
+        }
+    }
+
+    #[test]
     fn set_permission_mode_with_bad_mode_is_a_parse_error_with_request_id() {
         let frame = parse_control_line(
             r#"{"type":"control_request","request_id":"r3","request":{"subtype":"set_permission_mode","mode":"nonsense"}}"#,

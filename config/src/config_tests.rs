@@ -54,6 +54,7 @@ fn test_config(default_provider: ProviderId, settings: ClaudeSettings) -> AppCon
         env_overrides,
         append_system_prompt: None,
         permission_mode: None,
+        explicit_permission_overrides: Default::default(),
         trusted_project: true,
     }
 }
@@ -170,13 +171,29 @@ fn max_budget_strict_unknown_pricing_precedence() {
 }
 
 #[test]
-fn permission_mode_parses_camel_and_kebab() {
+fn permission_mode_parses_current_values_and_legacy_aliases() {
     assert_eq!(
         PermissionMode::parse("bypassPermissions"),
         Some(PermissionMode::BypassPermissions)
     );
     assert_eq!(
         PermissionMode::parse("bypass-permissions"),
+        Some(PermissionMode::BypassPermissions)
+    );
+    assert_eq!(
+        PermissionMode::parse("acceptEdits"),
+        Some(PermissionMode::Default)
+    );
+    assert_eq!(
+        PermissionMode::parse("accept-edits"),
+        Some(PermissionMode::Default)
+    );
+    assert_eq!(
+        PermissionMode::parse("dontAsk"),
+        Some(PermissionMode::BypassPermissions)
+    );
+    assert_eq!(
+        PermissionMode::parse("dont-ask"),
         Some(PermissionMode::BypassPermissions)
     );
     assert_eq!(PermissionMode::parse("unknown"), None);

@@ -7,8 +7,8 @@ use orbcode_protocol::{
 
 use crate::{
     ClientPreferences, ContextWindowOptions, EffectiveModelSelection, EffectivePermissionRules,
-    MaxOutputTokenOptions, PermissionContext, PermissionMode, StatusAuthOverview, StatuslineConfig,
-    TokenWarningOptions,
+    MaxOutputTokenOptions, ModelPermissionPreset, PermissionContext, PermissionMode,
+    PermissionPresetOption, StatusAuthOverview, StatuslineConfig, TokenWarningOptions,
 };
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -60,12 +60,23 @@ pub struct AcpDeleteSessionParams {
 pub struct SessionControlState {
     pub session_id: String,
     pub permission_mode: PermissionMode,
+    pub active_permission_preset: Option<ModelPermissionPreset>,
+    pub permission_presets: Vec<PermissionPresetOption>,
     pub model_selection: EffectiveModelSelection,
     pub model_options: Vec<SessionModelOption>,
     #[schemars(with = "Option<String>")]
     pub effort_level: Option<EffortLevel>,
     #[schemars(with = "Vec<String>")]
     pub effort_options: Vec<EffortLevel>,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct PermissionPresetsResult {
+    pub session_id: String,
+    pub active_preset: Option<ModelPermissionPreset>,
+    pub options: Vec<PermissionPresetOption>,
 }
 
 #[derive(
@@ -119,7 +130,6 @@ pub struct McpResourceSlashSuggestion {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PermissionOverview {
     pub permissions: PermissionContext,
-    pub allow_all: bool,
     #[serde(default)]
     pub effective_rules: EffectivePermissionRules,
     // Compatibility fields retained for protocol 1.0 clients. New consumers
@@ -224,6 +234,7 @@ pub struct ContextOverview {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StatusOverview {
     pub session_id: String,
+    pub active_permission_preset: Option<ModelPermissionPreset>,
     pub cwd: PathBuf,
     pub home_dir: PathBuf,
     pub model_display_name: String,

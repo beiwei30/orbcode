@@ -131,7 +131,8 @@ fn control_response<'a>(records: &'a [Value], request_id: &str) -> Option<&'a Va
     })
 }
 
-const BASH_PROMPT: &str = "#tool:bash {\"command\":\"echo hi\"}";
+const BASH_PROMPT: &str =
+    "#tool:bash {\"command\":\"echo hi\",\"sandbox_permissions\":\"require_escalated\"}";
 
 #[test]
 fn incremental_user_prompt_runs_a_turn_and_exits_0() {
@@ -156,8 +157,8 @@ fn incremental_user_prompt_runs_a_turn_and_exits_0() {
 
 #[test]
 fn tool_without_grant_is_denied_and_exits_4() {
-    // Baseline for the set_permission_mode test below: in the default mode a bash
-    // call is held while stdin is open, then denied on EOF -> PermissionDenied.
+    // Baseline for the set_permission_mode test below: in the default mode a
+    // sandbox escalation is held while stdin is open, then denied on EOF.
     let harness = Harness::new();
     let stdin = format!("{}\n", user_frame(BASH_PROMPT));
     let (code, stdout, stderr) = harness.run_eof(&stdin);

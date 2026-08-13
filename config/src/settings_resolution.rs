@@ -13,22 +13,19 @@ use crate::policy::{SettingsLayers, SettingsSource};
 pub(crate) fn permission_mode_default_allow_tools(mode: Option<PermissionMode>) -> Option<bool> {
     match mode? {
         PermissionMode::Default => None,
-        PermissionMode::AcceptEdits
-        | PermissionMode::BypassPermissions
-        | PermissionMode::DontAsk
-        | PermissionMode::Auto => Some(true),
-        PermissionMode::Plan => Some(false),
+        PermissionMode::BypassPermissions => Some(true),
+        // Auto approval is only safe when the session-scoped reviewer is
+        // present. Lower-level loops without that reviewer fail closed.
+        PermissionMode::Plan | PermissionMode::Auto => Some(false),
     }
 }
 
 /// Map permission mode to the default `allow_network` override it implies.
 pub(crate) fn permission_mode_default_allow_network(mode: Option<PermissionMode>) -> Option<bool> {
     match mode? {
-        PermissionMode::BypassPermissions | PermissionMode::DontAsk => Some(true),
-        PermissionMode::Default
-        | PermissionMode::AcceptEdits
-        | PermissionMode::Plan
-        | PermissionMode::Auto => None,
+        PermissionMode::BypassPermissions => Some(true),
+        PermissionMode::Auto => Some(false),
+        PermissionMode::Default | PermissionMode::Plan => None,
     }
 }
 
@@ -352,8 +349,8 @@ mod tests {
             None
         );
         assert_eq!(
-            permission_mode_default_allow_tools(Some(PermissionMode::AcceptEdits)),
-            Some(true)
+            permission_mode_default_allow_tools(Some(PermissionMode::Auto)),
+            Some(false)
         );
     }
 

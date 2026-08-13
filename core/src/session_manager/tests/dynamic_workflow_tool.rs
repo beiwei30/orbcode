@@ -12,6 +12,72 @@ use tokio::sync::mpsc;
 use super::support::*;
 use super::*;
 
+async fn use_full_access_for_workflow(manager: &SessionManager, session_id: &str) {
+    manager
+        .set_session_permission_preset(session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set Full Access for workflow behavior test");
+}
+
+#[tokio::test]
+async fn workflow_tool_requires_approval_before_creating_durable_work() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allow_tools: Some(true),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let session_id = session.session_id.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let runner = manager.clone();
+    let runner_session_id = session_id.clone();
+    let handle = tokio::spawn(async move {
+        runner
+            .execute_tool_use(
+                &runner_session_id,
+                "workflow-needs-approval",
+                "Workflow",
+                &json!({
+                    "name": "dynamic:approval-boundary",
+                    "spec": {
+                        "schema_version": 1,
+                        "steps": [{ "log": { "message": "must not start" } }]
+                    }
+                })
+                .to_string(),
+                &tx,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+    });
+
+    let mut saw_permission_request = false;
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::PermissionRequested { request } = event {
+            saw_permission_request = true;
+            assert!(
+                !manager.config.home_dir.join("workflow-runs").exists(),
+                "Workflow must not create durable state before approval"
+            );
+            assert!(
+                manager
+                    .respond_to_permission_request(&request.request_id, PermissionDecision::Deny)
+                    .await
+            );
+        }
+    }
+
+    assert!(saw_permission_request);
+    assert_eq!(
+        handle
+            .await
+            .expect("join workflow permission task")
+            .expect("execute Workflow tool"),
+        ToolUseOutcome::Denied
+    );
+    assert!(!manager.config.home_dir.join("workflow-runs").exists());
+}
+
 #[tokio::test]
 async fn workflow_tool_dispatch_starts_dynamic_workflow() {
     let manager = test_manager_with_overrides(AppConfigOverrides {
@@ -22,6 +88,7 @@ async fn workflow_tool_dispatch_starts_dynamic_workflow() {
     .await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     let outcome = manager
@@ -143,6 +210,7 @@ async fn workflow_tool_tolerates_misplaced_subagent_type_on_agent_step() {
     .await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     manager
@@ -216,6 +284,7 @@ async fn workflow_agent_step_persists_child_transcript() {
     .await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     manager
@@ -384,6 +453,7 @@ async fn workflow_agent_failure_keeps_persisted_child_prompt_transcript() {
     );
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     manager
@@ -494,6 +564,7 @@ async fn provider_workflow_tool_use_starts_generated_multi_step_spec() {
     .await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     manager
         .append_message(
             &session_id,
@@ -630,6 +701,7 @@ async fn provider_malformed_workflow_input_returns_repairable_diagnostic() {
     .await;
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    use_full_access_for_workflow(&manager, &session_id).await;
     manager
         .append_message(
             &session_id,
