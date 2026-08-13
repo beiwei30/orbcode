@@ -12,7 +12,8 @@ name: ci
 #
 # What it deliberately does NOT cover, because a dedicated workflow owns it:
 #   - the #[ignore]d PTY e2e tests            -> pty-e2e.yml (needs a quiet runner)
-#   - cross-platform build + packaging smoke  -> release.yml (Linux/macOS/Windows)
+#   - fast cross-platform binary smoke         -> pr-build.yml (Linux/macOS/Windows)
+#   - distribution build + packaging smoke    -> release.yml (tags/manual/scheduled)
 # Consequently this job is Linux-only. The other two are where a platform-specific
 # break is meant to surface.
 

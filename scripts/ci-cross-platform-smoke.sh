@@ -2,7 +2,7 @@
 #
 # CI cross-platform smoke tests.
 #
-# Runs sandbox host validation through a prebuilt orbcode binary, so release CI
+# Runs sandbox host validation through a prebuilt orbcode binary, so CI
 # does not compile a second Rust test harness. Each platform unlocks a different
 # subset:
 #
@@ -13,7 +13,6 @@
 #
 # Usage:
 #   scripts/ci-cross-platform-smoke.sh --binary target/debug/orbcode
-#   scripts/ci-cross-platform-smoke.sh --release --target <triple>
 #
 set -euo pipefail
 
@@ -21,55 +20,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-profile="debug"
-target=""
-binary_override=""
+binary=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --release)
-            profile="release"
-            shift
-            ;;
-        --target)
-            if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "ERROR: --target requires a target triple" >&2
-                exit 2
-            fi
-            target="$2"
-            shift 2
-            ;;
         --binary)
             if [[ $# -lt 2 || -z "$2" ]]; then
                 echo "ERROR: --binary requires a path" >&2
                 exit 2
             fi
-            binary_override="$2"
+            binary="$2"
             shift 2
             ;;
         *)
-            echo "Usage: scripts/ci-cross-platform-smoke.sh [--release] [--target <triple>] [--binary <path>]" >&2
+            echo "Usage: scripts/ci-cross-platform-smoke.sh --binary <path>" >&2
             exit 1
             ;;
     esac
 done
 
-bin_suffix=""
-case "$(uname -s 2>/dev/null || echo unknown)" in
-    MINGW*|MSYS*|CYGWIN*) bin_suffix=".exe" ;;
-esac
-if [[ -n "${target}" && "${target}" == *windows* ]]; then
-    bin_suffix=".exe"
+if [[ -z "${binary}" ]]; then
+    echo "ERROR: --binary is required" >&2
+    exit 2
 fi
-if [[ -n "${binary_override}" ]]; then
-    if [[ "${binary_override}" = /* ]]; then
-        binary="${binary_override}"
-    else
-        binary="${REPO_ROOT}/${binary_override}"
-    fi
-elif [[ -n "${target}" ]]; then
-    binary="${REPO_ROOT}/target/${target}/${profile}/orbcode${bin_suffix}"
-else
-    binary="${REPO_ROOT}/target/${profile}/orbcode${bin_suffix}"
+if [[ "${binary}" != /* ]]; then
+    binary="${REPO_ROOT}/${binary}"
 fi
 if [[ ! -x "${binary}" ]]; then
     echo "ERROR: executable orbcode binary not found at ${binary}" >&2

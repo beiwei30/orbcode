@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
-# Release-readiness smoke pipeline for the orbcode binary.
+# Profile-independent release-surface smoke pipeline for a prebuilt binary.
 #
 # Validates that build metadata (git SHA, target, profile, build timestamp,
 # providers) is embedded into the packaged binary and that --version, -V,
 # and `doctor` all agree. It also exercises the packaged-binary behavior covered
 # by cli/tests/build_smoke.rs without compiling a separate Rust test harness.
-# Run locally and from CI before publishing a binary.
+# The same assertions run for PR, debug, and formal release binaries.
 #
 # Usage:
-#   scripts/smoke-release.sh             # debug build + smoke tests (fast)
-#   scripts/smoke-release.sh --release   # release build + smoke tests
-#   scripts/smoke-release.sh --release --package
-#                                        # also build + verify the packaged
-#                                        # release archive for the host target
-#   scripts/smoke-release.sh --release --no-build --target <triple>
-#                                        # validate a prebuilt target binary
+#   scripts/smoke-release.sh --binary target/debug/orbcode
+#   scripts/smoke-release.sh --binary target/<triple>/<profile>/orbcode \
+#       --expected-target <triple>
 #
 # Exit codes: 0 = all checks pass; non-zero = first failing check.
 
@@ -23,35 +19,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-profile="debug"
-cargo_profile_args=()
-target_dir_segment="debug"
-do_package=0
-do_build=1
-target=""
-binary_override=""
+binary=""
+expected_target=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --release)
-            profile="release"
-            cargo_profile_args=(--release)
-            target_dir_segment="release"
-            shift
-            ;;
-        --package)
-            do_package=1
-            shift
-            ;;
-        --no-build)
-            do_build=0
-            shift
-            ;;
-        --target)
+        --expected-target)
             if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "ERROR: --target requires a target triple" >&2
+                echo "ERROR: --expected-target requires a target triple" >&2
                 exit 2
             fi
-            target="$2"
+            expected_target="$2"
             shift 2
             ;;
         --binary)
@@ -59,8 +36,7 @@ while [[ $# -gt 0 ]]; do
                 echo "ERROR: --binary requires a path" >&2
                 exit 2
             fi
-            binary_override="$2"
-            do_build=0
+            binary="$2"
             shift 2
             ;;
         *)
@@ -70,45 +46,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "==> smoke-release.sh (profile=${profile})"
-echo "    repo: ${repo_root}"
-
-target_args=()
-if [[ -n "${target}" ]]; then
-    target_args=(--target "${target}")
+if [[ -z "${binary}" ]]; then
+    echo "ERROR: --binary is required" >&2
+    exit 2
 fi
-
-if [[ "${do_build}" -eq 1 ]]; then
-    echo "==> cargo build -p orbcode ${cargo_profile_args[*]-} ${target_args[*]-}"
-    cargo build -p orbcode \
-        ${cargo_profile_args[@]+"${cargo_profile_args[@]}"} \
-        ${target_args[@]+"${target_args[@]}"}
-else
-    echo "==> reusing prebuilt orbcode binary"
-fi
-
-bin_suffix=""
-case "$(uname -s 2>/dev/null || echo unknown)" in
-    MINGW*|MSYS*|CYGWIN*) bin_suffix=".exe" ;;
-esac
-if [[ -n "${target}" && "${target}" == *windows* ]]; then
-    bin_suffix=".exe"
-fi
-if [[ -n "${binary_override}" ]]; then
-    if [[ "${binary_override}" = /* ]]; then
-        binary="${binary_override}"
-    else
-        binary="${repo_root}/${binary_override}"
-    fi
-elif [[ -n "${target}" ]]; then
-    binary="${repo_root}/target/${target}/${target_dir_segment}/orbcode${bin_suffix}"
-else
-    binary="${repo_root}/target/${target_dir_segment}/orbcode${bin_suffix}"
+if [[ "${binary}" != /* ]]; then
+    binary="${repo_root}/${binary}"
 fi
 if [[ ! -x "${binary}" ]]; then
     echo "ERROR: executable orbcode binary not found at ${binary}" >&2
     exit 1
 fi
+echo "==> smoke-release.sh"
+echo "    repo: ${repo_root}"
 echo "    binary: ${binary}"
 
 echo "==> --version (long form) parses"
@@ -139,10 +89,16 @@ for provider in anthropic openai gemini grok; do
     require_substring "${version_long}" "${provider}" "--version providers"
 done
 
-# Profile baked into the binary should match what we just built.
-require_substring "${version_long}" "profile:   ${profile}" "--version profile"
-if [[ -n "${target}" ]]; then
-    require_substring "${version_long}" "target:    ${target}" "--version target"
+# The expected target is optional for local use. Profile is deliberately not an
+# input: every profile runs the same assertions, and doctor is cross-checked
+# against whichever build metadata the supplied binary embeds.
+if [[ -n "${expected_target}" ]]; then
+    require_substring "${version_long}" "target:    ${expected_target}" "--version target"
+fi
+profile_from_version="$(sed -nE 's/^profile:[[:space:]]+([^[:space:]]+).*$/\1/p' <<<"${version_long}")"
+if [[ -z "${profile_from_version}" ]]; then
+    echo "ERROR: could not parse profile from --version" >&2
+    exit 1
 fi
 
 echo "==> -V (short form) parses"
@@ -186,7 +142,7 @@ if [[ -z "${build_info_row}" ]]; then
     exit 1
 fi
 echo "${build_info_row}"
-for field in "version=" "sha=" "target=" "profile=${profile}" "built=" "providers="; do
+for field in "version=" "sha=" "target=" "profile=${profile_from_version}" "built=" "providers="; do
     require_substring "${build_info_row}" "${field}" "doctor build_info"
 done
 
@@ -401,42 +357,5 @@ for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines()
 PY
 echo "    project slug=${project_slug}; transcript JSONL valid"
 
-if [[ "${do_package}" -eq 1 ]]; then
-    echo "==> packaging release artifact for host target"
-    pkg_out="${scratch}/dist"
-    package_target_args=()
-    if [[ -n "${target}" ]]; then
-        package_target_args=(--target "${target}")
-    fi
-    "${repo_root}/scripts/package-release.sh" \
-        --no-build \
-        "${package_target_args[@]}" \
-        --out-dir "${pkg_out}"
-    # package-release.sh emits shell assignments for the stable artifact name.
-    # shellcheck disable=SC1090
-    eval "$(
-        "${repo_root}/scripts/package-release.sh" \
-            --print-name \
-            "${package_target_args[@]}"
-    )"
-    # Assigned by the evaluated --print-name output above.
-    # shellcheck disable=SC2154
-    archive_path="${pkg_out}/${archive_file}"
-    if [[ ! -f "${archive_path}" ]]; then
-        echo "ERROR: expected archive missing: ${archive_path}" >&2
-        exit 1
-    fi
-    echo "==> verifying sha256 checksum of packaged archive"
-    if command -v sha256sum >/dev/null 2>&1; then
-        ( cd "${pkg_out}" && sha256sum -c "${archive_file}.sha256" )
-    elif command -v shasum >/dev/null 2>&1; then
-        ( cd "${pkg_out}" && shasum -a 256 -c "${archive_file}.sha256" )
-    else
-        echo "ERROR: no sha256 tool to verify checksum" >&2
-        exit 1
-    fi
-    echo "    archive: ${archive_path}"
-fi
-
 echo
-echo "OK: build metadata embedded; packaged binary smoke pipeline green."
+echo "OK: build metadata embedded; binary smoke pipeline green."
