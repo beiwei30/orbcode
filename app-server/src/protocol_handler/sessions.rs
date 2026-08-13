@@ -5,6 +5,7 @@ use orbcode_app_server_protocol::{
     SessionGoalNotStartedReason, SessionGoalSetParams, SessionGoalSetResult, SessionIdParams,
     SessionListResult, SessionRecordMessageParams, SessionRenameParams, SessionRewindParams,
     SetSessionEffortParams, SetSessionModelParams, SetSessionPermissionModeParams,
+    SetSessionPermissionPresetParams,
 };
 use orbcode_core::{
     GoalContinuationOutcome, GoalNotStartedReason, GoalSetRequest, GoalUpdateAuthority,
@@ -222,6 +223,17 @@ impl AppServer {
         }
     }
 
+    pub(super) fn handle_session_permission_presets(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: SessionIdParams = try_parse!(params);
+        match self.permission_presets(&p.session_id) {
+            Ok(result) => success(result),
+            Err(error) => core_error(error),
+        }
+    }
+
     pub(super) async fn handle_session_set_permission_mode(
         &self,
         params: Option<Value>,
@@ -233,6 +245,20 @@ impl AppServer {
         {
             Ok(state) => success(state),
             Err(e) => core_error(e),
+        }
+    }
+
+    pub(super) async fn handle_session_set_permission_preset(
+        &self,
+        params: Option<Value>,
+    ) -> ResponseResult {
+        let p: SetSessionPermissionPresetParams = try_parse!(params);
+        match self
+            .set_session_permission_preset(&p.session_id, p.preset)
+            .await
+        {
+            Ok(state) => success(state),
+            Err(error) => core_error(error),
         }
     }
 

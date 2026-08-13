@@ -91,8 +91,8 @@ Use a clean disposable home and record the Zed, orbcode, and OS versions.
 
 ### Modes and configuration
 
-- Verify the mode selector offers only Default, Accept edits, Plan, and Don't
-  ask. It must not offer bypass-permissions or auto.
+- Verify the mode selector offers only Default and Plan. It must not offer
+  bypass-permissions or auto.
 - Select Plan and request a file or command mutation. The model must not receive
   mutation/network tools for that turn.
 - Change Model and Thought level while idle and confirm the selection remains

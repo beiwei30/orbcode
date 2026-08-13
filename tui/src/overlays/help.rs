@@ -185,6 +185,10 @@ pub(crate) fn help_overlay_lines(width: usize) -> Vec<StyledLine> {
             ("ctrl+enter", "insert newline"),
             ("tab", "complete slash command or insert spaces"),
             (
+                "shift+tab",
+                "cycle Ask, Approve, Full Access, and Plan modes",
+            ),
+            (
                 "↑/↓",
                 "browse slash commands, move input, or navigate history",
             ),

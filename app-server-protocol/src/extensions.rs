@@ -78,12 +78,8 @@ impl AgentSource {
 #[serde(rename_all = "camelCase")]
 pub enum AgentPermissionMode {
     Default,
-    #[serde(alias = "accept-edits")]
-    AcceptEdits,
     #[serde(alias = "bypass-permissions")]
     BypassPermissions,
-    #[serde(alias = "dont-ask")]
-    DontAsk,
     Plan,
     Auto,
 }

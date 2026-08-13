@@ -577,7 +577,11 @@ mod tests {
             .expect("read settings");
         assert!(settings.contains(r#""model": "sonnet""#), "{settings}");
 
-        let overview = app.status_overview("session").await.expect("status");
+        let session = app.bootstrap(None).await.expect("bootstrap").session;
+        let overview = app
+            .status_overview(&session.session_id)
+            .await
+            .expect("status");
         assert_eq!(overview.model_display_name, "glm-4.7");
         assert_eq!(overview.model_name, "glm-4.7");
         // The explicit top-level environment model remains effective after the
@@ -726,23 +730,24 @@ mod tests {
         )
         .await
         .expect("app server");
+        let session = app.bootstrap(None).await.expect("bootstrap").session;
 
         assert_eq!(app.effort_level(), None);
         assert_eq!(
-            app.set_effort_override("session", Some(EffortLevel::High))
+            app.set_effort_override(&session.session_id, Some(EffortLevel::High))
                 .await
                 .expect("set effort"),
             Some(EffortLevel::High)
         );
         assert_eq!(
-            app.status_overview("session")
+            app.status_overview(&session.session_id)
                 .await
                 .expect("status")
                 .effort_level,
             Some(EffortLevel::High)
         );
         assert_eq!(
-            app.set_effort_override("session", None)
+            app.set_effort_override(&session.session_id, None)
                 .await
                 .expect("clear effort"),
             None

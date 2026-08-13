@@ -4,7 +4,6 @@ use std::hash::{Hash, Hasher};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::prelude::Rect;
 
-use crate::commands::permissions::permission_scope_label;
 use crate::history_cell::viewport::TranscriptViewportState;
 use crate::overlays::{BackgroundJobsView, DiffOverlayMode, OverlayState};
 use crate::render::layout::{rect_contains, rect_contains_row};
@@ -44,36 +43,13 @@ impl TuiState {
             }
             Some(OverlayState::PermissionPicker(picker)) => {
                 11_u8.hash(&mut hasher);
-                picker.tab.hash(&mut hasher);
-                picker.focus.hash(&mut hasher);
                 picker.selected.hash(&mut hasher);
-                picker.search_active.hash(&mut hasher);
-                picker.search_query.hash(&mut hasher);
-                if let Some(draft) = &picker.adding {
-                    1_u8.hash(&mut hasher);
-                    permission_scope_label(draft.scope).hash(&mut hasher);
-                    draft.kind.as_str().hash(&mut hasher);
-                    draft.rule.hash(&mut hasher);
-                } else {
-                    0_u8.hash(&mut hasher);
-                }
-                if let Some(destination) = &picker.add_destination {
-                    1_u8.hash(&mut hasher);
-                    destination.selected.hash(&mut hasher);
-                    destination.draft.rule.hash(&mut hasher);
-                    destination.draft.kind.as_str().hash(&mut hasher);
-                    permission_scope_label(destination.draft.scope).hash(&mut hasher);
-                } else {
-                    0_u8.hash(&mut hasher);
-                }
-                if let Some(details) = &picker.rule_details {
-                    1_u8.hash(&mut hasher);
-                    details.selected.hash(&mut hasher);
-                    details.rule.rule.hash(&mut hasher);
-                    details.rule.kind.as_str().hash(&mut hasher);
-                    details.rule.source.hash(&mut hasher);
-                } else {
-                    0_u8.hash(&mut hasher);
+                picker.confirming_full_access.hash(&mut hasher);
+                picker.options.len().hash(&mut hasher);
+                for option in &picker.options {
+                    option.label.hash(&mut hasher);
+                    option.current.hash(&mut hasher);
+                    option.disabled_reason.hash(&mut hasher);
                 }
             }
             Some(OverlayState::PermissionRequest(permission)) => {

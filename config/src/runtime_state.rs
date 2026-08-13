@@ -317,6 +317,7 @@ mod tests {
             env_overrides: std::collections::HashMap::new(),
             append_system_prompt: None,
             permission_mode: None,
+            explicit_permission_overrides: Default::default(),
             trusted_project: true,
         }
     }

@@ -3,7 +3,6 @@ use crossterm::event::KeyEvent;
 use orbcode_app_server_client::{AppClient, PermissionDecision};
 
 use crate::clipboard::copy_text_to_clipboard;
-use crate::commands::permissions::PermissionRuleAction;
 use crate::commands::utils::short_session_id;
 use crate::external_editor::{ExternalEditorRequest, ExternalEditorTarget, open_path_in_system};
 use crate::state::TuiState;
@@ -250,37 +249,12 @@ impl TuiState {
                         PermissionPickerKeyAction::Status(status) => {
                             self.set_status_line(status);
                         }
-                        PermissionPickerKeyAction::Close { status } => {
+                        PermissionPickerKeyAction::Close => {
                             self.overlay = None;
-                            self.set_status_line(status);
+                            self.set_status_line("Closed permission preset selector.");
                         }
-                        PermissionPickerKeyAction::AddRule {
-                            command,
-                            scope,
-                            kind,
-                            rule,
-                        } => {
-                            action = OverlayAction::PermissionRuleUpdate {
-                                command,
-                                action: PermissionRuleAction::Add,
-                                scope,
-                                kind,
-                                rule,
-                            };
-                        }
-                        PermissionPickerKeyAction::RemoveRule {
-                            command,
-                            scope,
-                            kind,
-                            rule,
-                        } => {
-                            action = OverlayAction::PermissionRuleUpdate {
-                                command,
-                                action: PermissionRuleAction::Remove,
-                                scope,
-                                kind,
-                                rule,
-                            };
+                        PermissionPickerKeyAction::SetPreset { command, preset } => {
+                            action = OverlayAction::SetPermissionPreset { command, preset };
                         }
                     }
                 }
@@ -460,6 +434,7 @@ impl TuiState {
             } => {
                 let bootstrap = app_server.bootstrap(Some(&session_id)).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 let status = format!("Session {} resumed.", short_session_id(&self.session_id));
                 self.push_local_slash_command_output(command, status.clone(), None);
                 self.set_status_line(status);
@@ -489,6 +464,7 @@ impl TuiState {
                 let preserved_suggestions = self.mcp_slash_suggestions.clone();
                 let bootstrap = app_server.rewind_session(&session_id, keep).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 self.mcp_slash_suggestions = preserved_suggestions;
                 self.input = restore_prompt;
                 self.input_cursor = self.input.len();
@@ -504,6 +480,7 @@ impl TuiState {
                 let fork = app_server.fork_session(&session_id, None, None).await?;
                 let bootstrap = app_server.bootstrap(Some(&fork.session_id)).await?;
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 let status = format!(
                     "Forked into session {}.",
                     short_session_id(&self.session_id)
@@ -581,14 +558,8 @@ impl TuiState {
                 }
                 Ok(true)
             }
-            OverlayAction::PermissionRuleUpdate {
-                command,
-                action,
-                scope,
-                kind,
-                rule,
-            } => {
-                self.apply_permission_rule_update(app_server, command, action, scope, kind, rule)
+            OverlayAction::SetPermissionPreset { command, preset } => {
+                self.finish_permission_preset_selection(app_server, command, preset)
                     .await?;
                 Ok(true)
             }
@@ -612,23 +583,10 @@ impl TuiState {
                 request_id,
                 decision,
             } => {
-                let denied_request = if matches!(decision, PermissionDecision::Deny) {
-                    match &self.overlay {
-                        Some(OverlayState::PermissionRequest(permission)) => {
-                            Some(permission.request.clone())
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
                 if app_server
                     .respond_to_pending_permission_request(&request_id, decision.clone())
                     .await
                 {
-                    if let Some(request) = denied_request {
-                        self.record_recent_denied_permission(request);
-                    }
                     if let PermissionDecision::ApproveAlways(ref rule) = decision {
                         self.set_status_line(format!("Remembered `{rule}` for this session."));
                     } else if let PermissionDecision::ApproveAlwaysMany(ref rules) = decision {

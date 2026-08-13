@@ -3,26 +3,25 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use orbcode_app_server_client::{
-    AppClient, AskUserResponseOutcome, MemoryFileOverview, MemoryOverview, PermissionDecision,
-    PermissionOverview, PermissionRuleKind as PermissionRuleSettingKind, SandboxLocalSettings,
+    AppClient, AskUserResponseOutcome, MemoryFileOverview, MemoryOverview, ModelPermissionPreset,
+    PermissionDecision, PermissionPresetOption, PermissionPresetsResult, SandboxLocalSettings,
     SandboxSettingsUpdate, ThemeSetting, WorkspaceDiff,
 };
-use orbcode_config::{ModelOption, OutputStyleOption, normalize_permission_rule_for_edit};
+use orbcode_config::{ModelOption, OutputStyleOption};
 use orbcode_protocol::{EffortLevel, PermissionRequest, SessionSummary};
 use ratatui::{
     prelude::*,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::commands::permissions::{PermissionRuleAction, PermissionRuleScope};
 use crate::commands::utils::short_session_id;
 use crate::editor_mode::{EditorMode, editor_mode_value};
 use crate::history_cell::viewport::TranscriptViewportState;
 use crate::line_cache::LinesCache;
 use crate::pickers::SelectedIndex;
 use crate::render::text_utils::{
-    StyledLine, collapse_inline_whitespace, display_width, display_width_str, pad_or_truncate,
-    truncate_chars, truncate_display_width,
+    StyledLine, collapse_inline_whitespace, display_width_str, pad_or_truncate, truncate_chars,
+    truncate_display_width,
 };
 use crate::slash_commands::{
     SlashCommandSource, fuzzy_match_score, slash_command_view_start, slash_commands,
@@ -145,12 +144,9 @@ pub(crate) enum OverlayAction {
         command: String,
         path: PathBuf,
     },
-    PermissionRuleUpdate {
+    SetPermissionPreset {
         command: String,
-        action: PermissionRuleAction,
-        scope: PermissionRuleScope,
-        kind: PermissionRuleSettingKind,
-        rule: String,
+        preset: ModelPermissionPreset,
     },
     Permission {
         request_id: String,

@@ -79,6 +79,8 @@ pub struct TranscriptRecord {
     pub provider: TranscriptJsonField,
     #[serde(rename = "billingBasis", default)]
     pub billing_basis: Option<String>,
+    #[serde(rename = "isSynthetic", default)]
+    pub is_synthetic: bool,
     #[serde(default)]
     pub message: Option<RecordMessage>,
 

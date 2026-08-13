@@ -1,7 +1,10 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use orbcode_config::{AppConfigOverrides, PermissionMode};
-use orbcode_protocol::{EffortLevel, MessageRole, TranscriptMessage, TurnContext};
+use orbcode_protocol::{
+    ApprovalPolicy, ApprovalReviewer, EffortLevel, MessageRole, ModelPermissionPreset, SandboxMode,
+    TranscriptMessage, TurnContext,
+};
 use uuid::Uuid;
 
 use super::support::*;
@@ -139,37 +142,154 @@ async fn active_turn_rejects_session_control_changes_without_mutation() {
 }
 
 #[tokio::test]
-async fn explicit_session_mode_overrides_global_allow_all() {
+async fn permission_preset_is_isolated_between_sessions() {
     let manager = test_manager_with_overrides(AppConfigOverrides {
         provider_allow_network: Some(false),
         ..AppConfigOverrides::default()
     })
     .await;
-    let (session, _) = manager.start_or_resume(None).await.expect("session");
-
-    manager.set_allow_all(true);
-    let global_permissions = manager.permission_context_for_session(&session.session_id);
-    assert!(
-        global_permissions.allow_tools,
-        "an untouched session must honor the global SDK permission control"
-    );
-    assert!(
-        global_permissions.provider_allow_network,
-        "global allow-all must enable provider network access"
-    );
+    let (full_session, _) = manager.start_or_resume(None).await.expect("full session");
+    let (ask_session, _) = manager.start_or_resume(None).await.expect("ask session");
 
     manager
-        .set_session_permission_mode(&session.session_id, PermissionMode::Plan)
+        .set_session_permission_preset(&full_session.session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set Full Access");
+    let preset_permissions = manager.permission_context_for_session(&full_session.session_id);
+    assert!(
+        preset_permissions.allow_tools,
+        "Ask for approval permits workspace-scoped tools"
+    );
+    assert!(
+        !preset_permissions.provider_allow_network,
+        "a session preset must not change provider transport permissions"
+    );
+    let ask_permissions = manager.permission_context_for_session(&ask_session.session_id);
+    assert!(!ask_permissions.allow_network);
+
+    manager
+        .set_session_permission_mode(&ask_session.session_id, PermissionMode::Plan)
         .await
         .expect("set explicit session mode");
-    let session_permissions = manager.permission_context_for_session(&session.session_id);
+    let session_permissions = manager.permission_context_for_session(&ask_session.session_id);
     assert!(
         !session_permissions.allow_tools,
-        "an explicit session mode must remain isolated from global allow-all"
+        "an explicit session mode must remain isolated from another session's Full Access"
     );
     assert!(
         !session_permissions.provider_allow_network,
         "an explicit session mode must retain its configured provider network permission"
+    );
+}
+
+#[tokio::test]
+async fn permission_presets_atomically_update_session_runtime_controls() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        provider_allow_network: Some(false),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (first, _) = manager.start_or_resume(None).await.expect("first session");
+    let (second, _) = manager.start_or_resume(None).await.expect("second session");
+
+    manager
+        .set_session_permission_preset(&first.session_id, ModelPermissionPreset::ApproveForMe)
+        .await
+        .expect("set approve preset");
+    let approve_config = manager.effective_config_for_session(&first.session_id);
+    let approve_policy = manager
+        .session_permission_policy(&first.session_id)
+        .expect("approve policy");
+    assert_eq!(approve_config.sandbox_mode, SandboxMode::WorkspaceWrite);
+    assert!(!approve_config.sandbox_allow_network);
+    assert!(approve_config.allow_tools);
+    assert!(!approve_config.allow_network);
+    assert!(!approve_config.provider_allow_network);
+    assert_eq!(
+        approve_policy.approval_policy,
+        ApprovalPolicy::OnBoundaryRequest
+    );
+    assert_eq!(
+        approve_policy.approval_reviewer,
+        ApprovalReviewer::AutoReview
+    );
+
+    manager
+        .set_session_permission_preset(&first.session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set full access");
+    let full_config = manager.effective_config_for_session(&first.session_id);
+    assert_eq!(full_config.sandbox_mode, SandboxMode::DangerFullAccess);
+    assert!(full_config.sandbox_allow_network);
+    assert!(full_config.allow_network);
+    assert!(!full_config.provider_allow_network);
+
+    assert_eq!(
+        manager
+            .session_permission_preset(&second.session_id)
+            .expect("second preset"),
+        Some(ModelPermissionPreset::AskForApproval)
+    );
+    assert_eq!(
+        manager
+            .effective_config_for_session(&second.session_id)
+            .sandbox_mode,
+        SandboxMode::WorkspaceWrite
+    );
+}
+
+#[tokio::test]
+async fn implicit_ask_preserves_explicit_restrictive_permission_overrides() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        sandbox_mode: Some(SandboxMode::ReadOnly),
+        allow_tools: Some(false),
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    let config = manager.effective_config_for_session(&session.session_id);
+    assert_eq!(config.sandbox_mode, SandboxMode::ReadOnly);
+    assert!(!config.allow_tools);
+    assert!(!manager.session_exposes_tools(&session.session_id));
+
+    let next = manager
+        .clear_session(&session.session_id)
+        .await
+        .expect("clear session");
+    let cleared_config = manager.effective_config_for_session(&next.session_id);
+    assert_eq!(cleared_config.sandbox_mode, SandboxMode::ReadOnly);
+    assert!(!cleared_config.allow_tools);
+
+    manager
+        .set_session_permission_preset(&next.session_id, ModelPermissionPreset::AskForApproval)
+        .await
+        .expect("select Ask preset explicitly");
+    let selected_config = manager.effective_config_for_session(&next.session_id);
+    assert_eq!(selected_config.sandbox_mode, SandboxMode::WorkspaceWrite);
+    assert!(selected_config.allow_tools);
+}
+
+#[tokio::test]
+async fn managed_policy_disables_full_access_without_silent_downgrade() {
+    let mut manager = test_manager().await;
+    manager.config.policy.disable_bypass_permissions_mode = true;
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+
+    assert_eq!(
+        manager.permission_preset_disabled_reason(ModelPermissionPreset::FullAccess),
+        Some("Full Access is disabled by managed policy".to_string())
+    );
+    let error = manager
+        .set_session_permission_preset(&session.session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect_err("managed Full Access must be rejected");
+    assert!(matches!(error, CoreError::PermissionDenied(_)));
+    assert_eq!(
+        manager
+            .session_permission_preset(&session.session_id)
+            .expect("preset remains available"),
+        Some(ModelPermissionPreset::AskForApproval)
     );
 }
 
@@ -300,11 +420,11 @@ async fn stale_session_control_mutation_is_typed_and_side_effect_free() {
 }
 
 #[tokio::test]
-async fn clear_session_discards_previous_session_controls() {
+async fn clear_session_inherits_permission_preset_but_discards_other_controls() {
     let manager = test_manager().await;
     let (previous, _) = manager.start_or_resume(None).await.expect("session");
     manager
-        .set_session_permission_mode(&previous.session_id, PermissionMode::Plan)
+        .set_session_permission_preset(&previous.session_id, ModelPermissionPreset::ApproveForMe)
         .await
         .expect("set previous mode");
 
@@ -319,8 +439,40 @@ async fn clear_session_discards_previous_session_controls() {
     ));
     assert_eq!(
         manager
-            .session_permission_mode(&next.session_id)
+            .session_permission_preset(&next.session_id)
             .expect("new session controls"),
-        PermissionMode::Default
+        Some(ModelPermissionPreset::ApproveForMe)
+    );
+}
+
+#[tokio::test]
+async fn clear_session_removes_only_that_sessions_remembered_denials() {
+    let manager = test_manager().await;
+    let (first, _) = manager.start_or_resume(None).await.expect("first session");
+    let (second, _) = manager.start_or_resume(None).await.expect("second session");
+    let denied_input = r#"{"command":"printf denied"}"#;
+    for session in [&first, &second] {
+        manager
+            .permission_runtime
+            .remember_denied_tool_call_for_session(&session.session_id, "bash", denied_input)
+            .await;
+    }
+
+    manager
+        .clear_session(&first.session_id)
+        .await
+        .expect("clear first session");
+
+    assert!(
+        !manager
+            .permission_runtime
+            .matches_denied_tool_call_for_session(&first.session_id, "bash", denied_input)
+            .await
+    );
+    assert!(
+        manager
+            .permission_runtime
+            .matches_denied_tool_call_for_session(&second.session_id, "bash", denied_input)
+            .await
     );
 }

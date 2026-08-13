@@ -127,13 +127,13 @@ pub(crate) enum CliInputFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum CliPermissionMode {
+    #[value(aliases = ["acceptEdits", "accept-edits"])]
     Default,
-    #[value(name = "acceptEdits", alias = "accept-edits")]
-    AcceptEdits,
-    #[value(name = "bypassPermissions", alias = "bypass-permissions")]
+    #[value(
+        name = "bypassPermissions",
+        aliases = ["bypass-permissions", "dontAsk", "dont-ask"]
+    )]
     BypassPermissions,
-    #[value(name = "dontAsk", alias = "dont-ask")]
-    DontAsk,
     Plan,
     Auto,
 }
@@ -142,9 +142,7 @@ impl From<CliPermissionMode> for PermissionMode {
     fn from(value: CliPermissionMode) -> Self {
         match value {
             CliPermissionMode::Default => PermissionMode::Default,
-            CliPermissionMode::AcceptEdits => PermissionMode::AcceptEdits,
             CliPermissionMode::BypassPermissions => PermissionMode::BypassPermissions,
-            CliPermissionMode::DontAsk => PermissionMode::DontAsk,
             CliPermissionMode::Plan => PermissionMode::Plan,
             CliPermissionMode::Auto => PermissionMode::Auto,
         }
@@ -892,9 +890,7 @@ mod tests {
     fn permission_mode_conversion_round_trip() {
         for mode in [
             CliPermissionMode::Default,
-            CliPermissionMode::AcceptEdits,
             CliPermissionMode::BypassPermissions,
-            CliPermissionMode::DontAsk,
             CliPermissionMode::Plan,
             CliPermissionMode::Auto,
         ] {

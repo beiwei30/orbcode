@@ -5,7 +5,8 @@ use serde_json::Value;
 use crate::background_task_view::BackgroundTaskView;
 use crate::interaction::{AskUserQuestionSpec, AskUserResponseOutcome};
 use crate::permission::{
-    McpTrustApprovalRequest, McpTrustResolutionKind, PermissionRequest, PermissionResolutionKind,
+    ApprovalReviewResolutionKind, McpTrustApprovalRequest, McpTrustResolutionKind,
+    PermissionRequest, PermissionResolutionKind,
 };
 use crate::provider::ProviderId;
 use crate::session::{SessionId, SessionSummary, TranscriptMessage, TurnContext};
@@ -228,6 +229,19 @@ pub enum StreamEvent {
         session_id: SessionId,
         request_id: String,
         kind: PermissionResolutionKind,
+    },
+    ApprovalReviewStarted {
+        session_id: SessionId,
+        request_id: String,
+        tool_use_id: String,
+        tool_name: String,
+    },
+    ApprovalReviewCompleted {
+        session_id: SessionId,
+        request_id: String,
+        kind: ApprovalReviewResolutionKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rationale: Option<String>,
     },
     McpTrustApprovalRequested {
         request: McpTrustApprovalRequest,
@@ -454,6 +468,26 @@ impl StreamEvent {
             } => NormalizedEvent {
                 kind: "permission_resolved".to_string(),
                 content: Some(format!("{request_id}:{}", kind.as_str())),
+            },
+            Self::ApprovalReviewStarted {
+                request_id,
+                tool_name,
+                ..
+            } => NormalizedEvent {
+                kind: "approval_review_started".to_string(),
+                content: Some(format!("{tool_name}:{request_id}")),
+            },
+            Self::ApprovalReviewCompleted {
+                request_id,
+                kind,
+                rationale,
+                ..
+            } => NormalizedEvent {
+                kind: "approval_review_completed".to_string(),
+                content: Some(match rationale {
+                    Some(rationale) => format!("{request_id}:{}:{rationale}", kind.as_str()),
+                    None => format!("{request_id}:{}", kind.as_str()),
+                }),
             },
             Self::McpTrustApprovalRequested { request } => NormalizedEvent {
                 kind: "mcp_trust_approval_requested".to_string(),

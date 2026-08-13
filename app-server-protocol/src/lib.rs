@@ -36,8 +36,10 @@ pub use initialize::{
 pub use mcp::*;
 pub use notification::StreamEventNotification;
 pub use permission::{
-    EffectivePermissionRules, PermissionContext, PermissionDecision, PermissionMode,
-    PermissionRuleEffect, PermissionRuleGroup, PermissionRuleOverview, SourcedPermissionRuleGroup,
+    ApprovalPolicy, ApprovalReviewer, EffectivePermissionRules, ModelPermissionPolicy,
+    ModelPermissionPreset, PermissionContext, PermissionDecision, PermissionMode,
+    PermissionPresetOption, PermissionRuleEffect, PermissionRuleGroup, PermissionRuleOverview,
+    SourcedPermissionRuleGroup,
 };
 pub use request::{
     BootstrapParams, CancelAsyncTaskParams, SeedReadStateParams, SetThinkingBudgetParams,
@@ -47,9 +49,9 @@ pub use response::{
     AsyncCancellationResultKind, BootstrapState, CancelAsyncTaskResult, ContextOverview,
     DoctorCheck, DoctorReport, DoctorStatus, McpResourceSlashSuggestion, McpServerSlashSuggestion,
     McpServerStatusOverview, McpSlashSuggestionCatalog, McpStatusResult, McpToolSlashSuggestion,
-    MemoryFileOverview, MemoryOverview, PermissionOverview, PlanOverview, PolicyConflictOverview,
-    PolicyOverview, PolicySourceOverview, SeedReadStateResult, SessionControlState,
-    SessionModelOption, StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
+    MemoryFileOverview, MemoryOverview, PermissionOverview, PermissionPresetsResult, PlanOverview,
+    PolicyConflictOverview, PolicyOverview, PolicySourceOverview, SeedReadStateResult,
+    SessionControlState, SessionModelOption, StatusOverview, ThinkingBudgetResult, WorkspaceDiff,
 };
 pub use server_request::{
     AskUserQuestionRequest, AskUserQuestionResponse, McpTrustDecisionWire, McpTrustResponseParams,

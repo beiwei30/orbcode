@@ -128,7 +128,7 @@ const COMMON_ARGS: &[&str] = &[
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "acceptEdits",
+    "default",
     "--allowed-tools",
     "bash",
 ];

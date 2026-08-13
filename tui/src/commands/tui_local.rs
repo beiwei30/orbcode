@@ -10,7 +10,6 @@ use crate::commands::async_local::{LocalCommandEnvelope, LocalCommandEvent};
 use crate::commands::auth::{run_login_slash_command, run_logout_slash_command};
 use crate::commands::compact::compact_restored_file_detail_lines;
 use crate::commands::effort::run_effort_slash_command;
-use crate::commands::permissions::run_permissions_slash_command;
 use crate::commands::plan::run_plan_slash_command;
 use crate::commands::release_notes::run_release_notes_slash_command;
 use crate::commands::utils::{
@@ -80,60 +79,20 @@ impl TuiState {
                 }
                 let previous_session_id = self.session_id.clone();
                 let previous_usage = orbcode_protocol::get_current_usage(&self.messages);
-                let allow_all = app_server.allow_all().await.unwrap_or(false);
                 let bootstrap = app_server
-                    .bootstrap(None)
+                    .clear_session(&previous_session_id)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let _ = app_server.clear_session(&previous_session_id).await;
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 self.clear_session_info = Some(crate::state::ClearSessionInfo {
                     session_id: previous_session_id,
                     usage: previous_usage,
                 });
                 self.transcript_ui.emission.needs_scrollback_clear = true;
                 self.pending_history_flush = true;
-                let status = if allow_all {
-                    "Conversation cleared. Allow-all remains enabled."
-                } else {
-                    "Conversation cleared."
-                };
-                self.set_status_line(status);
+                self.set_status_line("Conversation cleared.");
             }
-            TuiLocalSlashCommand::AllowAll => match args {
-                "on" => {
-                    app_server
-                        .set_allow_all(true)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    self.status.allow_all = true;
-                    self.push_local_slash_command_output(
-                        line,
-                        "Allow-all mode enabled.",
-                        Some(
-                            "Tool and network permission prompts are bypassed; configured deny rules still apply."
-                                .to_string(),
-                        ),
-                    );
-                    self.set_status_line("Allow-all mode enabled.");
-                }
-                "off" => {
-                    app_server
-                        .set_allow_all(false)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    self.status.allow_all = false;
-                    self.push_local_slash_command_output(
-                        line,
-                        "Allow-all mode disabled.",
-                        Some("Future tool calls use the configured approval rules.".to_string()),
-                    );
-                    self.set_status_line("Allow-all mode disabled.");
-                }
-                _ => {
-                    return Err(anyhow::anyhow!("usage: /allow-all on|off"));
-                }
-            },
             TuiLocalSlashCommand::Compact => {
                 let force = match args {
                     "" => false,
@@ -262,6 +221,7 @@ impl TuiState {
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 let status = format!(
                     "Forked into session {}.",
                     short_session_id(&self.session_id)
@@ -321,18 +281,16 @@ impl TuiState {
                     .await?;
             }
             TuiLocalSlashCommand::Permissions => {
-                if args.is_empty() {
-                    self.start_async_local_slash_command(
-                        AsyncLocalSlashCommand::Permissions,
-                        app_server,
-                        local_command_tx,
-                    );
-                    return Ok(());
+                if !args.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "`/permissions` no longer accepts arguments. Choose a preset with `/permissions`; for advanced allow/ask/deny rules, edit the `permissions` key in the applicable settings.json."
+                    ));
                 }
-                let (summary, detail) =
-                    run_permissions_slash_command(app_server, &self.session_id, args).await?;
-                self.push_local_slash_command_output(line, summary.clone(), detail);
-                self.set_status_line(summary);
+                self.start_async_local_slash_command(
+                    AsyncLocalSlashCommand::Permissions,
+                    app_server,
+                    local_command_tx,
+                );
             }
             TuiLocalSlashCommand::Plan => {
                 let client = self.app_client();
@@ -398,6 +356,7 @@ impl TuiState {
                     }
                 };
                 *self = Self::new(self.client.clone(), bootstrap);
+                self.refresh_permission_mode(app_server).await;
                 let status = format!("Session {} resumed.", short_session_id(&self.session_id));
                 self.push_local_slash_command_output(line, status.clone(), None);
                 self.set_status_line(status);

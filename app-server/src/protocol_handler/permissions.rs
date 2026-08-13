@@ -71,10 +71,15 @@ impl AppServer {
         })
     }
 
-    pub(super) fn handle_permission_set_mode(&self, params: Option<Value>) -> ResponseResult {
+    pub(super) async fn handle_permission_set_mode(&self, params: Option<Value>) -> ResponseResult {
         let p: PermissionSetModeParams = try_parse!(params);
-        self.set_permission_mode(permission_mode_from_wire(p.mode));
-        success_empty()
+        match self
+            .set_permission_mode(permission_mode_from_wire(p.mode))
+            .await
+        {
+            Ok(()) => success_empty(),
+            Err(error) => core_error(error),
+        }
     }
 
     pub(super) async fn handle_permission_add_rule(&self, params: Option<Value>) -> ResponseResult {

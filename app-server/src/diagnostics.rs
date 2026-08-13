@@ -21,8 +21,8 @@ const UNTRACKED_DIFF_MAX_BYTES: u64 = 256 * 1024;
 
 impl AppServer {
     pub async fn status_overview(&self, session_id: &str) -> Result<StatusOverview, CoreError> {
-        let permission_context = self.permissions();
-        let permission_overview = self.permission_overview().await;
+        let permission_context = self.sessions.permission_context_for_session(session_id);
+        let permission_overview = self.permission_overview_for_session(Some(session_id)).await;
         let session_count = self.sessions.list_sessions().await?.len();
         let background_job_count = self.background.list_jobs().await?.len();
         let mcp_server_count = self.mcp.list_servers().await.len();
@@ -39,11 +39,12 @@ impl AppServer {
             .into_iter()
             .filter(|tool| permission_context.tool_visible(&tool.name))
             .count();
-        let config = self.sessions.effective_config();
+        let config = self.sessions.effective_config_for_session(session_id);
         let model_resolution = config.provider_model_resolution(config.default_provider);
         let small_fast_resolution = config.small_fast_model_resolution(config.default_provider);
         Ok(StatusOverview {
             session_id: session_id.to_string(),
+            active_permission_preset: self.sessions.session_permission_preset(session_id)?,
             cwd: config.cwd.clone(),
             home_dir: config.home_dir.clone(),
             model_display_name: model_resolution.display_name.clone(),

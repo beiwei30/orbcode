@@ -20,15 +20,16 @@ use crate::tui_theme::{
     user_bar_style,
 };
 
-const SLASH_COMMAND_TIPS: [&str; 8] = [
+const SLASH_COMMAND_TIPS: [&str; 9] = [
+    "Use /permissions to choose the session approval preset.",
     "Type / and a few letters to filter commands.",
     "Press Tab to complete slash commands and arguments.",
     "Use ↑↓ to move through slash command suggestions.",
     "Run /help to browse available commands.",
-    "Use /allowed-tools as an alias for /permissions.",
     "Use /ctx as a shortcut for /context.",
     "Use /trace to inspect the latest LLM/tool/hook debug trace.",
     "Use /mcp tools <server> to inspect MCP tools.",
+    "Press Shift-Tab to cycle Ask for approval, Approve for me, Full Access, and Plan modes.",
 ];
 
 pub(crate) fn render_stats_panel_lines(detail: &str) -> Vec<StyledLine> {

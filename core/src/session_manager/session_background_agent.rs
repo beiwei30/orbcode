@@ -660,6 +660,7 @@ impl SessionManager {
             session_id,
             allow_tools,
             allow_network,
+            false,
             Arc::new(NestedAgentToolProgressReporter {
                 manager: self.clone(),
                 session_id: session_id.to_string(),

@@ -25,6 +25,11 @@ fn is_edit_last_followup_key(key_event: &KeyEvent) -> bool {
     key_event.code == KeyCode::Left && key_event.modifiers.contains(KeyModifiers::SHIFT)
 }
 
+fn is_permission_mode_cycle_key(key_event: &KeyEvent) -> bool {
+    key_event.code == KeyCode::BackTab
+        || (key_event.code == KeyCode::Tab && key_event.modifiers.contains(KeyModifiers::SHIFT))
+}
+
 fn is_active_turn_immediate_slash_command(line: &str) -> bool {
     let Some(command) = line
         .strip_prefix('/')
@@ -90,12 +95,15 @@ impl TuiState {
             return Ok(true);
         }
 
-        if self.has_input_selection() && key_event.code == KeyCode::Tab {
+        if self.has_input_selection()
+            && key_event.code == KeyCode::Tab
+            && !key_event.modifiers.contains(KeyModifiers::SHIFT)
+        {
             self.indent_selected_lines();
             return Ok(true);
         }
 
-        if self.has_input_selection() && key_event.code == KeyCode::BackTab {
+        if self.has_input_selection() && is_permission_mode_cycle_key(&key_event) {
             self.dedent_selected_lines();
             return Ok(true);
         }
@@ -174,6 +182,17 @@ impl TuiState {
                     );
                     self.set_status_line("Sending pending follow-up after interrupt...");
                 }
+            }
+            return Ok(true);
+        }
+
+        if is_permission_mode_cycle_key(&key_event) {
+            if turn_events.is_some() {
+                self.set_status_line(
+                    "Wait for the active turn to finish before switching permission modes.",
+                );
+            } else if let Err(error) = self.cycle_permission_mode(app_server).await {
+                self.set_status_line(format!("Mode switch failed: {error}"));
             }
             return Ok(true);
         }
@@ -517,6 +536,22 @@ mod tests {
         assert!(!is_queue_followup_key(&KeyEvent::new(
             KeyCode::Tab,
             KeyModifiers::SHIFT
+        )));
+    }
+
+    #[test]
+    fn permission_mode_cycle_accepts_both_shift_tab_encodings() {
+        assert!(is_permission_mode_cycle_key(&KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT
+        )));
+        assert!(is_permission_mode_cycle_key(&KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::SHIFT
+        )));
+        assert!(!is_permission_mode_cycle_key(&KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::NONE
         )));
     }
 

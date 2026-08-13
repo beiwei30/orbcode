@@ -110,18 +110,17 @@ not read or modify `~/.codex/auth.json`. An explicit OpenAI API key takes
 precedence over the saved ChatGPT login. Use
 `orbcode auth logout --provider openai` to remove stored OpenAI credentials.
 
-Tool execution is **off by default**: with no permission configuration, the
-model can talk but cannot run `Bash` or edit files. Turn it on per invocation
-with a permission preset or an explicit flag:
+The default permission preset allows workspace-scoped reads, edits, and
+sandboxed commands while asking before boundary-crossing actions. Choose a
+different preset per invocation or add explicit rules when needed:
 
 ```bash
-orbcode --permission-mode acceptEdits -p "fix the failing test"
+orbcode --permission-mode auto -p "fix the failing test"
 orbcode --allow-tools true --allowed-tools "Bash(cargo test:*),Read,Edit" -p "..."
 ```
 
-In the TUI, `/permissions` and `/allow-all` do the same interactively. Settings
-`permissions.allow` rules also unlock individual tools — see
-[Configuration](#configuration).
+In the TUI, `/permissions` opens the three permission presets. Settings
+`permissions.allow` rules still unlock individual tools — see [Configuration](#configuration).
 
 From a source checkout, replace `orbcode` with `cargo run -p orbcode --` or
 `scripts/run.sh` (which resolves the workspace root from its own path and so
@@ -188,7 +187,7 @@ persistent goal also exposes three core-owned goal tools for that turn.
 | --- | --- | --- |
 | Allow/deny rules | Stable | Rule syntax matches the TypeScript CLI (`Bash(git commit:*)`, `Read`, `mcp__server__tool`). Deny wins. |
 | Structured bash rules | Stable | Commands are parsed with tree-sitter-bash, so rules understand pipes, subshells and operators instead of matching strings. |
-| Permission modes | Stable | `default`, `acceptEdits`, `bypassPermissions`, `dontAsk`, `plan`, `auto`. |
+| Permission modes | Stable | `default`, `bypassPermissions`, `plan`, `auto`. |
 | Managed (enterprise) policy | Stable | Can lock settings keys, forbid `bypassPermissions`, and prune disallowed MCP servers at load time. |
 | MCP trust gate | Stable | An allow rule cannot bypass an untrusted server, and trust cannot bypass a missing allow rule. |
 | macOS seatbelt sandbox | Beta | `--sandbox-mode workspace-write\|read-only` via `sandbox-exec`. |
@@ -271,7 +270,7 @@ subcommand.
 
 | Flag | Values | Description |
 | --- | --- | --- |
-| `--permission-mode <MODE>` | `default`, `acceptEdits`, `bypassPermissions`, `dontAsk`, `plan`, `auto` | Permission preset. `acceptEdits`/`bypassPermissions`/`dontAsk`/`auto` imply `--allow-tools true`; `plan` implies `false`. `bypassPermissions` is downgraded to `default` when managed policy forbids it. Kebab-case aliases (`accept-edits`) are accepted. |
+| `--permission-mode <MODE>` | `default`, `bypassPermissions`, `plan`, `auto` | Session permission mode. `default`, `auto`, and `bypassPermissions` select Ask for approval, Approve for me, and Full Access respectively; `plan` hides execution tools. `bypassPermissions` is downgraded to `default` when managed policy forbids it. |
 | `--allow-tools <true\|false>` | bool | Master switch for tool execution and local file mutation. Default `false` (also settable via `ORBCODE_ALLOW_TOOLS`). |
 | `--allowed-tools <TOOLS>` | rule list, repeatable | Additional allow rules, e.g. `--allowed-tools "Bash(cargo test:*),Read,Edit"`. Comma- or space-separated, parentheses respected. Alias: `--allowedTools`. |
 | `--disallowed-tools <TOOLS>` | rule list, repeatable | Additional deny rules. Deny always beats allow. Alias: `--disallowedTools`. |
@@ -348,7 +347,7 @@ requests on stdin, read events on stdout:
 ```bash
 printf '%s\n' \
   '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}' \
-  '{"type":"control_request","request_id":"1","request":{"subtype":"set_permission_mode","mode":"acceptEdits"}}' \
+  '{"type":"control_request","request_id":"1","request":{"subtype":"set_permission_mode","mode":"auto"}}' \
   | orbcode -p --verbose --input-format stream-json --output-format stream-json
 ```
 
@@ -379,7 +378,7 @@ pending `can_use_tool` request is denied so the turn cannot remain blocked.
 Sandboxed edits scoped to two directories:
 
 ```bash
-orbcode --permission-mode acceptEdits \
+orbcode --permission-mode default \
         --sandbox-mode workspace-write --sandbox-network false \
         --add-dir ../shared-lib \
         -p "port the retry helper to the shared crate"

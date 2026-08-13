@@ -50,7 +50,6 @@ fn build_command_registry() -> CommandRegistry {
 
     // --- TuiLocal wrapper commands ---
     r.register(&["add-dir", "add-directory"], &ADD_DIR);
-    r.register(&["allow-all", "yolo"], &ALLOW_ALL);
     r.register(&["compact"], &COMPACT);
     r.register(&["config"], &CONFIG);
     r.register(&["files"], &FILES);
@@ -59,7 +58,7 @@ fn build_command_registry() -> CommandRegistry {
     r.register(&["login"], &LOGIN);
     r.register(&["logout"], &LOGOUT);
     r.register(&["output-style"], &OUTPUT_STYLE);
-    r.register(&["permissions", "allowed-tools"], &PERMISSIONS);
+    r.register(&["permissions"], &PERMISSIONS);
     r.register(&["plan"], &PLAN);
     r.register(&["release-notes"], &RELEASE_NOTES);
     r.register(&["rename"], &RENAME);
@@ -108,26 +107,20 @@ impl SlashCommand for ClearCommand {
             }
             let previous_session_id = ctx.state.session_id.clone();
             let previous_usage = orbcode_protocol::get_current_usage(&ctx.state.messages);
-            let allow_all = ctx.app_server.allow_all().await.unwrap_or(false);
-            let _ = ctx.app_server.clear_session(&previous_session_id).await;
             let bootstrap = ctx
                 .app_server
-                .bootstrap(None)
+                .clear_session(&previous_session_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             *ctx.state = crate::state::TuiState::new(ctx.state.client.clone(), bootstrap);
+            ctx.state.refresh_permission_mode(ctx.app_server).await;
             ctx.state.clear_session_info = Some(crate::state::ClearSessionInfo {
                 session_id: previous_session_id,
                 usage: previous_usage,
             });
             ctx.state.transcript_ui.emission.needs_scrollback_clear = true;
             ctx.state.pending_history_flush = true;
-            let status = if allow_all {
-                "Conversation cleared. Allow-all remains enabled."
-            } else {
-                "Conversation cleared."
-            };
-            ctx.state.set_status_line(status);
+            ctx.state.set_status_line("Conversation cleared.");
             Ok(SlashCommandOutcome::Handled)
         })
     }
@@ -445,7 +438,6 @@ macro_rules! tui_local_command {
 }
 
 tui_local_command!(ADD_DIR, AddDirCommand, AddDir);
-tui_local_command!(ALLOW_ALL, AllowAllCommand, AllowAll);
 tui_local_command!(COMPACT, CompactCommand, Compact);
 tui_local_command!(CONFIG, ConfigCommand, Config);
 tui_local_command!(FILES, FilesCommand, Files);

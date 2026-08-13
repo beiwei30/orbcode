@@ -607,15 +607,81 @@ impl TuiState {
                 self.pending_assistant.push_str(&delta);
                 false
             }
+            StreamEvent::ApprovalReviewStarted {
+                request_id,
+                tool_use_id,
+                tool_name,
+                ..
+            } => {
+                self.request_token_direction = RequestTokenDirection::Down;
+                let (resolved_name, resolved_input) = self
+                    .lookup_tool_use(&tool_use_id)
+                    .unwrap_or_else(|| (tool_name, String::new()));
+                self.upsert_live_tool_activity(LiveToolActivity {
+                    request_id: Some(request_id),
+                    tool_use_id,
+                    tool_name: resolved_name,
+                    tool_input: resolved_input,
+                    status_line: "Reviewing permission boundary…".to_string(),
+                    progress_messages: Vec::new(),
+                    is_error: false,
+                });
+                false
+            }
+            StreamEvent::ApprovalReviewCompleted {
+                request_id,
+                kind,
+                rationale,
+                ..
+            } => {
+                if let Some(activity) = self.find_live_tool_activity_by_request_id_mut(&request_id)
+                {
+                    activity.status_line = match kind {
+                        orbcode_protocol::ApprovalReviewResolutionKind::Approved => {
+                            "Permission boundary approved".to_string()
+                        }
+                        orbcode_protocol::ApprovalReviewResolutionKind::EscalatedToUser => {
+                            "Review escalated to you".to_string()
+                        }
+                        orbcode_protocol::ApprovalReviewResolutionKind::Cancelled => {
+                            "Permission review cancelled".to_string()
+                        }
+                        _ => "Permission review failed closed".to_string(),
+                    };
+                    if let Some(rationale) = rationale {
+                        activity.push_progress_message(serde_json::json!({
+                            "type": "approval_review",
+                            "rationale": rationale,
+                        }));
+                    }
+                }
+                false
+            }
             StreamEvent::PermissionRequested { request } => {
                 self.request_token_direction = RequestTokenDirection::Down;
+                let review_progress = self
+                    .live_tool_activities()
+                    .into_iter()
+                    .find(|activity| activity.request_id.as_deref() == Some(&request.request_id))
+                    .map(|activity| activity.progress_messages.clone())
+                    .unwrap_or_default();
+                let review_rationale = review_progress.iter().rev().find_map(|progress| {
+                    progress
+                        .get("rationale")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+                let status_line = review_rationale.map_or_else(
+                    || "Waiting for permission".to_string(),
+                    |rationale| format!("Waiting for permission · {rationale}"),
+                );
                 self.upsert_live_tool_activity(LiveToolActivity {
                     request_id: Some(request.request_id.clone()),
                     tool_use_id: request.tool_use_id.clone(),
                     tool_name: request.tool_name.clone(),
                     tool_input: request.tool_input.clone(),
-                    status_line: "Waiting for permission".to_string(),
-                    progress_messages: Vec::new(),
+                    status_line,
+                    progress_messages: review_progress,
                     is_error: false,
                 });
                 // If a permission overlay is already open, queue this request

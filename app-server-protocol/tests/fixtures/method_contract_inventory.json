@@ -622,30 +622,6 @@
     "sensitive_fields": []
   },
   {
-    "method": "settings/allow_all",
-    "stability": "stable",
-    "params": "EmptyParams",
-    "result": "AllowAllResult",
-    "consumers": [
-      "app-server-client/src/lib.rs",
-      "tui/src"
-    ],
-    "opaque_fields": [],
-    "sensitive_fields": []
-  },
-  {
-    "method": "settings/set_allow_all",
-    "stability": "stable",
-    "params": "AllowAllParams",
-    "result": "AllowAllResult",
-    "consumers": [
-      "app-server-client/src/lib.rs",
-      "tui/src"
-    ],
-    "opaque_fields": [],
-    "sensitive_fields": []
-  },
-  {
     "method": "context/preview",
     "stability": "stable",
     "params": "EmptyParams",
@@ -1330,6 +1306,30 @@
     "consumers": [
       "app-server-client/src/lib.rs",
       "cli/src/acp_sdk"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/permission_presets",
+    "stability": "experimental",
+    "params": "SessionIdParams",
+    "result": "PermissionPresetsResult",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
+    ],
+    "opaque_fields": [],
+    "sensitive_fields": []
+  },
+  {
+    "method": "session/set_permission_preset",
+    "stability": "experimental",
+    "params": "SetSessionPermissionPresetParams",
+    "result": "SessionControlState",
+    "consumers": [
+      "app-server-client/src/lib.rs",
+      "tui/src"
     ],
     "opaque_fields": [],
     "sensitive_fields": []

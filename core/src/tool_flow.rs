@@ -69,13 +69,24 @@ pub(crate) enum McpTrustResolutionOutcome {
 pub(crate) struct ToolInvocationPermissions {
     pub(crate) allow_tools: bool,
     pub(crate) allow_network: bool,
+    /// Parent-session network grant inherited by delegated child loops. This
+    /// intentionally differs from `allow_network`, which may be true merely
+    /// because the current non-network tool does not require that permission.
+    pub(crate) inherited_allow_network: bool,
+    pub(crate) boundary_override: bool,
 }
 
 impl ToolInvocationPermissions {
-    pub(crate) fn after_explicit_allow(permissions: &PermissionContext, spec: &ToolSpec) -> Self {
+    pub(crate) fn after_explicit_allow(
+        permissions: &PermissionContext,
+        spec: &ToolSpec,
+        boundary_override: bool,
+    ) -> Self {
         Self {
             allow_tools: permissions.allow_tools || spec.requires_tools_permission,
             allow_network: permissions.allow_network || spec.requires_network_permission,
+            inherited_allow_network: permissions.allow_network,
+            boundary_override,
         }
     }
 
@@ -86,6 +97,8 @@ impl ToolInvocationPermissions {
         Self {
             allow_tools: permissions.allow_tools || !spec.requires_tools_permission,
             allow_network: permissions.allow_network || !spec.requires_network_permission,
+            inherited_allow_network: permissions.allow_network,
+            boundary_override: false,
         }
     }
 }
@@ -242,6 +255,27 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn agent_invocation_preserves_parent_network_grant_for_child_loop() {
+        let permissions = PermissionContext {
+            allow_tools: true,
+            allow_network: false,
+            ..PermissionContext::default()
+        };
+        let registry = orbcode_tools::ToolRegistry::foundation();
+        let agent = registry.spec("Agent").expect("Agent spec");
+
+        let invocation = ToolInvocationPermissions::from_permission_context(&permissions, agent);
+        assert!(
+            invocation.allow_network,
+            "Agent itself does not require network permission"
+        );
+        assert!(
+            !invocation.inherited_allow_network,
+            "the child must retain the parent's denied network grant"
+        );
+    }
 
     #[test]
     fn tool_result_content_prefers_output_when_non_empty() {

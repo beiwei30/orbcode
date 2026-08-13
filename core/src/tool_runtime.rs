@@ -18,7 +18,7 @@ use crate::{
     agent_loop::tool_round::ToolRoundReadyItem,
     hooks::{HookPermissionDecision, PreToolPhaseOutcome},
     interaction_runtime::{InteractionRuntime, PendingInteraction},
-    permissions::PermissionContext,
+    permissions::{PermissionBoundaryReason, PermissionContext, PermissionEvaluation},
     tool_flow::{
         BufferedToolResult, BufferedToolUseCompletion, McpTrustResolutionOutcome,
         ToolDenyPrecedenceStage, ToolInvocationPermissions, ToolLookupOutcome,
@@ -45,6 +45,7 @@ pub(crate) trait ToolRuntimeHost {
 
     async fn tool_deny_precedence_reason(
         &self,
+        session_id: &str,
         permissions: &PermissionContext,
         tool_name: &str,
         tool_input: &str,
@@ -70,7 +71,15 @@ pub(crate) trait ToolRuntimeHost {
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<ToolUseOutcome, CoreError>;
 
-    async fn matches_permission_rule(&self, tool_name: &str, tool_input: &str) -> bool;
+    async fn evaluate_tool_permission(
+        &self,
+        session_id: &str,
+        permissions: &PermissionContext,
+        tool_name: &str,
+        tool_input: &str,
+        spec: &ToolSpec,
+        hook_allowed: bool,
+    ) -> PermissionEvaluation;
 
     async fn resolve_tool_permission_request(
         &self,
@@ -79,6 +88,7 @@ pub(crate) trait ToolRuntimeHost {
         tool_name: &str,
         tool_input: &str,
         spec: &ToolSpec,
+        evaluation: &PermissionEvaluation,
         tx: &mpsc::UnboundedSender<StreamEvent>,
         cancel_flag: Arc<AtomicBool>,
     ) -> ToolPermissionResolutionOutcome;
@@ -114,6 +124,7 @@ pub(crate) trait ToolRuntimeHost {
         session_id: &str,
         allow_tools: bool,
         allow_network: bool,
+        boundary_override: bool,
         progress: Arc<dyn ToolProgressReporter>,
         cancel_flag: Arc<AtomicBool>,
     ) -> ToolContext;
@@ -278,6 +289,7 @@ where
         if let Some(reason) = self
             .host
             .tool_deny_precedence_reason(
+                session_id,
                 &permissions,
                 tool_name,
                 tool_input,
@@ -301,6 +313,7 @@ where
             && let Some(reason) = self
                 .host
                 .tool_deny_precedence_reason(
+                    session_id,
                     &permissions,
                     tool_name,
                     &effective_tool_input,
@@ -345,127 +358,108 @@ where
                 .await;
         }
 
-        if spec.requires_tools_permission || spec.requires_network_permission {
-            // An `ask` rule forces an interactive prompt (deny > ask > allow),
-            // suppressing the config-allow and blanket auto-approve fast paths —
-            // exactly as `streamed_tool_invocation_permissions` does on the
-            // no-hooks path. Without this gate, an overlapping `ask` + `allow`
-            // rule would auto-execute here on the hook/fallback path. An explicit
-            // PreToolUse hook `Allow` and an in-session "always allow" grant
-            // (`matches_permission_rule` below) still win — those are deliberate
-            // authorizations, not the ambient config-allow.
-            let should_ask = permissions.tool_should_ask(tool_name, &effective_tool_input);
-            if matches!(
-                pre_tool_outcome.decision,
-                Some(HookPermissionDecision::Allow)
-            ) {
-                return self
-                    .invoke_tool_and_append_result(
-                        session_id,
-                        tool_use_id,
-                        tool_name,
-                        &effective_tool_input,
-                        ToolInvocationPermissions::after_explicit_allow(&permissions, &spec),
-                        tx,
-                        cancel_flag.clone(),
-                    )
-                    .await;
+        let evaluation = if matches!(pre_tool_outcome.decision, Some(HookPermissionDecision::Ask)) {
+            PermissionEvaluation::AskUser {
+                reason: PermissionBoundaryReason::ExplicitHookAsk,
             }
-
-            if !should_ask
-                && permissions.tool_allowed_without_prompt(tool_name, &effective_tool_input)
-            {
-                return self
-                    .invoke_tool_and_append_result(
-                        session_id,
-                        tool_use_id,
-                        tool_name,
-                        &effective_tool_input,
-                        ToolInvocationPermissions::after_explicit_allow(&permissions, &spec),
-                        tx,
-                        cancel_flag.clone(),
-                    )
-                    .await;
-            }
-
-            if !should_ask
-                && permissions.allows_tool_request(
-                    spec.requires_tools_permission,
-                    spec.requires_network_permission,
-                )
-            {
-                return self
-                    .invoke_tool_and_append_result(
-                        session_id,
-                        tool_use_id,
-                        tool_name,
-                        &effective_tool_input,
-                        ToolInvocationPermissions::from_permission_context(&permissions, &spec),
-                        tx,
-                        cancel_flag.clone(),
-                    )
-                    .await;
-            }
-
-            if self
-                .host
-                .matches_permission_rule(tool_name, &effective_tool_input)
-                .await
-            {
-                return self
-                    .invoke_tool_and_append_result(
-                        session_id,
-                        tool_use_id,
-                        tool_name,
-                        &effective_tool_input,
-                        ToolInvocationPermissions::after_explicit_allow(&permissions, &spec),
-                        tx,
-                        cancel_flag.clone(),
-                    )
-                    .await;
-            }
-
-            match self
-                .host
-                .resolve_tool_permission_request(
+        } else {
+            self.host
+                .evaluate_tool_permission(
                     session_id,
-                    tool_use_id,
+                    &permissions,
                     tool_name,
                     &effective_tool_input,
                     &spec,
-                    tx,
-                    cancel_flag.clone(),
+                    matches!(
+                        pre_tool_outcome.decision,
+                        Some(HookPermissionDecision::Allow)
+                    ),
                 )
                 .await
-            {
-                ToolPermissionResolutionOutcome::Approved => {}
-                ToolPermissionResolutionOutcome::Denied => {
-                    let denied_tool = mcp_permission_target(tool_name, &effective_tool_input)
-                        .unwrap_or_else(|| tool_name.to_string());
-                    return self
-                        .host
-                        .deny_tool_use(
-                            session_id,
-                            tool_use_id,
+        };
+        let invocation_permissions = match &evaluation {
+            PermissionEvaluation::Allow { .. } => {
+                if evaluation.is_explicit_allow() {
+                    ToolInvocationPermissions::after_explicit_allow(
+                        &permissions,
+                        &spec,
+                        permissions.requires_sandbox_boundary_override(
+                            &spec,
                             tool_name,
                             &effective_tool_input,
-                            &format!("permission denied for tool `{denied_tool}`"),
-                            tx,
-                        )
-                        .await;
-                }
-                ToolPermissionResolutionOutcome::Interrupted => {
-                    return Ok(ToolUseOutcome::Cancelled);
+                        ),
+                    )
+                } else {
+                    ToolInvocationPermissions::from_permission_context(&permissions, &spec)
                 }
             }
-        }
+            PermissionEvaluation::Deny { reason } => {
+                return self
+                    .host
+                    .deny_tool_use(
+                        session_id,
+                        tool_use_id,
+                        tool_name,
+                        &effective_tool_input,
+                        reason,
+                        tx,
+                    )
+                    .await;
+            }
+            PermissionEvaluation::AskUser { .. } | PermissionEvaluation::AutoReview { .. } => {
+                match self
+                    .host
+                    .resolve_tool_permission_request(
+                        session_id,
+                        tool_use_id,
+                        tool_name,
+                        &effective_tool_input,
+                        &spec,
+                        &evaluation,
+                        tx,
+                        cancel_flag.clone(),
+                    )
+                    .await
+                {
+                    ToolPermissionResolutionOutcome::Approved => {
+                        ToolInvocationPermissions::after_explicit_allow(
+                            &permissions,
+                            &spec,
+                            permissions.requires_sandbox_boundary_override(
+                                &spec,
+                                tool_name,
+                                &effective_tool_input,
+                            ),
+                        )
+                    }
+                    ToolPermissionResolutionOutcome::Denied => {
+                        let denied_tool = mcp_permission_target(tool_name, &effective_tool_input)
+                            .unwrap_or_else(|| tool_name.to_string());
+                        return self
+                            .host
+                            .deny_tool_use(
+                                session_id,
+                                tool_use_id,
+                                tool_name,
+                                &effective_tool_input,
+                                &format!("permission denied for tool `{denied_tool}`"),
+                                tx,
+                            )
+                            .await;
+                    }
+                    ToolPermissionResolutionOutcome::Interrupted => {
+                        return Ok(ToolUseOutcome::Cancelled);
+                    }
+                }
+            }
+        };
 
         self.invoke_tool_and_append_result(
             session_id,
             tool_use_id,
             tool_name,
             &effective_tool_input,
-            ToolInvocationPermissions::after_explicit_allow(&permissions, &spec),
+            invocation_permissions,
             tx,
             cancel_flag,
         )
@@ -496,7 +490,7 @@ where
                     tool_use_id,
                     tool_input,
                     permissions.allow_tools,
-                    permissions.allow_network,
+                    permissions.inherited_allow_network,
                     tx,
                     cancel_flag,
                 )
@@ -551,6 +545,7 @@ where
             session_id,
             permissions.allow_tools,
             permissions.allow_network,
+            permissions.boundary_override,
             self.host
                 .live_tool_progress_reporter(session_id, tool_use_id, tool_name, tx),
             cancel_flag,
@@ -686,7 +681,7 @@ where
                     &tool_use_id,
                     &tool_input,
                     permissions.allow_tools,
-                    permissions.allow_network,
+                    permissions.inherited_allow_network,
                     tx,
                     cancel_flag,
                 )
@@ -714,6 +709,7 @@ where
             session_id,
             permissions.allow_tools,
             permissions.allow_network,
+            permissions.boundary_override,
             self.host
                 .live_tool_progress_reporter(session_id, &tool_use_id, &tool_name, tx),
             cancel_flag,

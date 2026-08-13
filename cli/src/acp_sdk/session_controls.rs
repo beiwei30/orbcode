@@ -22,12 +22,8 @@ pub(super) fn acp_mode_state(state: &SessionControlState) -> SessionModeState {
         vec![
             SessionMode::new("default", "Default")
                 .description("Ask before protected tool or network operations."),
-            SessionMode::new("accept_edits", "Accept edits")
-                .description("Allow edits using Orb Code's reviewed accept-edits semantics."),
             SessionMode::new("plan", "Plan")
                 .description("Plan without exposing mutation or network tools to the model."),
-            SessionMode::new("dont_ask", "Don't ask")
-                .description("Run permitted tools without interactive permission prompts."),
         ],
     )
 }
@@ -191,9 +187,7 @@ async fn ensure_adapter_control_mutable(
 fn acp_mode_id(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Default => "default",
-        PermissionMode::AcceptEdits => "accept_edits",
         PermissionMode::Plan => "plan",
-        PermissionMode::DontAsk => "dont_ask",
         PermissionMode::BypassPermissions | PermissionMode::Auto => "default",
     }
 }
@@ -201,9 +195,7 @@ fn acp_mode_id(mode: PermissionMode) -> &'static str {
 fn permission_mode_from_acp(mode_id: &str) -> Option<PermissionMode> {
     match mode_id {
         "default" => Some(PermissionMode::Default),
-        "accept_edits" => Some(PermissionMode::AcceptEdits),
         "plan" => Some(PermissionMode::Plan),
-        "dont_ask" => Some(PermissionMode::DontAsk),
         _ => None,
     }
 }
@@ -259,6 +251,8 @@ mod tests {
         SessionControlState {
             session_id: "session".to_string(),
             permission_mode: PermissionMode::Plan,
+            active_permission_preset: None,
+            permission_presets: Vec::new(),
             model_selection: EffectiveModelSelection {
                 persisted: PersistedModelSetting {
                     value: None,
@@ -307,8 +301,14 @@ mod tests {
             .iter()
             .map(|mode| mode.id.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["default", "accept_edits", "plan", "dont_ask"]);
+        assert_eq!(ids, vec!["default", "plan"]);
         assert!(!ids.contains(&"bypass_permissions".to_string()));
+    }
+
+    #[test]
+    fn removed_mode_ids_are_rejected() {
+        assert_eq!(permission_mode_from_acp("accept_edits"), None);
+        assert_eq!(permission_mode_from_acp("dont_ask"), None);
     }
 
     #[test]

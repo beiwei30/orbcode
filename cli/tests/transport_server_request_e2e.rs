@@ -342,7 +342,10 @@ async fn websocket_ask_user_capability_negotiates_typed_roundtrip() {
 
 #[tokio::test]
 async fn stdio_permission_server_request_deny_roundtrip() {
-    let mut proc = ServeProcess::spawn_with_mock("tool_use&key=bash&command=echo+hi").await;
+    let mut proc = ServeProcess::spawn_with_mock(
+        "tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+    )
+    .await;
 
     proc.send(&initialize_msg()).await;
     let _init = proc.recv().await.expect("init response");
@@ -442,7 +445,10 @@ async fn stdio_permission_server_request_deny_roundtrip() {
 
 #[tokio::test]
 async fn stdio_disconnect_during_pending_permission_exits_quickly() {
-    let mut proc = ServeProcess::spawn_with_mock("tool_use&key=bash&command=echo+hi").await;
+    let mut proc = ServeProcess::spawn_with_mock(
+        "tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+    )
+    .await;
 
     proc.send(&initialize_msg()).await;
     let _init = proc.recv().await.expect("init response");
@@ -1190,7 +1196,7 @@ async fn websocket_permission_server_request_deny_roundtrip() {
         .env("HOME", home.path())
         .env(
             "ANTHROPIC_BASE_URL",
-            "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi",
+            "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
         )
         .env("ANTHROPIC_API_KEY", "test-key")
         .env("RUST_LOG", "warn")
@@ -1385,7 +1391,7 @@ async fn websocket_disconnect_while_permission_pending() {
         .env("HOME", home.path())
         .env(
             "ANTHROPIC_BASE_URL",
-            "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi",
+            "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
         )
         .env("ANTHROPIC_API_KEY", "test-key")
         .env("RUST_LOG", "warn")

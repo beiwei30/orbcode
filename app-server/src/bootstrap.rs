@@ -145,6 +145,9 @@ impl AppServer {
         enumerate_mcp: bool,
     ) -> Result<BootstrapState, CoreError> {
         let config = self.sessions.effective_config();
+        let permission_context = self
+            .sessions
+            .permission_context_for_session(&session.session_id);
 
         let prompt_history = self
             .sessions
@@ -179,7 +182,7 @@ impl AppServer {
                 )
                 .await
                 .into_iter()
-                .filter(|tool| self.sessions.permission_context().tool_visible(&tool.name))
+                .filter(|tool| permission_context.tool_visible(&tool.name))
                 .count();
             let suggestions = self
                 .mcp_slash_suggestions_for_session(&session.session_id)
@@ -214,7 +217,7 @@ impl AppServer {
             default_provider: config.default_provider,
             fallback_provider: config.fallback_provider,
             max_retries: config.max_retries,
-            permissions: permission_context_to_wire(self.sessions.permission_context()),
+            permissions: permission_context_to_wire(permission_context),
             mcp_slash_suggestions,
             statusline: {
                 let statusline = config.settings.statusline_config();
@@ -249,6 +252,66 @@ mod tests {
             "orbcode-app-server-{label}-{}-{unique}",
             std::process::id()
         ))
+    }
+
+    #[tokio::test]
+    async fn bootstrap_reports_the_bootstrapped_sessions_permissions() {
+        let home = test_path("session-permissions-home");
+        let cwd = test_path("session-permissions-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let app = AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+
+        let bootstrap = app.bootstrap(None).await.expect("bootstrap");
+        assert!(
+            bootstrap.permissions.allow_tools,
+            "the implicit Ask preset exposes workspace-scoped tools"
+        );
+        let live_permissions = app.permissions();
+        assert_eq!(bootstrap.permissions.cwd, live_permissions.cwd);
+        assert_eq!(
+            bootstrap.permissions.allow_tools,
+            live_permissions.allow_tools
+        );
+        assert_eq!(
+            bootstrap.permissions.allow_network,
+            live_permissions.allow_network
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_preserves_explicit_restrictive_permission_overrides() {
+        let home = test_path("restrictive-permissions-home");
+        let cwd = test_path("restrictive-permissions-cwd");
+        tokio::fs::create_dir_all(&home).await.expect("home");
+        tokio::fs::create_dir_all(&cwd).await.expect("cwd");
+        let app = AppServer::new(
+            cwd,
+            AppConfigOverrides {
+                home_dir: Some(home),
+                sandbox_mode: Some(orbcode_protocol::SandboxMode::ReadOnly),
+                allow_tools: Some(false),
+                ..AppConfigOverrides::default()
+            },
+        )
+        .await
+        .expect("app server");
+
+        let bootstrap = app.bootstrap(None).await.expect("bootstrap");
+        let config = app
+            .sessions
+            .effective_config_for_session(&bootstrap.session.session_id);
+        assert_eq!(config.sandbox_mode, orbcode_protocol::SandboxMode::ReadOnly);
+        assert!(!config.allow_tools);
+        assert!(!bootstrap.permissions.allow_tools);
     }
 
     #[tokio::test]

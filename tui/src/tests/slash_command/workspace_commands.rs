@@ -24,6 +24,17 @@ async fn plan_slash_command_enters_and_displays_plan_mode() {
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
+    let error = state
+        .handle_command(
+            &app_server,
+            "/permissions add allow Bash(cargo test:*)",
+            &local_command_tx,
+        )
+        .await
+        .expect_err("rule CRUD arguments must be rejected");
+    assert!(error.to_string().contains("no longer accepts arguments"));
+    assert!(error.to_string().contains("settings.json"));
+
     state
         .handle_command(&app_server, "/plan update diff UI", &local_command_tx)
         .await
@@ -294,7 +305,7 @@ async fn doctor_slash_command_runs_asynchronously() {
 }
 
 #[tokio::test]
-async fn clear_slash_command_starts_fresh_session_and_preserves_allow_all() {
+async fn clear_slash_command_starts_fresh_session_and_preserves_permission_preset() {
     let home_dir = test_temp_path("clear-home");
     let cwd = test_temp_path("clear-workspace");
     tokio::fs::create_dir_all(&home_dir)
@@ -312,11 +323,13 @@ async fn clear_slash_command_starts_fresh_session_and_preserves_allow_all() {
     .await
     .expect("create app server");
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
-    app_server.app_server().unwrap().set_allow_all(true);
-
     let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
     let previous_session_id = state.session_id.clone();
+    app_server
+        .set_session_permission_preset(&previous_session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set full access preset");
     state.push_local_system_message("old visible context".to_string());
     let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
 
@@ -326,10 +339,18 @@ async fn clear_slash_command_starts_fresh_session_and_preserves_allow_all() {
         .expect("clear command succeeds");
 
     assert_ne!(state.session_id, previous_session_id);
-    assert!(app_server.app_server().unwrap().allow_all());
+    assert_eq!(state.status_line, "Conversation cleared.");
+    let controls = app_server
+        .session_control_state(&state.session_id)
+        .await
+        .expect("new session controls");
     assert_eq!(
-        state.status_line,
-        "Conversation cleared. Allow-all remains enabled."
+        controls.active_permission_preset,
+        Some(ModelPermissionPreset::FullAccess)
+    );
+    assert_eq!(
+        state.status.permission_mode,
+        InteractivePermissionMode::FullAccess
     );
     let info = state
         .clear_session_info
@@ -340,9 +361,9 @@ async fn clear_slash_command_starts_fresh_session_and_preserves_allow_all() {
 }
 
 #[tokio::test]
-async fn allow_all_slash_command_uses_registry_and_canonicalized_alias() {
-    let home_dir = test_temp_path("allow-all-home");
-    let cwd = test_temp_path("allow-all-workspace");
+async fn permissions_slash_command_opens_preset_selector_without_old_aliases() {
+    let home_dir = test_temp_path("permission-preset-home");
+    let cwd = test_temp_path("permission-preset-workspace");
     tokio::fs::create_dir_all(&home_dir)
         .await
         .expect("create home");
@@ -360,20 +381,49 @@ async fn allow_all_slash_command_uses_registry_and_canonicalized_alias() {
     let app_server = Arc::new(AppClient::new(app_server).await.unwrap());
     let bootstrap = app_server.bootstrap(None).await.expect("bootstrap session");
     let mut state = TuiState::new(Some(Arc::clone(&app_server)), bootstrap);
-    let (local_command_tx, _local_command_rx) = mpsc::unbounded_channel();
+    let (local_command_tx, mut local_command_rx) = mpsc::unbounded_channel();
 
     state
-        .handle_command(&app_server, "/yolo on", &local_command_tx)
+        .handle_command(&app_server, "/permissions", &local_command_tx)
         .await
-        .expect("allow-all command succeeds");
+        .expect("permissions command starts");
+    let event = local_command_rx.recv().await.expect("permissions result");
+    state.apply_local_command_event(event.event);
+    let message_count_before_selection = state.messages.len();
 
-    assert!(app_server.app_server().unwrap().allow_all());
-    assert_eq!(state.status_line, "Allow-all mode enabled.");
-    assert!(
-        state
-            .messages
-            .iter()
-            .any(|message| message.content.contains("/allow-all on"))
+    let Some(OverlayState::PermissionPicker(picker)) = state.overlay.as_ref() else {
+        panic!("permission preset selector should be open");
+    };
+    assert_eq!(picker.options.len(), 3);
+    assert_eq!(
+        exact_slash_command("/allowed-tools").map(|command| command.name),
+        None
+    );
+    assert!(exact_slash_command("/yolo").is_none());
+
+    state
+        .finish_permission_preset_selection(
+            &app_server,
+            "/permissions",
+            ModelPermissionPreset::ApproveForMe,
+        )
+        .await
+        .expect("set permission preset");
+    assert!(state.overlay.is_none());
+    assert!(state.status_line.is_empty());
+    assert_eq!(
+        state.status.permission_mode,
+        InteractivePermissionMode::ApproveForMe
+    );
+    assert_eq!(state.messages.len(), message_count_before_selection);
+    assert!(state.footer_right_text().ends_with("Approve for me"));
+    assert_eq!(
+        app_server
+            .session_control_state(&state.session_id)
+            .await
+            .expect("updated session controls")
+            .active_permission_preset,
+        Some(ModelPermissionPreset::ApproveForMe)
     );
 }
 

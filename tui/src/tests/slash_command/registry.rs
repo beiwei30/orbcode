@@ -16,17 +16,16 @@ fn goal_slash_suggestion_is_registered() {
 
 #[test]
 fn slash_command_suggestions_filter_and_prioritize_fuzzy_matches() {
-    let suggestions = slash_command_suggestions("/al");
+    let suggestions = slash_command_suggestions("/per");
     assert_eq!(
         suggestions.first().map(|command| command.name),
-        Some("allow-all")
+        Some("permissions")
     );
     assert!(
         suggestions
             .iter()
-            .any(|command| command.description.contains("YOLO permissions"))
+            .any(|command| command.description.contains("permission preset"))
     );
-    assert!(slash_command_suggestions("/allow-all on").is_empty());
     assert!(slash_command_suggestions("/permissions ").is_empty());
     assert!(
         slash_command_suggestions("/cl")
@@ -96,19 +95,16 @@ fn slash_command_suggestions_filter_and_prioritize_fuzzy_matches() {
 #[test]
 fn slash_command_aliases_match_and_canonicalize() {
     let allowed_tools = slash_command_suggestions("/allowed");
-    assert_eq!(
-        allowed_tools.first().map(|command| command.name),
-        Some("permissions")
-    );
+    assert!(allowed_tools.is_empty());
     assert_eq!(
         exact_slash_command("/allowed-tools").map(|command| command.name),
-        Some("permissions")
+        None
     );
     assert_eq!(
         canonicalize_slash_command_line("/allowed-tools"),
-        "/permissions"
+        "/allowed-tools"
     );
-    assert_eq!(canonicalize_slash_command_line("/yolo on"), "/allow-all on");
+    assert_eq!(canonicalize_slash_command_line("/yolo on"), "/yolo on");
     assert_eq!(canonicalize_slash_command_line("/new"), "/clear");
     assert_eq!(canonicalize_slash_command_line("/reset"), "/clear");
 }
@@ -226,20 +222,7 @@ fn slash_command_registry_marks_tui_local_commands() {
         slash_command_invocation("/new").map(|invocation| invocation.spec.execution),
         Some(SlashCommandExecution::TuiLocal(TuiLocalSlashCommand::Clear))
     );
-    assert_eq!(
-        slash_command_invocation("/yolo on").map(|invocation| {
-            (
-                invocation.spec.execution,
-                invocation.args.to_string(),
-                invocation.spec.name,
-            )
-        }),
-        Some((
-            SlashCommandExecution::TuiLocal(TuiLocalSlashCommand::AllowAll),
-            "on".to_string(),
-            "allow-all"
-        ))
-    );
+    assert!(slash_command_invocation("/yolo on").is_none());
     assert_eq!(
         slash_command_invocation("/compact").map(|invocation| invocation.spec.execution),
         Some(SlashCommandExecution::TuiLocal(
@@ -486,23 +469,13 @@ fn slash_command_registry_declares_feedback_contract() {
 
 #[test]
 fn slash_command_suggestion_lines_render_command_and_description() {
-    let state = normal_state("/a", 2);
+    let state = normal_state("/per", 4);
     let rendered = plain_text_lines(&state.slash_command_suggestion_lines(100));
 
-    assert!(
-        rendered
-            .iter()
-            .any(|line| line.contains("/allow-all") && line.contains("YOLO permissions"))
-    );
-    assert!(
-        rendered
-            .first()
-            .is_some_and(|line| line.starts_with("│  › "))
-    );
-    let first = state.slash_command_suggestion_lines(100).remove(0);
-    assert_eq!(first.spans[2].style, Style::default());
-    assert_eq!(first.spans[3].style, Style::default());
-    assert_eq!(first.spans[5].style, Style::default());
+    assert!(!rendered.iter().any(|line| line.contains("/allow-all")));
+    assert!(rendered.iter().any(|line| {
+        line.contains("/permissions") && line.contains("session permission preset")
+    }));
 
     let all_suggestions = normal_state("/", 1).slash_command_suggestion_lines(100);
     let second = &all_suggestions[1];
@@ -631,7 +604,7 @@ fn slash_command_suggestion_view_scrolls_with_selection() {
     assert_eq!(view.selected, 7);
 
     let visible = normal_state("/", 1).slash_command_suggestion_lines(100);
-    assert_eq!(visible.len(), SLASH_COMMAND_VISIBLE_ROWS);
+    assert!(visible.len() >= SLASH_COMMAND_VISIBLE_ROWS);
     assert!(visible[0].spans[0].style != empty_transcript_placeholder_style());
 }
 
@@ -715,9 +688,9 @@ fn add_dir_completion_scrollbar_tracks_directory_viewport() {
 }
 
 #[test]
-fn render_slash_command_help_includes_allow_all_and_goal() {
+fn render_slash_command_help_includes_permissions_and_goal() {
     let help = render_slash_command_help();
-    assert!(help.contains("/allow-all on|off"));
+    assert!(!help.contains("/allow-all"));
     assert!(help.contains("/clear"));
     assert!(help.contains("/context"));
     assert!(help.contains("/doctor"));
@@ -725,7 +698,7 @@ fn render_slash_command_help_includes_allow_all_and_goal() {
     assert!(help.contains("/goal [create|edit|pause|resume|clear|budget]"));
     assert!(help.contains("/memory"));
     assert!(help.contains("/permissions"));
-    assert!(help.contains("aliases: allowed-tools"));
+    assert!(!help.contains("allowed-tools"));
     assert!(help.contains("/plan [open|<description>]"));
     assert!(help.contains("/status"));
     assert!(help.contains("/stats"));

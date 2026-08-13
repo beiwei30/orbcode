@@ -1,5 +1,6 @@
 mod agent_loop;
 mod agent_tool;
+mod approval_review;
 mod compaction;
 mod config_provider;
 mod context;

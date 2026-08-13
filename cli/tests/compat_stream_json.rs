@@ -165,7 +165,7 @@ fn compat_stream_json_tool_round_trip_golden() {
                 "-p",
                 "#tool:bash {\"command\":\"echo hi\"}",
                 "--permission-mode",
-                "acceptEdits",
+                "default",
                 "--allowed-tools",
                 "bash",
             ],
@@ -179,13 +179,20 @@ fn compat_stream_json_tool_round_trip_golden() {
 
 #[test]
 fn compat_stream_json_permission_deny_golden() {
-    // Same `#tool:` directive but with the default permission mode so the tool is
-    // denied: permission_request -> permission_resolved(denied) -> errored
-    // tool_result -> tool_use_completed(permission_denied) -> error result.
+    // A sandbox escalation in the default Ask preset is denied headlessly:
+    // permission_request -> permission_resolved(denied) -> errored tool_result
+    // -> tool_use_completed(permission_denied) -> error result.
     let harness = Harness::new();
     let (code, stdout, stderr) = harness.run(
         "stub://test",
-        &[&["-p", "#tool:bash {\"command\":\"echo hi\"}"], STREAM_ARGS].concat(),
+        &[
+            &[
+                "-p",
+                "#tool:bash {\"command\":\"echo hi\",\"sandbox_permissions\":\"require_escalated\"}",
+            ],
+            STREAM_ARGS,
+        ]
+        .concat(),
     );
     assert_eq!(
         code, 4,

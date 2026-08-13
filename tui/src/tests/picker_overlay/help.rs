@@ -16,11 +16,15 @@ fn help_overlay_lines_use_grouped_two_column_layout() {
             .iter()
             .any(|line| line.contains("ctrl+o") && line.contains("expand or collapse"))
     );
+    assert!(lines.iter().any(|line| {
+        line.contains("shift+tab") && line.contains("Ask, Approve, Full Access, and Plan")
+    }));
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("/allow-all on|off") && line.contains("YOLO permissions"))
+            .any(|line| line.contains("/permissions") && line.contains("permission preset"))
     );
+    assert!(!lines.iter().any(|line| line.contains("/allow-all")));
     assert!(
         lines
             .iter()
@@ -254,34 +258,23 @@ fn model_picker_lines_at_narrow_40_col() {
 
 #[test]
 fn permission_picker_lines_at_narrow_40_col() {
-    let overview = PermissionOverview {
-        permissions: orbcode_app_server_client::PermissionContext {
-            cwd: PathBuf::from("/tmp/project"),
-            allow_network: false,
-            provider_allow_network: false,
-            allow_tools: false,
-            allowed_rules: Vec::new(),
-            denied_rules: Vec::new(),
-            ask_rules: Vec::new(),
-            additional_directories: Vec::new(),
-        },
-        allow_all: false,
-        effective_rules: Default::default(),
-        settings_allowed_rules: vec!["Bash(cargo test:*)".to_string()],
-        settings_denied_rules: Vec::new(),
-        startup_allowed_rules: Vec::new(),
-        startup_denied_rules: Vec::new(),
-        edited_allowed_rules: Vec::new(),
-        edited_denied_rules: Vec::new(),
-        runtime_allowed_rules: Vec::new(),
-        runtime_denied_rules: Vec::new(),
-        configured_additional_directories: Vec::new(),
-        session_additional_directories: Vec::new(),
-    };
-    let mut picker = PermissionPickerState::new("/permissions", overview, Vec::new());
+    let mut picker = PermissionPickerState::new(
+        "/permissions",
+        vec![PermissionPresetOption {
+            value: ModelPermissionPreset::AskForApproval,
+            label: "Ask for approval".to_string(),
+            description: "Ask before boundary-crossing actions.".to_string(),
+            current: true,
+            disabled_reason: None,
+        }],
+    );
     let lines = picker.cached_lines(40);
-    assert_eq!(lines.len(), PERMISSION_PICKER_PANEL_HEIGHT);
-    assert_eq!(plain_text_line(&lines[0]), "Permissions");
+    assert_eq!(plain_text_line(&lines[0]), "Update Model Permissions");
+    assert!(
+        lines
+            .iter()
+            .any(|line| plain_text_line(line).contains("Ask for approval"))
+    );
 }
 
 #[test]

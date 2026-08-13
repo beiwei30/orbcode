@@ -80,9 +80,9 @@ paused and is never left running without the ACP client.
 
 ## Session controls
 
-Mode IDs are `default`, `accept_edits`, `plan`, and `dont_ask`. The adapter
-never advertises `bypass_permissions` or `auto`. Plan mode uses the existing
-core restrictions and does not expose mutation or network tools to the model.
+Mode IDs are `default` and `plan`. The adapter never advertises
+`bypass_permissions` or `auto`. Plan mode uses the existing core restrictions
+and does not expose mutation or network tools to the model.
 
 The `model` and `thought_level` select options come from canonical provider
 configuration and model capabilities. Mode, model, and effort are isolated per

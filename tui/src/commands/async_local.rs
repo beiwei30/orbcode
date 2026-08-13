@@ -1,7 +1,7 @@
 use orbcode_app_server_client::{
     AgentDefinition, AgentLoadWarning, AppClient, CompactSessionResult, ContextOverview,
-    CostOverview, DoctorReport, HookDiscovery, MemoryOverview, PermissionOverview, SkillDefinition,
-    StatsOverview, StatusOverview, UsageOverview, WorkspaceDiff,
+    CostOverview, DoctorReport, HookDiscovery, MemoryOverview, PermissionPresetsResult,
+    SkillDefinition, StatsOverview, StatusOverview, UsageOverview, WorkspaceDiff,
 };
 use orbcode_protocol::StreamEvent;
 use tokio::sync::mpsc;
@@ -67,7 +67,7 @@ pub(crate) enum LocalCommandEvent {
     HooksFinished(Result<HookDiscovery, String>),
     InstructionsFinished(Result<String, String>),
     MemoryFinished(Result<MemoryOverview, String>),
-    PermissionsFinished(Result<PermissionOverview, String>),
+    PermissionsFinished(Result<PermissionPresetsResult, String>),
     PlanFinished(Result<PlanCommandResult, String>),
     SkillsFinished(Result<Vec<SkillDefinition>, String>),
     StatsFinished(Result<StatsOverview, String>),
@@ -252,7 +252,7 @@ impl AsyncLocalSlashCommand {
             }
             Self::Permissions => {
                 let result = client
-                    .permission_overview()
+                    .session_permission_presets(session_id)
                     .await
                     .map_err(|e| e.to_string());
                 LocalCommandEvent::PermissionsFinished(result)
@@ -544,8 +544,8 @@ impl TuiState {
                 self.set_status_line(status);
                 None
             }
-            LocalCommandEvent::PermissionsFinished(Ok(overview)) => {
-                self.open_permission_picker("/permissions", overview);
+            LocalCommandEvent::PermissionsFinished(Ok(result)) => {
+                self.open_permission_picker("/permissions", result);
                 None
             }
             LocalCommandEvent::PermissionsFinished(Err(error)) => {

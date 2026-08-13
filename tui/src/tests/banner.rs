@@ -15,7 +15,7 @@ fn intro_banner_cell_renders_tip_with_spacing_and_bold_label() {
     let tip_line = &cell[banner_line_count + 2];
     assert_eq!(
         plain_text_line(tip_line),
-        "  Tip: Use /allowed-tools as an alias for /permissions."
+        "  Tip: Use /permissions to choose the session approval preset."
     );
     assert_eq!(tip_line.spans[0].content.as_ref(), "  ");
     assert_eq!(tip_line.spans[1].content.as_ref(), "Tip:");
@@ -40,7 +40,7 @@ fn intro_banner_transcript_preserves_blank_line_after_tip() {
 
     assert_eq!(
         rendered[tip_index],
-        "  Tip: Use /allowed-tools as an alias for /permissions."
+        "  Tip: Use /permissions to choose the session approval preset."
     );
     assert_eq!(rendered.get(tip_index + 1).map(String::as_str), Some(""));
 }

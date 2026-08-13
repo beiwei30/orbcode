@@ -280,7 +280,7 @@ fn stream_json_tool_use_round_trip_emits_assistant_tool_use_and_user_tool_result
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "acceptEdits",
+        "default",
         "--allowed-tools",
         "bash",
     ]);
@@ -383,12 +383,12 @@ fn stream_json_requires_verbose_for_stream_output() {
 #[test]
 fn stream_json_permission_denied_exits_4_with_error_subtype() {
     let harness = Harness::new();
-    // Drive a tool the headless loop will deny: bash requires permission and is
-    // not on the allow-list (default permission mode), so the request is denied,
-    // the turn still completes, and the run is classified PermissionDenied.
+    // Drive a boundary-crossing tool request the headless loop cannot ask the
+    // user to approve. Ordinary sandboxed bash runs in the default Ask preset;
+    // explicitly disabling the sandbox must be denied and classified as such.
     let (code, stdout, stderr) = harness.run(&[
         "-p",
-        "#tool:bash {\"command\":\"echo hi\"}",
+        "#tool:bash {\"command\":\"echo hi\",\"sandbox_permissions\":\"require_escalated\"}",
         "--output-format",
         "stream-json",
         "--verbose",

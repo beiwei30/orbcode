@@ -347,7 +347,6 @@ mod tests {
             focus_latest_message_start: false,
             pending_history_flush: false,
             overlay: None,
-            recent_denied_permissions: Vec::new(),
             status_line: String::new(),
             status_line_set_at: None,
             ui_version: String::new(),

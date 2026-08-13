@@ -53,7 +53,16 @@ pub(crate) fn transcript_message_from_record(
         MessageRole::Assistant => {
             let blocks = blocks_from_content(record.message.as_ref()?.content.as_ref()?);
             let content = visible_content_from_blocks(&blocks);
-            if content.trim().is_empty() && !blocks_have_renderable_content(&blocks) {
+            let is_cost_only = record.is_synthetic
+                && record
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.usage.as_ref())
+                    .is_some();
+            if content.trim().is_empty()
+                && !blocks_have_renderable_content(&blocks)
+                && !is_cost_only
+            {
                 return None;
             }
             (content, blocks)
@@ -135,7 +144,7 @@ pub(crate) fn transcript_message_from_record(
             .and_then(|message| message.usage.as_ref())
             .and_then(|usage| serde_json::from_value(usage.clone()).ok()),
         created_at,
-        is_synthetic: false,
+        is_synthetic: record.is_synthetic,
         cost_attribution,
         transcript_provenance: Some(TranscriptLineProvenance {
             prompt_id: record.prompt_id.clone(),

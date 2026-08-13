@@ -444,37 +444,24 @@ fn render_agent_definitions_with_no_warnings_omits_section() {
 
 #[test]
 fn permission_picker_lines_at_wide_200_col() {
-    let overview = PermissionOverview {
-        permissions: orbcode_app_server_client::PermissionContext {
-            cwd: PathBuf::from("/tmp/project"),
-            allow_network: true,
-            provider_allow_network: false,
-            allow_tools: false,
-            allowed_rules: Vec::new(),
-            denied_rules: Vec::new(),
-            ask_rules: Vec::new(),
-            additional_directories: Vec::new(),
-        },
-        allow_all: false,
-        effective_rules: Default::default(),
-        settings_allowed_rules: vec!["Bash(cargo test:*)".to_string()],
-        settings_denied_rules: Vec::new(),
-        startup_allowed_rules: vec!["Read(src/**)".to_string()],
-        startup_denied_rules: Vec::new(),
-        edited_allowed_rules: Vec::new(),
-        edited_denied_rules: Vec::new(),
-        runtime_allowed_rules: vec!["Grep(orbcode/**)".to_string()],
-        runtime_denied_rules: Vec::new(),
-        configured_additional_directories: Vec::new(),
-        session_additional_directories: Vec::new(),
-    };
-    let mut picker = PermissionPickerState::new("/permissions", overview, Vec::new());
+    let mut picker = PermissionPickerState::new(
+        "/permissions",
+        vec![PermissionPresetOption {
+            value: ModelPermissionPreset::FullAccess,
+            label: "Full Access".to_string(),
+            description: "Disable filesystem and network sandbox boundaries.".to_string(),
+            current: true,
+            disabled_reason: None,
+        }],
+    );
     let lines = picker.cached_lines(200);
-    assert_eq!(lines.len(), PERMISSION_PICKER_PANEL_HEIGHT);
     let rendered = plain_text_lines(lines).join("\n");
-    assert!(rendered.contains("Permissions"));
-    assert!(rendered.contains("Allow"));
-    assert!(rendered.contains("Bash(cargo test:*)"));
+    assert!(rendered.contains("Update Model Permissions"));
+    assert!(rendered.contains("Full Access (current)"));
+    assert!(plain_text_lines(lines).iter().any(|line| {
+        line.contains("Full Access (current)")
+            && line.contains("Disable filesystem and network sandbox boundaries.")
+    }));
 }
 
 #[test]

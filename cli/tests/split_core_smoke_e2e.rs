@@ -77,6 +77,20 @@ async fn spawn_serve_socket() -> (
     TempDir,
     TempDir,
 ) {
+    spawn_serve_socket_with_base_url("mock://anthropic?scenario=tool_use&key=bash&command=echo+hi")
+        .await
+}
+
+async fn spawn_serve_socket_with_base_url(
+    base_url: &str,
+) -> (
+    tokio::process::Child,
+    String,
+    String,
+    TempDir,
+    TempDir,
+    TempDir,
+) {
     let home = tempfile::tempdir().expect("home");
     let cwd = tempfile::tempdir().expect("cwd");
     let sock_dir = tempfile::tempdir().expect("sock");
@@ -84,7 +98,13 @@ async fn spawn_serve_socket() -> (
 
     std::fs::write(
         home.path().join("settings.json"),
-        r#"{"env":{"ANTHROPIC_API_KEY":"stub-key","ANTHROPIC_BASE_URL":"mock://anthropic?scenario=tool_use&key=bash&command=echo+hi"}}"#,
+        serde_json::json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "stub-key",
+                "ANTHROPIC_BASE_URL": base_url,
+            }
+        })
+        .to_string(),
     )
     .expect("write settings");
 
@@ -345,7 +365,10 @@ async fn split_core_websocket_submit_turn_stream_receives_events() {
 
 #[tokio::test]
 async fn split_core_permission_deny_via_server_request() {
-    let (mut child, path, token, _home, _cwd, _sock) = spawn_serve_socket().await;
+    let (mut child, path, token, _home, _cwd, _sock) = spawn_serve_socket_with_base_url(
+        "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D",
+    )
+    .await;
 
     let client = AppClient::connect_socket(std::path::Path::new(&path), &token)
         .await

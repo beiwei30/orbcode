@@ -355,7 +355,8 @@ fn agent_input_error_completion(tool_use_id: &str, error: &CoreError) -> Buffere
 
 /// Resolve the effective `(allow_tools, allow_network)` for a sub-agent loop
 /// from its declared `permissionMode`, falling back to the ambient grant when
-/// the mode does not dictate an override (`default`).
+/// the mode does not dictate an override (`default`). A child mode may tighten
+/// the inherited grant but cannot elevate beyond its parent session.
 pub(super) fn apply_agent_permission_mode(
     permission_mode: Option<PermissionMode>,
     allow_tools: bool,
@@ -363,10 +364,10 @@ pub(super) fn apply_agent_permission_mode(
 ) -> (bool, bool) {
     let allow_tools = permission_mode
         .and_then(PermissionMode::default_allow_tools)
-        .unwrap_or(allow_tools);
+        .map_or(allow_tools, |requested| allow_tools && requested);
     let allow_network = permission_mode
         .and_then(PermissionMode::default_allow_network)
-        .unwrap_or(allow_network);
+        .map_or(allow_network, |requested| allow_network && requested);
     (allow_tools, allow_network)
 }
 
@@ -579,10 +580,19 @@ mod tests {
             apply_agent_permission_mode(Some(PermissionMode::Plan), true, true),
             (false, true)
         );
-        // Bypass enables tools and network.
+        // Bypass cannot elevate beyond the parent grant.
         assert_eq!(
             apply_agent_permission_mode(Some(PermissionMode::BypassPermissions), false, false),
+            (false, false)
+        );
+        assert_eq!(
+            apply_agent_permission_mode(Some(PermissionMode::BypassPermissions), true, true),
             (true, true)
+        );
+        // A nested loop has no automatic reviewer, so Auto fails closed.
+        assert_eq!(
+            apply_agent_permission_mode(Some(PermissionMode::Auto), true, true),
+            (false, false)
         );
         // Default / unspecified inherit the ambient grant.
         assert_eq!(

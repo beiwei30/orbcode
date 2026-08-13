@@ -46,8 +46,8 @@ pub use claude_home::{
 };
 pub use config::{
     AppConfig, AppConfigOverrides, ContextWindowOptions, EffectiveModelSelection,
-    MaxOutputTokenOptions, ModelOption, ModelSelectionSource, PermissionMode,
-    PersistedModelSetting, TokenWarningOptions, parse_tool_rule_list,
+    ExplicitPermissionOverrides, MaxOutputTokenOptions, ModelOption, ModelSelectionSource,
+    PermissionMode, PersistedModelSetting, TokenWarningOptions, parse_tool_rule_list,
     sealed_provider_env_overrides,
 };
 pub use env_compat::resolve_process_env;
@@ -75,9 +75,9 @@ pub use output_styles::{
     load_output_style_definitions_with_warnings, resolve_active_output_style,
 };
 pub use permission_rules::{
-    PermissionRule, PermissionRuleMatchMode, bash_command_allowed_by_rules, canonical_tool_name,
-    mcp_permission_target, normalize_permission_rule_for_edit, suggested_bash_permission_rules,
-    tool_path_allowed_by_additional_directory,
+    PermissionRule, PermissionRuleMatchMode, ToolPathBoundary, bash_command_allowed_by_rules,
+    canonical_tool_name, mcp_permission_target, normalize_permission_rule_for_edit,
+    suggested_bash_permission_rules, tool_path_allowed_by_additional_directory, tool_path_boundary,
 };
 pub use plugins::{
     LoadedPlugin, PluginContributions, PluginInstallation, PluginLoadError, PluginLoadWarning,

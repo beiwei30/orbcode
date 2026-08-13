@@ -1,6 +1,54 @@
 use crate::tests::support::*;
 
 #[test]
+fn approval_review_lifecycle_shows_reviewing_and_escalation_rationale() {
+    let mut state = normal_state("", 0);
+    state.apply_stream_event(StreamEvent::ApprovalReviewStarted {
+        session_id: state.session_id.clone(),
+        request_id: "review-1".to_string(),
+        tool_use_id: "tool-1".to_string(),
+        tool_name: "Bash".to_string(),
+    });
+    assert_eq!(
+        state
+            .find_live_tool_activity_by_tool_use_id("tool-1")
+            .expect("review activity")
+            .status_line,
+        "Reviewing permission boundary…"
+    );
+
+    state.apply_stream_event(StreamEvent::ApprovalReviewCompleted {
+        session_id: state.session_id.clone(),
+        request_id: "review-1".to_string(),
+        kind: orbcode_protocol::ApprovalReviewResolutionKind::EscalatedToUser,
+        rationale: Some("command can publish externally".to_string()),
+    });
+    state.apply_stream_event(StreamEvent::PermissionRequested {
+        request: PermissionRequest {
+            request_id: "review-1".to_string(),
+            session_id: state.session_id.clone(),
+            tool_use_id: "tool-1".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: r#"{"command":"git push"}"#.to_string(),
+            requires_tools_permission: true,
+            requires_network_permission: true,
+        },
+    });
+
+    assert!(
+        state
+            .find_live_tool_activity_by_tool_use_id("tool-1")
+            .expect("escalated activity")
+            .status_line
+            .contains("command can publish externally")
+    );
+    assert!(matches!(
+        state.overlay,
+        Some(OverlayState::PermissionRequest(_))
+    ));
+}
+
+#[test]
 fn permission_panel_renders_file_write_with_rust_highlighting() {
     let permission = PermissionOverlayState::new(PermissionRequest {
         request_id: "req-1".to_string(),
@@ -774,7 +822,7 @@ fn permissions_slash_output_renders_detail_without_quote_bar() {
     let message = local_slash_command_output_message(
         "/permissions".to_string(),
         "Permissions loaded.".to_string(),
-        Some("Permissions:\n  allow-all: disabled".to_string()),
+        Some("Permission preset:\n  Ask for approval".to_string()),
         slash_commands::SlashCommandDeferredFeedback::Direct,
     );
     let note = parse_local_transcript_note(&message).expect("permissions slash command note");
@@ -784,86 +832,19 @@ fn permissions_slash_output_renders_detail_without_quote_bar() {
 
     assert_eq!(rendered.first().map(String::as_str), Some("❯ /permissions"));
     assert!(
-        rendered.iter().any(|line| line.starts_with("  └  Tip: ")),
-        "{rendered_text}"
-    );
-    assert!(
-        rendered.iter().any(|line| line == "   Permissions:"),
-        "{rendered_text}"
-    );
-    assert!(
         rendered
             .iter()
-            .any(|line| line == "     allow-all: disabled"),
+            .any(|line| line == "  └  Permissions loaded."),
         "{rendered_text}"
     );
     assert!(
-        !rendered_text.contains("Permissions loaded."),
+        rendered.iter().any(|line| line == "   Permission preset:"),
         "{rendered_text}"
     );
+    assert!(
+        rendered.iter().any(|line| line == "     Ask for approval"),
+        "{rendered_text}"
+    );
+    assert!(!rendered_text.contains("  └  Tip: "), "{rendered_text}");
     assert!(!rendered_text.contains("▎"), "{rendered_text}");
-}
-
-#[test]
-fn render_permission_overview_includes_gates_and_rules() {
-    let overview = PermissionOverview {
-        permissions: orbcode_app_server_client::PermissionContext {
-            cwd: PathBuf::from("/tmp/project"),
-            allow_network: true,
-            provider_allow_network: false,
-            allow_tools: false,
-            allowed_rules: vec![PermissionRuleOverview {
-                raw: "Bash(git status:*)".to_string(),
-                tool_name: "Bash".to_string(),
-                rule_content: Some("git status:*".to_string()),
-            }],
-            denied_rules: vec![PermissionRuleOverview {
-                raw: "Bash(rm:*)".to_string(),
-                tool_name: "Bash".to_string(),
-                rule_content: Some("rm:*".to_string()),
-            }],
-            ask_rules: Vec::new(),
-            additional_directories: vec![PathBuf::from("/tmp/extra")],
-        },
-        allow_all: true,
-        effective_rules: Default::default(),
-        settings_allowed_rules: vec!["Bash(git status:*)".to_string()],
-        settings_denied_rules: vec!["Bash(rm:*)".to_string()],
-        startup_allowed_rules: vec!["Read(src/**)".to_string()],
-        startup_denied_rules: Vec::new(),
-        edited_allowed_rules: vec!["Write(src/generated/**)".to_string()],
-        edited_denied_rules: Vec::new(),
-        runtime_allowed_rules: vec!["Grep(orbcode/**)".to_string()],
-        runtime_denied_rules: vec!["Bash(git clean:*)".to_string()],
-        configured_additional_directories: vec![PathBuf::from("/tmp/configured")],
-        session_additional_directories: vec![PathBuf::from("/tmp/extra")],
-    };
-
-    let rendered = render_permission_overview(&overview);
-
-    assert!(rendered.contains("Permissions:"));
-    assert!(rendered.contains("  allow-all: enabled"));
-    assert!(rendered.contains("  tools: disabled"));
-    assert!(rendered.contains("  tool network: enabled"));
-    assert!(rendered.contains("  provider network: disabled"));
-    assert!(rendered.contains("  allow rules: 4"));
-    assert!(rendered.contains("  deny rules: 2"));
-    assert!(rendered.contains("Allow rules:"));
-    assert!(rendered.contains("Deny rules:"));
-    assert!(rendered.contains("Bash(git status:*) (configured · settings)"));
-    assert!(rendered.contains("Bash(rm:*) (configured · settings)"));
-    assert!(rendered.contains("Grep(orbcode/**) (session)"));
-    assert!(rendered.contains("Bash(git clean:*) (session)"));
-    assert!(!rendered.contains("Source layers:"));
-    assert!(!rendered.contains("Configured allow rules:"));
-    assert!(!rendered.contains("Session allow rules:"));
-    assert!(rendered.contains("Read(src/**) (configured · env/CLI)"));
-    assert!(rendered.contains("Write(src/generated/**) (configured · settings edit)"));
-    assert!(rendered.contains("Configured directories:"));
-    assert!(rendered.contains("/tmp/configured"));
-    assert!(rendered.contains("Session-only directories:"));
-    assert!(rendered.contains("/tmp/extra"));
-    assert!(rendered.contains("Editable sources:"));
-    assert!(rendered.contains("settings: writes home settings.json"));
-    assert!(rendered.contains("env/CLI rules and project-local or managed settings"));
 }

@@ -90,12 +90,21 @@ pub struct AppConfigOverrides {
     pub trusted_project: Option<bool>,
 }
 
+/// Tracks permission-related values supplied explicitly by a caller or the
+/// process environment. Session presets use this provenance to avoid weakening
+/// restrictive overrides when the default preset is selected implicitly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExplicitPermissionOverrides {
+    pub sandbox_mode: bool,
+    pub sandbox_allow_network: bool,
+    pub allow_network: bool,
+    pub allow_tools: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PermissionMode {
     Default,
-    AcceptEdits,
     BypassPermissions,
-    DontAsk,
     Plan,
     Auto,
 }
@@ -104,9 +113,7 @@ impl PermissionMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
-            Self::AcceptEdits => "acceptEdits",
             Self::BypassPermissions => "bypassPermissions",
-            Self::DontAsk => "dontAsk",
             Self::Plan => "plan",
             Self::Auto => "auto",
         }
@@ -114,10 +121,10 @@ impl PermissionMode {
 
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
-            "default" => Some(Self::Default),
-            "acceptEdits" | "accept-edits" => Some(Self::AcceptEdits),
-            "bypassPermissions" | "bypass-permissions" => Some(Self::BypassPermissions),
-            "dontAsk" | "dont-ask" => Some(Self::DontAsk),
+            "default" | "acceptEdits" | "accept-edits" => Some(Self::Default),
+            "bypassPermissions" | "bypass-permissions" | "dontAsk" | "dont-ask" => {
+                Some(Self::BypassPermissions)
+            }
             "plan" => Some(Self::Plan),
             "auto" => Some(Self::Auto),
             _ => None,
@@ -125,9 +132,9 @@ impl PermissionMode {
     }
 
     /// The `allow_tools` override this mode implies, or `None` to inherit the
-    /// ambient value. `plan` disables tool execution; the always-on modes
-    /// enable it. Used both for the top-level session and for sub-agents that
-    /// declare a `permissionMode`.
+    /// ambient value. `plan` disables tool execution and Full Access enables
+    /// it. Used both for the top-level session and for sub-agents that declare
+    /// a `permissionMode`.
     pub fn default_allow_tools(self) -> Option<bool> {
         crate::settings_resolution::permission_mode_default_allow_tools(Some(self))
     }
@@ -213,6 +220,7 @@ pub struct AppConfig {
     pub refreshed_persisted_model_setting: Option<PersistedModelSetting>,
     pub append_system_prompt: Option<String>,
     pub permission_mode: Option<PermissionMode>,
+    pub explicit_permission_overrides: ExplicitPermissionOverrides,
     /// Test-only environment overrides that take precedence over both
     /// `std::env::var` and `settings.env` for `resolve_env` lookups.
     /// Always empty for real users (default-constructed). Tests populate
@@ -265,6 +273,19 @@ impl AppConfig {
         cwd: impl Into<PathBuf>,
         overrides: AppConfigOverrides,
     ) -> Result<Self, ConfigError> {
+        let sandbox_mode_env = env::var("ORBCODE_SANDBOX_MODE")
+            .ok()
+            .and_then(|value| SandboxMode::parse(&value));
+        let sandbox_allow_network_env = parse_bool_env("ORBCODE_SANDBOX_NETWORK");
+        let allow_network_env = parse_bool_env("ORBCODE_ALLOW_NETWORK");
+        let allow_tools_env = parse_bool_env("ORBCODE_ALLOW_TOOLS");
+        let explicit_permission_overrides = ExplicitPermissionOverrides {
+            sandbox_mode: overrides.sandbox_mode.is_some() || sandbox_mode_env.is_some(),
+            sandbox_allow_network: overrides.sandbox_allow_network.is_some()
+                || sandbox_allow_network_env.is_some(),
+            allow_network: overrides.allow_network.is_some() || allow_network_env.is_some(),
+            allow_tools: overrides.allow_tools.is_some() || allow_tools_env.is_some(),
+        };
         let cwd = cwd.into();
         let home_dir = match overrides.home_dir {
             Some(home_dir) => home_dir,
@@ -314,11 +335,7 @@ impl AppConfig {
 
         let sandbox_mode = overrides
             .sandbox_mode
-            .or_else(|| {
-                env::var("ORBCODE_SANDBOX_MODE")
-                    .ok()
-                    .and_then(|value| SandboxMode::parse(&value))
-            })
+            .or(sandbox_mode_env)
             .unwrap_or_default();
 
         // Managed policy can forbid bypass-permissions mode. When it does, a
@@ -336,11 +353,11 @@ impl AppConfig {
         let allow_network = overrides
             .allow_network
             .or(allow_network_default)
-            .unwrap_or_else(|| parse_bool_env("ORBCODE_ALLOW_NETWORK").unwrap_or(true));
+            .unwrap_or_else(|| allow_network_env.unwrap_or(true));
 
         let sandbox_allow_network = overrides
             .sandbox_allow_network
-            .unwrap_or_else(|| parse_bool_env("ORBCODE_SANDBOX_NETWORK").unwrap_or(allow_network));
+            .unwrap_or_else(|| sandbox_allow_network_env.unwrap_or(allow_network));
 
         let provider_allow_network = overrides
             .provider_allow_network
@@ -349,7 +366,7 @@ impl AppConfig {
         let allow_tools = overrides
             .allow_tools
             .or(allow_tools_default)
-            .unwrap_or_else(|| parse_bool_env("ORBCODE_ALLOW_TOOLS").unwrap_or(false));
+            .unwrap_or_else(|| allow_tools_env.unwrap_or(false));
 
         let mut allowed_tools = settings.allowed_tools.clone();
         if overrides.allowed_tools.is_empty() {
@@ -439,6 +456,7 @@ impl AppConfig {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             permission_mode,
+            explicit_permission_overrides,
             trusted_project: overrides
                 .trusted_project
                 .unwrap_or_else(|| parse_bool_env("ORBCODE_TRUSTED_PROJECT").unwrap_or(true)),

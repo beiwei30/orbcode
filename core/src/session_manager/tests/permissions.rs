@@ -1,5 +1,8 @@
 use super::support::*;
 use super::*;
+use crate::approval_review::{ApprovalReviewOutcome, review_permission_boundary};
+use crate::permissions::PermissionBoundaryReason;
+use orbcode_protocol::{ApprovalReviewResolutionKind, ModelPermissionPreset};
 
 #[tokio::test]
 async fn provider_request_refreshes_mcp_tools_between_requests() {
@@ -75,6 +78,194 @@ async fn provider_request_refreshes_mcp_tools_between_requests() {
             .iter()
             .any(|tool| tool.name == "mcp__docs__inspect")
     );
+}
+
+async fn run_auto_review_scenario(
+    scenario: &str,
+) -> (Vec<StreamEvent>, bool, orbcode_protocol::CostSummary) {
+    let mut manager = test_manager().await;
+    manager.config.fallback_provider = None;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        format!("mock://anthropic?scenario={scenario}"),
+    );
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    manager
+        .append_message(
+            &session.session_id,
+            TranscriptMessage::new(MessageRole::User, "write the requested external file"),
+        )
+        .await
+        .expect("persist task");
+    manager
+        .set_session_permission_preset(&session.session_id, ModelPermissionPreset::ApproveForMe)
+        .await
+        .expect("set auto-review preset");
+
+    let outside = manager
+        .config
+        .cwd
+        .parent()
+        .expect("workspace parent")
+        .join(format!("orbcode-review-outside-{}.txt", Uuid::new_v4()));
+    let input = serde_json::json!({ "file_path": outside, "content": "reviewed" }).to_string();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let runner = (*manager).clone();
+    let session_id = session.session_id.clone();
+    let handle = tokio::spawn(async move {
+        runner
+            .execute_tool_use(
+                &session_id,
+                "tool-review",
+                "file-write",
+                &input,
+                &tx,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+    });
+
+    let mut events = Vec::new();
+    let mut saw_user_request = false;
+    while let Some(event) = rx.recv().await {
+        if let StreamEvent::PermissionRequested { request } = &event {
+            saw_user_request = true;
+            assert!(
+                manager
+                    .respond_to_permission_request(
+                        &request.request_id,
+                        PermissionDecision::Approve,
+                    )
+                    .await
+            );
+        }
+        events.push(event);
+    }
+    handle
+        .await
+        .expect("review task join")
+        .expect("reviewed tool execution");
+    let cost = manager
+        .cost_overview(&session.session_id)
+        .await
+        .expect("review cost overview")
+        .cost;
+    let persisted = manager
+        .load_session(&session.session_id)
+        .await
+        .expect("persisted review usage");
+    let reviewer_reported_usage = cost
+        .model_usage
+        .values()
+        .any(|usage| usage.input_tokens > 0 || usage.output_tokens > 0);
+    if reviewer_reported_usage {
+        assert!(persisted.messages.iter().any(|message| {
+            message.is_synthetic
+                && message.usage.is_some()
+                && message.content.is_empty()
+                && message.blocks.is_empty()
+        }));
+    }
+    manager.reset_live_cost(&session.session_id).await;
+    let restored_cost = manager
+        .cost_overview(&session.session_id)
+        .await
+        .expect("restored review cost")
+        .cost;
+    assert!((restored_cost.total_cost_usd - cost.total_cost_usd).abs() < 1e-12);
+    (events, saw_user_request, cost)
+}
+
+#[tokio::test]
+async fn approve_for_me_executes_only_after_structured_reviewer_approval() {
+    let (events, saw_user_request, cost) = run_auto_review_scenario("review_approve").await;
+    assert!(!saw_user_request);
+    assert!(cost.total_cost_usd > 0.0);
+    assert!(
+        cost.model_usage
+            .values()
+            .any(|usage| { usage.input_tokens > 0 || usage.output_tokens > 0 })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::ApprovalReviewStarted { .. }))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ApprovalReviewCompleted {
+            kind: ApprovalReviewResolutionKind::Approved,
+            ..
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ToolUseCompleted {
+            kind: ToolUseCompletionKind::Success,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn approve_for_me_escalates_risky_or_invalid_review_output_to_user() {
+    for scenario in ["review_escalate", "review_invalid", "fatal"] {
+        let (events, saw_user_request, _cost) = run_auto_review_scenario(scenario).await;
+        assert!(saw_user_request, "scenario {scenario} must fail closed");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ApprovalReviewCompleted {
+                kind: ApprovalReviewResolutionKind::EscalatedToUser
+                    | ApprovalReviewResolutionKind::Failed,
+                rationale: Some(_),
+                ..
+            }
+        )));
+    }
+}
+
+#[tokio::test]
+async fn automatic_review_timeout_and_cancellation_fail_closed() {
+    let mut manager = test_manager().await;
+    manager.config.fallback_provider = None;
+    manager.config.settings.env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        "mock://anthropic?scenario=hang".to_string(),
+    );
+    let config = manager.effective_config();
+    let timeout = review_permission_boundary(
+        &config,
+        &manager.auth,
+        "session",
+        "fetch the URL",
+        "web-fetch",
+        r#"{"url":"https://example.com"}"#,
+        &PermissionBoundaryReason::Network,
+        Arc::new(AtomicBool::new(false)),
+        StdDuration::from_millis(50),
+    )
+    .await;
+    assert!(matches!(
+        timeout.outcome,
+        ApprovalReviewOutcome::EscalateToUser {
+            kind: ApprovalReviewResolutionKind::TimedOut,
+            ..
+        }
+    ));
+
+    let cancelled = review_permission_boundary(
+        &config,
+        &manager.auth,
+        "session",
+        "fetch the URL",
+        "web-fetch",
+        r#"{"url":"https://example.com"}"#,
+        &PermissionBoundaryReason::Network,
+        Arc::new(AtomicBool::new(true)),
+        StdDuration::from_secs(1),
+    )
+    .await;
+    assert_eq!(cancelled.outcome, ApprovalReviewOutcome::Cancelled);
 }
 
 #[tokio::test]
@@ -198,7 +389,10 @@ async fn executes_tool_use_after_permission_approval() {
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
     let mut rx = manager
-        .submit_turn(&session_id, r#"#tool:bash {"command":"printf hi"}"#)
+        .submit_turn(
+            &session_id,
+            r#"#tool:bash {"command":"printf hi","sandbox_permissions":"require_escalated"}"#,
+        )
         .await
         .expect("submit turn");
 
@@ -395,7 +589,10 @@ async fn permission_denial_emits_terminal_tool_event() {
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
     let mut rx = manager
-        .submit_turn(&session_id, r#"#tool:bash {"command":"printf hi"}"#)
+        .submit_turn(
+            &session_id,
+            r#"#tool:bash {"command":"printf hi","sandbox_permissions":"require_escalated"}"#,
+        )
         .await
         .expect("submit turn");
 
@@ -460,7 +657,7 @@ async fn permission_denial_finishes_turn_without_provider_continuation() {
             id: "tool-denied".to_string(),
             name: "Write".to_string(),
             input: serde_json::json!({
-                "file_path": "hello.rs",
+                "file_path": "../hello.rs",
                 "content": "fn main() {}\n"
             })
             .to_string(),
@@ -527,7 +724,7 @@ async fn session_denied_tool_call_skips_later_identical_request() {
     let tool_input = r#"{"command":"printf denied"}"#;
     manager
         .permission_runtime
-        .remember_denied_tool_call("bash", tool_input)
+        .remember_denied_tool_call_for_session(&session_id, "bash", tool_input)
         .await;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -577,7 +774,11 @@ async fn session_denied_tool_call_does_not_block_different_request() {
     let session_id = session.session_id.clone();
     manager
         .permission_runtime
-        .remember_denied_tool_call("bash", r#"{"command":"printf denied"}"#)
+        .remember_denied_tool_call_for_session(
+            &session_id,
+            "bash",
+            r#"{"command":"printf denied"}"#,
+        )
         .await;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -590,7 +791,7 @@ async fn session_denied_tool_call_does_not_block_different_request() {
                     &session_id,
                     "tool-different",
                     "bash",
-                    r#"{"command":"printf different"}"#,
+                    r#"{"command":"printf different","sandbox_permissions":"require_escalated"}"#,
                     &tx,
                     Arc::new(AtomicBool::new(false)),
                 )
@@ -654,22 +855,52 @@ async fn configured_allow_rule_skips_permission_prompt() {
 
     assert!(!saw_permission_request);
     assert!(saw_success);
+
+    let saved = manager
+        .load_session(&session_id)
+        .await
+        .expect("reload session");
+    let metadata = saved
+        .messages
+        .iter()
+        .flat_map(|message| &message.blocks)
+        .find_map(|block| match block {
+            TranscriptBlock::ToolResult {
+                metadata: Some(metadata),
+                ..
+            } => Some(metadata),
+            _ => None,
+        })
+        .expect("bash result metadata");
+    let metadata: serde_json::Value =
+        serde_json::from_str(metadata).expect("parse bash result metadata");
+    assert_eq!(
+        metadata
+            .pointer("/sandbox/mode")
+            .and_then(|value| value.as_str()),
+        Some("workspace-write"),
+        "a matching allow rule must not disable the workspace sandbox"
+    );
 }
 
 #[tokio::test]
 async fn configured_file_path_allow_rule_skips_permission_prompt() {
-    let manager = test_manager_with_overrides(AppConfigOverrides {
-        allowed_tools: vec!["File(notes/**)".to_string()],
-        ..AppConfigOverrides::default()
-    })
-    .await;
+    let mut manager = test_manager().await;
+    let outside = manager
+        .config
+        .cwd
+        .parent()
+        .expect("workspace parent")
+        .join(format!("orbcode-explicit-allow-{}.txt", Uuid::new_v4()));
+    manager.config.allowed_tools = vec![format!("File({})", outside.display())];
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
+    let prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": outside, "content": "hello\n"})
+    );
     let mut rx = manager
-        .submit_turn(
-            &session_id,
-            r#"#tool:Write {"file_path":"notes/hello.txt","content":"hello\n"}"#,
-        )
+        .submit_turn(&session_id, &prompt)
         .await
         .expect("submit turn");
 
@@ -692,10 +923,60 @@ async fn configured_file_path_allow_rule_skips_permission_prompt() {
     assert!(!saw_permission_request);
     assert!(saw_success);
     assert_eq!(
-        tokio::fs::read_to_string(manager.config.cwd.join("notes/hello.txt"))
+        tokio::fs::read_to_string(&outside)
             .await
             .expect("written file"),
         "hello\n"
+    );
+}
+
+#[tokio::test]
+async fn ask_preset_executes_workspace_write_and_sandboxed_bash_without_prompt() {
+    let manager = test_manager().await;
+    let file_name = format!("ask-safe-{}.txt", Uuid::new_v4());
+    let write_prompt = format!(
+        "#tool:Write {}",
+        serde_json::json!({"file_path": file_name, "content": "workspace safe\n"})
+    );
+
+    for prompt in [
+        write_prompt,
+        r#"#tool:bash {"command":"printf sandboxed"}"#.to_string(),
+    ] {
+        let (session, _) = manager.start_or_resume(None).await.expect("create session");
+        let mut rx = manager
+            .submit_turn(&session.session_id, &prompt)
+            .await
+            .expect("submit safe turn");
+        let mut saw_permission_request = false;
+        let mut saw_success = false;
+        let mut completion_kinds = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::PermissionRequested { .. } => saw_permission_request = true,
+                StreamEvent::ToolUseCompleted { kind, .. } => {
+                    saw_success |= kind == ToolUseCompletionKind::Success;
+                    completion_kinds.push(kind);
+                }
+                StreamEvent::TurnFinished { .. } => break,
+                _ => {}
+            }
+        }
+        assert!(
+            !saw_permission_request,
+            "safe prompt unexpectedly asked: {prompt}"
+        );
+        assert!(
+            saw_success,
+            "safe prompt did not complete: {prompt}; completions={completion_kinds:?}"
+        );
+    }
+
+    assert_eq!(
+        tokio::fs::read_to_string(manager.config.cwd.join(file_name))
+            .await
+            .expect("workspace file written"),
+        "workspace safe\n"
     );
 }
 
@@ -735,7 +1016,7 @@ async fn configured_deny_rule_blocks_before_permission_prompt() {
 }
 
 #[tokio::test]
-async fn allow_all_enables_runtime_permission_gates_without_removing_denies() {
+async fn full_access_enables_session_tool_boundaries_without_provider_coupling() {
     let manager = test_manager_with_overrides(AppConfigOverrides {
         allow_network: Some(false),
         provider_allow_network: Some(false),
@@ -745,27 +1026,20 @@ async fn allow_all_enables_runtime_permission_gates_without_removing_denies() {
     })
     .await;
 
-    let before = manager.permission_context();
-    assert!(!before.allow_tools);
-    assert!(!before.allow_network);
-    assert!(!before.provider_allow_network);
-
-    manager.set_allow_all(true);
-    let after = manager.permission_context();
+    let (session, _) = manager.start_or_resume(None).await.expect("session");
+    manager
+        .set_session_permission_preset(&session.session_id, ModelPermissionPreset::FullAccess)
+        .await
+        .expect("set Full Access");
+    let after = manager.permission_context_for_session(&session.session_id);
     assert!(after.allow_tools);
     assert!(after.allow_network);
-    assert!(after.provider_allow_network);
+    assert!(!after.provider_allow_network);
     assert!(
         after
             .tool_denied("Bash", r#"{"command":"echo denied"}"#)
             .is_some()
     );
-
-    manager.set_allow_all(false);
-    let restored = manager.permission_context();
-    assert!(!restored.allow_tools);
-    assert!(!restored.allow_network);
-    assert!(!restored.provider_allow_network);
 }
 
 #[tokio::test]
@@ -919,7 +1193,65 @@ async fn managed_only_policy_does_not_remember_approve_always_runtime_rule() {
         }
     }
 
-    assert!(manager.runtime_permission_rules().await.is_empty());
+    assert!(
+        manager
+            .runtime_permission_rules(&session.session_id)
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn removing_displayed_remembered_grant_is_scoped_to_target_session() {
+    let manager = test_manager().await;
+    let (first, _) = manager.start_or_resume(None).await.expect("first session");
+    let (second, _) = manager.start_or_resume(None).await.expect("second session");
+    for session_id in [&first.session_id, &second.session_id] {
+        manager
+            .permission_runtime
+            .remember_permission_rule_for_session(session_id, "bash", "printf:*")
+            .await;
+    }
+
+    let removed = manager
+        .remove_session_permission_rule_for_session(
+            &first.session_id,
+            PermissionRuleSettingKind::Allow,
+            "printf:*",
+        )
+        .await
+        .expect("remove remembered grant");
+    assert!(removed.changed);
+    assert!(
+        manager
+            .runtime_permission_rules(&first.session_id)
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        manager.runtime_permission_rules(&second.session_id).await,
+        vec!["printf:*"]
+    );
+    assert!(
+        !manager
+            .permission_runtime
+            .matches_permission_rule_for_session(
+                &first.session_id,
+                "bash",
+                r#"{"command":"printf hi"}"#,
+            )
+            .await
+    );
+    assert!(
+        manager
+            .permission_runtime
+            .matches_permission_rule_for_session(
+                &second.session_id,
+                "bash",
+                r#"{"command":"printf hi"}"#,
+            )
+            .await
+    );
 }
 
 #[tokio::test]
@@ -928,7 +1260,10 @@ async fn cancellation_appends_interrupted_tool_result_for_pending_tool_use() {
     let (session, _) = manager.start_or_resume(None).await.expect("create session");
     let session_id = session.session_id.clone();
     let mut rx = manager
-        .submit_turn(&session_id, r#"#tool:bash {"command":"printf hi"}"#)
+        .submit_turn(
+            &session_id,
+            r#"#tool:bash {"command":"printf hi","sandbox_permissions":"require_escalated"}"#,
+        )
         .await
         .expect("submit turn");
 
@@ -1047,8 +1382,18 @@ async fn mcp_provider_tool_name_invokes_stored_tool_directly() {
 
     let saw_tool_result = tokio::time::timeout(Duration::from_secs(3), async {
         let mut tool_started = false;
+        let mut permission_approved = false;
         while let Some(event) = rx.recv().await {
             match event {
+                StreamEvent::PermissionRequested { request } => {
+                    assert_eq!(request.tool_name, "mcp__fake__echo");
+                    permission_approved = manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::Approve,
+                        )
+                        .await;
+                }
                 StreamEvent::ToolUseStarted { tool_name, .. } => {
                     assert_eq!(tool_name, "mcp__fake__echo");
                     tool_started = true;
@@ -1061,7 +1406,7 @@ async fn mcp_provider_tool_name_invokes_stored_tool_directly() {
                                 if content.contains("server=fake") && !is_error
                         )
                     }) {
-                        return tool_started;
+                        return tool_started && permission_approved;
                     }
                 }
                 StreamEvent::TurnFinished { .. } => return false,
@@ -1074,6 +1419,73 @@ async fn mcp_provider_tool_name_invokes_stored_tool_directly() {
     .expect("turn should complete");
 
     assert!(saw_tool_result);
+}
+
+#[tokio::test]
+async fn explicit_mcp_allow_rule_cannot_bypass_untrusted_server_state() {
+    let manager = test_manager_with_overrides(AppConfigOverrides {
+        allowed_tools: vec!["mcp__fake__echo".to_string()],
+        ..AppConfigOverrides::default()
+    })
+    .await;
+    seed_fake_mcp_server(&manager).await;
+    manager
+        .mcp
+        .set_server_trust("fake", orbcode_mcp::McpServerTrust::Unknown)
+        .await
+        .expect("set untrusted");
+    let (session, _) = manager.start_or_resume(None).await.expect("create session");
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let execute = manager.execute_tool_use(
+        &session.session_id,
+        "tool-untrusted-mcp",
+        "mcp__fake__echo",
+        r#"{"foo":"bar"}"#,
+        &tx,
+        Arc::new(AtomicBool::new(false)),
+    );
+    let resolve_trust = async {
+        let mut saw_permission_request = false;
+        let mut saw_trust_request = false;
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::PermissionRequested { request } => {
+                    saw_permission_request = true;
+                    manager
+                        .respond_to_permission_request(
+                            &request.request_id,
+                            PermissionDecision::Deny,
+                        )
+                        .await;
+                }
+                StreamEvent::McpTrustApprovalRequested { request } => {
+                    saw_trust_request = true;
+                    manager
+                        .mcp
+                        .set_server_trust_for_session(
+                            &session.session_id,
+                            &request.server_id,
+                            orbcode_mcp::McpServerTrust::Denied,
+                        )
+                        .await
+                        .expect("deny trust request");
+                }
+                StreamEvent::ToolUseCompleted { .. }
+                | StreamEvent::McpTrustApprovalResolved { .. } => break,
+                _ => {}
+            }
+        }
+        (saw_permission_request, saw_trust_request)
+    };
+    let (result, (saw_permission_request, saw_trust_request)) =
+        tokio::join!(execute, resolve_trust);
+    let _ = result;
+    assert!(saw_trust_request, "untrusted server must request trust");
+    assert!(
+        !saw_permission_request,
+        "explicit allow rule should satisfy only the permission layer"
+    );
 }
 
 #[tokio::test]

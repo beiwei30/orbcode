@@ -101,6 +101,132 @@ async fn network_tools_require_network_permission() {
 }
 
 #[tokio::test]
+async fn direct_path_tools_enforce_workspace_boundaries() {
+    let registry = ToolRegistry::foundation();
+    let mut context = test_context("direct-path-boundary").await;
+    context.sandbox_mode = SandboxMode::WorkspaceWrite;
+    context.sandbox_allow_network = false;
+
+    let inside = context.cwd.join("inside.txt");
+    tokio::fs::write(&inside, "inside")
+        .await
+        .expect("inside file");
+    let outside = context.cwd.parent().expect("test root").join("outside.txt");
+    tokio::fs::write(&outside, "outside")
+        .await
+        .expect("outside file");
+
+    registry
+        .invoke(
+            "file-read",
+            &serde_json::json!({"file_path": inside}).to_string(),
+            &context,
+        )
+        .await
+        .expect("inside read");
+    let read_error = registry
+        .invoke(
+            "file-read",
+            &serde_json::json!({"file_path": outside}).to_string(),
+            &context,
+        )
+        .await
+        .expect_err("outside read must be denied before the adapter runs");
+    assert!(matches!(read_error, ToolError::PermissionDenied));
+
+    let missing_outside = context
+        .cwd
+        .parent()
+        .expect("test root")
+        .join("missing")
+        .join("new.txt");
+    let write_error = registry
+        .invoke(
+            "file-write",
+            &serde_json::json!({"file_path": missing_outside, "content": "no"}).to_string(),
+            &context,
+        )
+        .await
+        .expect_err("missing outside target must be denied");
+    assert!(matches!(write_error, ToolError::PermissionDenied));
+
+    let glob_error = registry
+        .invoke("glob", r#"{"pattern":"../*.txt"}"#, &context)
+        .await
+        .expect_err("a relative glob escape must be denied before the adapter runs");
+    assert!(matches!(glob_error, ToolError::PermissionDenied));
+
+    let notebook_error = registry
+        .invoke(
+            "NotebookEdit",
+            &serde_json::json!({
+                "notebook_path": context.cwd.parent().expect("test root").join("outside.ipynb"),
+                "new_source": "no"
+            })
+            .to_string(),
+            &context,
+        )
+        .await
+        .expect_err("an outside notebook edit must be denied before the adapter runs");
+    assert!(matches!(notebook_error, ToolError::PermissionDenied));
+}
+
+#[tokio::test]
+async fn direct_path_tools_honor_additional_directories_and_read_only_mode() {
+    let registry = ToolRegistry::foundation();
+    let mut context = test_context("direct-additional-directory").await;
+    context.sandbox_mode = SandboxMode::WorkspaceWrite;
+    let additional = context.cwd.parent().expect("test root").join("additional");
+    tokio::fs::create_dir_all(&additional)
+        .await
+        .expect("additional dir");
+    context.additional_directories.push(additional.clone());
+
+    registry
+        .invoke(
+            "file-write",
+            &serde_json::json!({
+                "file_path": additional.join("allowed.txt"),
+                "content": "allowed"
+            })
+            .to_string(),
+            &context,
+        )
+        .await
+        .expect("additional directory write");
+
+    context.sandbox_mode = SandboxMode::ReadOnly;
+    let error = registry
+        .invoke(
+            "file-write",
+            r#"{"file_path":"blocked.txt","content":"blocked"}"#,
+            &context,
+        )
+        .await
+        .expect_err("read-only mode must reject direct writes");
+    assert!(matches!(error, ToolError::PermissionDenied));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_path_tools_reject_symlink_escapes() {
+    let registry = ToolRegistry::foundation();
+    let mut context = test_context("direct-symlink-escape").await;
+    context.sandbox_mode = SandboxMode::WorkspaceWrite;
+    let outside = context.cwd.parent().expect("test root").join("secret.txt");
+    tokio::fs::write(&outside, "secret")
+        .await
+        .expect("outside file");
+    std::os::unix::fs::symlink(&outside, context.cwd.join("link.txt")).expect("symlink");
+
+    let error = registry
+        .invoke("file-read", r#"{"file_path":"link.txt"}"#, &context)
+        .await
+        .expect_err("symlink escape must be denied");
+    assert!(matches!(error, ToolError::PermissionDenied));
+}
+
+#[tokio::test]
 async fn tool_search_returns_matching_tool_schemas() {
     let registry = ToolRegistry::foundation();
     let context = test_context("tool-search").await;

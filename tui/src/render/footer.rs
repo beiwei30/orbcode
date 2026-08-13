@@ -20,6 +20,11 @@ impl TuiState {
         self.status_line_set_at = Some(Instant::now());
     }
 
+    pub(crate) fn clear_status_line(&mut self) {
+        self.status_line.clear();
+        self.status_line_set_at = None;
+    }
+
     pub(crate) fn prune_status_line(&mut self) {
         let should_clear = self.status_line_set_at.is_some_and(|set_at| {
             set_at.elapsed().as_millis() >= FOOTER_STATUS_TIMEOUT_MS as u128
@@ -119,7 +124,7 @@ impl TuiState {
 
     /// Active warning labels (context nearly exhausted, rate-limit, auth). These
     /// are appended to the status line only while a warning condition holds, so
-    /// the default status stays `<model> · <cwd>`. Test-only: the styled
+    /// the default status stays `<model> · <cwd> · <mode>`. Test-only: the styled
     /// renderer ([`Self::status_bar_line`]) inlines the same conditions.
     #[cfg(test)]
     fn status_warning_labels(&self) -> Vec<String> {
@@ -141,7 +146,11 @@ impl TuiState {
 
     #[cfg(test)]
     fn status_bar_text(&self) -> String {
-        let mut parts: Vec<String> = vec![self.status_model_label(), self.cwd_display.clone()];
+        let mut parts: Vec<String> = vec![
+            self.status_model_label(),
+            self.cwd_display.clone(),
+            self.status.permission_mode.label().to_string(),
+        ];
         parts.extend(self.status_warning_labels());
         if let Some(ref output) = self.status.custom_command_output {
             parts.push(truncate_chars(output, MAX_CUSTOM_CMD_OUTPUT_LEN));
@@ -157,6 +166,8 @@ impl TuiState {
             Span::styled(self.status_model_label(), inactive_style()),
             sep.clone(),
             Span::styled(self.cwd_display.clone(), inactive_style()),
+            sep.clone(),
+            Span::styled(self.status.permission_mode.label(), inactive_style()),
         ];
 
         if let Some(pct) = self.status.context_percent_left

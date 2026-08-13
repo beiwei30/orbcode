@@ -95,10 +95,6 @@ impl SlashCommandFeedback {
         deferred: SlashCommandDeferredFeedback::Direct,
         show_summary: true,
     };
-    pub(crate) const SUMMARY_HIDDEN_DEFERRED: Self = Self {
-        deferred: SlashCommandDeferredFeedback::Hidden,
-        show_summary: true,
-    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,7 +126,6 @@ impl SlashCommandDeferredFeedback {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TuiLocalSlashCommand {
     AddDir,
-    AllowAll,
     Branch,
     Clear,
     Compact,

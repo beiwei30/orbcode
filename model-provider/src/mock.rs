@@ -30,6 +30,9 @@
 //!   slow-consumer / backpressure tests.
 //! - `hang`: emits `MessageStart` + `ContentBlockStart` then blocks until the
 //!   provider cancellation token fires (useful for SIGTERM tests).
+//! - `review_approve`: returns the strict approval-review approve JSON.
+//! - `review_escalate`: returns the strict escalation JSON with a rationale.
+//! - `review_invalid`: returns malformed approval-review output.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -151,6 +154,37 @@ pub(crate) async fn stream_mock(
         }
         "many_deltas" => {
             stream_many_deltas(provider, request, sink, cancellation, scenario.attempts).await
+        }
+        "review_approve" => {
+            stream_text(
+                provider,
+                request,
+                sink,
+                cancellation,
+                r#"{"decision":"approve"}"#.to_string(),
+            )
+            .await
+        }
+        "review_escalate" => {
+            stream_text(
+                provider,
+                request,
+                sink,
+                cancellation,
+                r#"{"decision":"escalate_to_user","rationale":"potentially unsafe action"}"#
+                    .to_string(),
+            )
+            .await
+        }
+        "review_invalid" => {
+            stream_text(
+                provider,
+                request,
+                sink,
+                cancellation,
+                "approve without structured JSON".to_string(),
+            )
+            .await
         }
         "hang" => stream_hang(provider, request, sink, cancellation).await,
         _ => stream_success(provider, request, sink, cancellation).await,

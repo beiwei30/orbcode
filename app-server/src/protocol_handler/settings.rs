@@ -1,12 +1,12 @@
 use orbcode_app_server_protocol::{
-    ActiveOutputStyleResult, AllowAllParams, AllowAllResult, EditorModeParams, EditorModeResult,
-    EffortParams, EffortResult, EnabledParams, EnabledResult, KeybindingsFileResult,
-    KeybindingsLoadResult, ModelNameResult, ModelOptionOverview, ModelOptionsResult,
-    OutputStyleOptionOverview, OutputStyleOptionsResult, OutputStyleParams, OutputStyleResult,
-    PathResult, ProviderResolutionOverview, ProvidersResult, ResponseResult,
-    SandboxExcludedCommandParams, SandboxExcludedCommandResult, SandboxSettingsUpdate,
-    SessionIdParams, SetModelParams, SetModelResult, SetThinkingBudgetParams, SettingKeyParams,
-    SettingLockedResult, StringPathParams, ThemeParams, ThemeResult,
+    ActiveOutputStyleResult, EditorModeParams, EditorModeResult, EffortParams, EffortResult,
+    EnabledParams, EnabledResult, KeybindingsFileResult, KeybindingsLoadResult, ModelNameResult,
+    ModelOptionOverview, ModelOptionsResult, OutputStyleOptionOverview, OutputStyleOptionsResult,
+    OutputStyleParams, OutputStyleResult, PathResult, ProviderResolutionOverview, ProvidersResult,
+    ResponseResult, SandboxExcludedCommandParams, SandboxExcludedCommandResult,
+    SandboxSettingsUpdate, SessionIdParams, SetModelParams, SetModelResult,
+    SetThinkingBudgetParams, SettingKeyParams, SettingLockedResult, StringPathParams, ThemeParams,
+    ThemeResult,
 };
 use serde_json::Value;
 
@@ -318,19 +318,5 @@ impl AppServer {
             }),
             Err(e) => core_error(e),
         }
-    }
-
-    pub(super) fn handle_settings_allow_all(&self, _params: Option<Value>) -> ResponseResult {
-        success(AllowAllResult {
-            allow_all: self.allow_all(),
-        })
-    }
-
-    pub(super) fn handle_settings_set_allow_all(&self, params: Option<Value>) -> ResponseResult {
-        let p: AllowAllParams = try_parse!(params);
-        self.set_allow_all(p.allow_all);
-        success(AllowAllResult {
-            allow_all: p.allow_all,
-        })
     }
 }

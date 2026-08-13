@@ -169,7 +169,7 @@ fn startup_slash_command_flush_pushes_pretui_scrollback_up_with_single_blank() {
 
     // Frame 3: completing the command closes the suggestions and shrinks the
     // viewport without bottom-pinning it during the startup window.
-    state.input = "/allow-all on".to_string();
+    state.input = "/permissions".to_string();
     state.input_cursor = state.input.len();
     run_prompt_transition(&mut state, &mut terminal, &mut screen);
     terminal.backend_mut().output.clear();
@@ -178,7 +178,11 @@ fn startup_slash_command_flush_pushes_pretui_scrollback_up_with_single_blank() {
     // committed history.
     state.input.clear();
     state.input_cursor = 0;
-    state.push_local_slash_command_output("/allow-all on", "Allow-all mode enabled.", None);
+    state.push_local_slash_command_output(
+        "/permissions",
+        "Permissions updated to Full Access.",
+        None,
+    );
     let flush = run_prompt_transition(&mut state, &mut terminal, &mut screen);
 
     let full = flush.full_terminal_screen;
@@ -208,7 +212,7 @@ fn startup_slash_command_flush_pushes_pretui_scrollback_up_with_single_blank() {
     );
     // 4. The committed local-command output is present.
     assert!(
-        text.contains("Allow-all mode enabled."),
+        text.contains("Permissions updated to Full Access."),
         "committed command output must be present:\n{full:#?}"
     );
     // 5. The banner and local-command history cells have exactly one blank row
@@ -219,7 +223,7 @@ fn startup_slash_command_flush_pushes_pretui_scrollback_up_with_single_blank() {
         .expect("banner tip present");
     let command = full
         .iter()
-        .position(|line| line.contains("❯ /allow-all on"))
+        .position(|line| line.contains("❯ /permissions"))
         .expect("committed slash command present");
     assert_eq!(
         command,
@@ -1059,10 +1063,10 @@ fn normal_history_flush_updates_viewport_before_insert() {
     let mut screen = TerminalScreenModel::new(80, 24);
     let mut state = normal_state("", 0);
     state.push_local_slash_command_output(
-        "/allow-all on",
-        "Allow-all mode enabled.",
+        "/permissions",
+        "Permissions updated to Full Access.",
         Some(
-            "Tool and network permission prompts are bypassed; configured deny rules still apply."
+            "Full Access enables unrestricted tool boundaries; configured deny and ask rules still apply."
                 .to_string(),
         ),
     );
@@ -1106,10 +1110,10 @@ fn slash_command_transition_frame_has_no_large_gap() {
     let mut screen = TerminalScreenModel::new(80, 24);
     let mut state = normal_state("", 0);
     state.push_local_slash_command_output(
-        "/allow-all on",
-        "Allow-all mode enabled.",
+        "/permissions",
+        "Permissions updated to Full Access.",
         Some(
-            "Tool and network permission prompts are bypassed; configured deny rules still apply."
+            "Full Access enables unrestricted tool boundaries; configured deny and ask rules still apply."
                 .to_string(),
         ),
     );
@@ -1118,7 +1122,7 @@ fn slash_command_transition_frame_has_no_large_gap() {
     let screen_gap = max_blank_gap(&result.full_terminal_screen);
     assert!(
         screen_gap <= 2,
-        "/allow-all: full terminal screen gap should be <= 2: gap={screen_gap}\n{:#?}",
+        "/permissions: full terminal screen gap should be <= 2: gap={screen_gap}\n{:#?}",
         result.full_terminal_screen
     );
     assert_eq!(
@@ -1281,10 +1285,10 @@ fn app_loop_terminal_mutation_always_draws() {
     terminal.set_viewport_area(Rect::new(0, 4, 80, 20));
     let mut state = normal_state("", 0);
     state.push_local_slash_command_output(
-        "/allow-all on",
-        "Allow-all mode enabled.",
+        "/permissions",
+        "Permissions updated to Full Access.",
         Some(
-            "Tool and network permission prompts are bypassed; configured deny rules still apply."
+            "Full Access enables unrestricted tool boundaries; configured deny and ask rules still apply."
                 .to_string(),
         ),
     );
@@ -2181,7 +2185,7 @@ fn idle_after_streaming_repins_history_footer_to_bottom() {
     state.history_flushed_message_count = state.messages.len();
     state.transcript_ui.emission.emitted_cell_count = state.messages.len();
     state.prompt_history = vec![
-        "/allow-all on".to_string(),
+        "/permissions".to_string(),
         prompt.to_string(),
         "dddd".to_string(),
     ];

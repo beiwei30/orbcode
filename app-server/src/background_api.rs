@@ -49,7 +49,7 @@ impl AppServer {
         self.ensure_active_session(session_id)?;
         let home_dir = &self.sessions.config().home_dir;
         if let Some(record) = read_background_task_record(home_dir, task_id).await? {
-            if record.session_id != session_id && !self.allow_all() {
+            if record.session_id != session_id {
                 return Err(CoreError::PermissionDenied(format!(
                     "cannot stop background task {task_id}: it belongs to session {} \
                      (current session is {session_id})",
@@ -86,7 +86,7 @@ impl AppServer {
         let local_shell_tasks = self.sessions.local_shell_tasks();
         if tokio::fs::try_exists(local_shell_tasks.record_path_for(task_id)).await? {
             let record = local_shell_tasks.load(task_id).await?;
-            if record.session_id != session_id && !self.allow_all() {
+            if record.session_id != session_id {
                 return Err(CoreError::PermissionDenied(format!(
                     "cannot stop local shell task {task_id}: it belongs to session {} \
                      (current session is {session_id})",
@@ -407,8 +407,8 @@ impl AppServer {
 
     /// Cancel a background job with session-ownership enforcement. When
     /// `current_session_id` is `Some`, the call is rejected with
-    /// `PermissionDenied` if the job belongs to a different session — unless
-    /// the permission mode grants `allow_all` (i.e. `bypassPermissions`).
+    /// `PermissionDenied` if the job belongs to a different session. Filesystem
+    /// or network access presets never grant cross-session ownership.
     pub async fn cancel_background_job_for_session(
         &self,
         job_id: &str,
@@ -418,7 +418,6 @@ impl AppServer {
 
         if let Some(caller_session) = current_session_id
             && record.session_id != caller_session
-            && !self.allow_all()
         {
             return Err(CoreError::PermissionDenied(format!(
                 "cannot stop background job {job_id}: it belongs to session {} \
@@ -1065,7 +1064,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_background_job_bypass_permissions_skips_ownership() {
+    async fn cancel_background_job_full_access_does_not_skip_ownership() {
         let home = test_path("cancel-bypass-home");
         let cwd = test_path("cancel-bypass-cwd");
         tokio::fs::create_dir_all(&home).await.expect("home");
@@ -1089,13 +1088,24 @@ mod tests {
             .await
             .expect("mark running");
 
-        app.set_allow_all(true);
+        let session = app.bootstrap(None).await.expect("bootstrap session");
+        app.set_session_permission_preset(
+            &session.session.session_id,
+            orbcode_protocol::ModelPermissionPreset::FullAccess,
+        )
+        .await
+        .expect("set Full Access");
 
-        let cancelled = app
-            .cancel_background_job_for_session(&record.job_id, Some("session-different"))
+        let error = app
+            .cancel_background_job_for_session(&record.job_id, Some(&session.session.session_id))
             .await
-            .expect("bypassPermissions should skip ownership check");
-        assert_eq!(cancelled.status, BackgroundJobStatus::Cancelled);
+            .expect_err("Full Access must not skip ownership check");
+        assert!(matches!(error, CoreError::PermissionDenied(_)));
+        let loaded = app
+            .load_background_job(&record.job_id)
+            .await
+            .expect("load job");
+        assert!(loaded.status.is_active());
     }
 
     #[tokio::test]

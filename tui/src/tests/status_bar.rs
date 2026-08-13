@@ -32,7 +32,6 @@ fn footer_shows_non_error_status_messages() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: "Session abc123 resumed.".to_string(),
         status_line_set_at: Some(Instant::now()),
         ui_version: "2.1.888".to_string(),
@@ -173,7 +172,7 @@ fn status_bar_shows_full_model_name_without_truncation() {
 fn status_bar_cwd_shares_model_style_with_dimmed_separator() {
     let state = normal_state("", 0);
     let line = state.footer_right_line();
-    // spans: [model, " · ", cwd]
+    // spans: [model, " · ", cwd, " · ", permission mode]
     assert_eq!(
         line.spans[0].style, line.spans[2].style,
         "cwd should use the same style as the model name"
@@ -189,6 +188,7 @@ fn status_bar_cwd_shares_model_style_with_dimmed_separator() {
         "the separator should be dimmed"
     );
     assert_eq!(line.spans[1].content.as_ref(), " \u{b7} ");
+    assert_eq!(line.spans[4].style, inactive_style());
 }
 
 #[test]
@@ -197,8 +197,8 @@ fn status_bar_shows_working_directory() {
     state.cwd_display = "~/github/orbcode".to_string();
     let text = state.footer_right_text();
     assert_eq!(
-        text, "model \u{b7} ~/github/orbcode",
-        "default status bar should be `<model> \u{b7} <cwd>`: {text}"
+        text, "model \u{b7} ~/github/orbcode \u{b7} Ask for approval",
+        "default status bar should include model, cwd, and permission mode: {text}"
     );
 }
 
@@ -338,7 +338,7 @@ fn context_percent_updated_on_turn_finished() {
 }
 
 #[test]
-fn status_bar_full_format_orders_model_cwd_then_warnings() {
+fn status_bar_full_format_orders_model_cwd_mode_then_warnings() {
     let mut state = normal_state("", 0);
     state.model_display_name = "Claude Sonnet 4".to_string();
     state.cwd_display = "~/proj".to_string();
@@ -349,8 +349,9 @@ fn status_bar_full_format_orders_model_cwd_then_warnings() {
 
     let text = state.footer_right_text();
     assert_eq!(
-        text, "Sonnet 4 max \u{b7} ~/proj \u{b7} ctx:95% \u{b7} rate-limit \u{b7} auth-err",
-        "status bar should order model+effort, cwd, then active warnings: {text}"
+        text,
+        "Sonnet 4 max \u{b7} ~/proj \u{b7} Ask for approval \u{b7} ctx:95% \u{b7} rate-limit \u{b7} auth-err",
+        "status bar should order model+effort, cwd, permission mode, then active warnings: {text}"
     );
 }
 
@@ -386,7 +387,6 @@ fn footer_left_line_is_empty_by_default() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: String::new(),
         status_line_set_at: None,
         ui_version: "2.1.888".to_string(),
@@ -471,7 +471,6 @@ fn footer_left_line_shows_interrupt_hint_while_request_is_active() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: String::new(),
         status_line_set_at: None,
         ui_version: "2.1.888".to_string(),
@@ -569,7 +568,6 @@ fn non_error_footer_status_expires_after_timeout() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: "Session abc123 resumed.".to_string(),
         status_line_set_at: Some(
             Instant::now() - std::time::Duration::from_millis(FOOTER_STATUS_TIMEOUT_MS + 5),
@@ -650,7 +648,6 @@ fn footer_left_line_hides_vim_normal_mode() {
         focus_latest_message_start: false,
         pending_history_flush: false,
         overlay: None,
-        recent_denied_permissions: Vec::new(),
         status_line: String::new(),
         status_line_set_at: None,
         ui_version: "2.1.888".to_string(),
@@ -727,13 +724,30 @@ fn status_bar_hides_custom_command_when_none() {
 }
 
 #[test]
-fn status_bar_default_shows_only_model_and_cwd() {
+fn status_bar_default_shows_model_cwd_and_permission_mode() {
     let state = normal_state("", 0);
     let text = state.footer_right_text();
     assert_eq!(
-        text, "model \u{b7} ~",
-        "status bar should show only model and cwd when nothing else is active: {text}"
+        text, "model \u{b7} ~ \u{b7} Ask for approval",
+        "status bar should show model, cwd, and permission mode: {text}"
     );
+}
+
+#[test]
+fn status_bar_tracks_each_interactive_permission_mode_as_third_field() {
+    let mut state = normal_state("", 0);
+    for mode in [
+        InteractivePermissionMode::AskForApproval,
+        InteractivePermissionMode::ApproveForMe,
+        InteractivePermissionMode::FullAccess,
+        InteractivePermissionMode::Plan,
+    ] {
+        state.status.permission_mode = mode;
+        assert_eq!(
+            state.footer_right_text(),
+            format!("model \u{b7} ~ \u{b7} {}", mode.label())
+        );
+    }
 }
 
 #[test]

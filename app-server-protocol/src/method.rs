@@ -23,6 +23,8 @@ pub const SESSION_ACP_DELETE: &str = "session/acp_delete";
 pub const SESSION_ACP_CLOSE: &str = "session/acp_close";
 pub const SESSION_CONTROL_STATE: &str = "session/control_state";
 pub const SESSION_SET_PERMISSION_MODE: &str = "session/set_permission_mode";
+pub const SESSION_PERMISSION_PRESETS: &str = "session/permission_presets";
+pub const SESSION_SET_PERMISSION_PRESET: &str = "session/set_permission_preset";
 pub const SESSION_SET_MODEL: &str = "session/set_model";
 pub const SESSION_SET_EFFORT: &str = "session/set_effort";
 pub const SESSION_GOAL_GET: &str = "session/goal/get";
@@ -78,8 +80,6 @@ pub const SETTINGS_IS_LOCKED: &str = "settings/is_locked";
 pub const SETTINGS_SET_AUTO_MEMORY: &str = "settings/set_auto_memory";
 pub const SETTINGS_ENSURE_MEMORY_FILE: &str = "settings/ensure_memory_file";
 pub const SETTINGS_ADD_SANDBOX_EXCLUDED: &str = "settings/add_sandbox_excluded";
-pub const SETTINGS_ALLOW_ALL: &str = "settings/allow_all";
-pub const SETTINGS_SET_ALLOW_ALL: &str = "settings/set_allow_all";
 
 // ---------------------------------------------------------------------------
 // Context / Usage
@@ -246,8 +246,6 @@ pub fn stable_client_request_methods() -> Vec<&'static str> {
         SETTINGS_SET_AUTO_MEMORY,
         SETTINGS_ENSURE_MEMORY_FILE,
         SETTINGS_ADD_SANDBOX_EXCLUDED,
-        SETTINGS_ALLOW_ALL,
-        SETTINGS_SET_ALLOW_ALL,
         // Context / Usage
         CONTEXT_PREVIEW,
         CONTEXT_OVERVIEW,
@@ -313,6 +311,8 @@ pub fn experimental_client_request_methods() -> Vec<&'static str> {
         SESSION_ACP_CLOSE,
         SESSION_CONTROL_STATE,
         SESSION_SET_PERMISSION_MODE,
+        SESSION_PERMISSION_PRESETS,
+        SESSION_SET_PERMISSION_PRESET,
         SESSION_SET_MODEL,
         SESSION_SET_EFFORT,
         SESSION_GOAL_GET,
@@ -564,13 +564,13 @@ mod tests {
     fn stable_client_request_methods_count() {
         // Includes the stable thinking-budget, MCP-status, and read-state
         // controls added for SDK/headless convergence.
-        assert_eq!(stable_client_request_methods().len(), 93);
+        assert_eq!(stable_client_request_methods().len(), 91);
     }
 
     #[test]
     fn experimental_client_request_methods_count() {
-        // 13 session + 9 background (including async cancellation) + 4 workflows.
-        assert_eq!(experimental_client_request_methods().len(), 26);
+        // 15 session + 9 background (including async cancellation) + 4 workflows.
+        assert_eq!(experimental_client_request_methods().len(), 28);
     }
 
     #[test]

@@ -179,6 +179,14 @@ impl AppServer {
         *guard = Some(session_id.to_string());
     }
 
+    pub(crate) fn active_session_id(&self) -> Option<String> {
+        let guard = match self.active_session_id.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clone()
+    }
+
     pub(crate) fn ensure_active_session(&self, session_id: &str) -> Result<(), CoreError> {
         let guard = match self.active_session_id.read() {
             Ok(guard) => guard,

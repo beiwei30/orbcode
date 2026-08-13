@@ -3,17 +3,17 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use orbcode_protocol::{
+    ApprovalPolicy, ApprovalReviewer, ModelPermissionPolicy, ModelPermissionPreset,
+};
+
 /// Protocol-owned permission mode used by session-scoped client controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionMode {
     Default,
-    #[serde(alias = "accept-edits")]
-    AcceptEdits,
     #[serde(alias = "bypass-permissions")]
     BypassPermissions,
-    #[serde(alias = "dont-ask")]
-    DontAsk,
     Plan,
     Auto,
 }
@@ -22,9 +22,7 @@ impl PermissionMode {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
             "default" => Some(Self::Default),
-            "acceptEdits" | "accept-edits" => Some(Self::AcceptEdits),
             "bypassPermissions" | "bypass-permissions" => Some(Self::BypassPermissions),
-            "dontAsk" | "dont-ask" => Some(Self::DontAsk),
             "plan" => Some(Self::Plan),
             "auto" => Some(Self::Auto),
             _ => None,
@@ -34,9 +32,7 @@ impl PermissionMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
-            Self::AcceptEdits => "acceptEdits",
             Self::BypassPermissions => "bypassPermissions",
-            Self::DontAsk => "dontAsk",
             Self::Plan => "plan",
             Self::Auto => "auto",
         }
@@ -134,4 +130,26 @@ pub enum PermissionDecision {
     ApproveAlways(String),
     ApproveAlwaysMany(Vec<String>),
     Deny,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PermissionPresetOption {
+    pub value: ModelPermissionPreset,
+    pub label: String,
+    pub description: String,
+    pub current: bool,
+    pub disabled_reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PermissionMode;
+
+    #[test]
+    fn removed_permission_modes_are_rejected() {
+        for value in ["acceptEdits", "accept-edits", "dontAsk", "dont-ask"] {
+            assert_eq!(PermissionMode::parse(value), None);
+            assert!(serde_json::from_str::<PermissionMode>(&format!("\"{value}\"")).is_err());
+        }
+    }
 }

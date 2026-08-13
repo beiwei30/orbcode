@@ -24,7 +24,7 @@ const BASH_TURN: &[&str] = &[
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "acceptEdits",
+    "default",
     "--allowed-tools",
     "bash",
 ];

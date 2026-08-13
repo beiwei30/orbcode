@@ -33,6 +33,7 @@ const ORBCODE_BIN: &str = env!("CARGO_BIN_EXE_orbcode");
 const ASK_USER_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=AskUserQuestion&input=%7B%22question%22%3A%22Pick%20a%20color%22%2C%22options%22%3A%5B%22red%22%2C%22blue%22%5D%7D";
 const ASK_USER_FREE_TEXT_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=AskUserQuestion&input=%7B%22question%22%3A%22Say%20anything%22%7D";
 const BASH_TOOL_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi";
+const BASH_ESCALATION_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=bash&input=%7B%22command%22%3A%22echo%20hi%22%2C%22sandbox_permissions%22%3A%22require_escalated%22%7D";
 const HTTP_MCP_TOOL_MOCK_BASE_URL: &str = "mock://anthropic?scenario=tool_use&key=mcp__docs-http__echo&input=%7B%22text%22%3A%22from%20acp%20http%22%7D";
 const HANG_MOCK_BASE_URL: &str = "mock://anthropic?scenario=hang";
 
@@ -86,7 +87,14 @@ impl AcpProcess {
 
         let mut command = Command::new(ORBCODE_BIN);
         if allow_tools {
-            command.arg("--allow-tools").arg("true");
+            command
+                .arg("--allow-tools")
+                .arg("true")
+                // Preset boundaries deliberately supersede the legacy blanket
+                // bool. These focused ACP tests need the permission layer
+                // satisfied so they can exercise MCP trust independently.
+                .arg("--allowed-tools")
+                .arg("bash,mcp__docs-server__*,mcp__docs-server-2__*,mcp__docs-http__*");
         }
 
         let command = command
@@ -1253,7 +1261,7 @@ async fn acp_sdk_client_conformance_harness_smoke() {
     let cwd = tempfile::tempdir().expect("cwd");
     let permission_requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let permission_requests_for_handler = Arc::clone(&permission_requests);
-    let agent = sdk_acp_agent(BASH_TOOL_MOCK_BASE_URL, home.path());
+    let agent = sdk_acp_agent(BASH_ESCALATION_MOCK_BASE_URL, home.path());
 
     let run = Client
         .builder()
@@ -4200,10 +4208,7 @@ async fn acp_session_prompt_basic_turn() {
 
 #[tokio::test]
 async fn acp_permission_deny_via_request_permission() {
-    let mut proc = AcpProcess::spawn_with_base_url(
-        "mock://anthropic?scenario=tool_use&key=bash&command=echo+hi",
-    )
-    .await;
+    let mut proc = AcpProcess::spawn_with_base_url(BASH_ESCALATION_MOCK_BASE_URL).await;
 
     proc.send(&json!({
         "jsonrpc": "2.0",
@@ -4345,10 +4350,7 @@ async fn acp_session_controls_have_stable_shape_and_session_isolation() {
             .iter()
             .map(|mode| mode["id"].as_str().expect("mode id"))
             .collect::<Vec<_>>();
-        assert_eq!(
-            mode_ids,
-            vec!["default", "accept_edits", "plan", "dont_ask"]
-        );
+        assert_eq!(mode_ids, vec!["default", "plan"]);
         assert!(!mode_ids.contains(&"bypass_permissions"));
         assert!(config_option(&result["configOptions"], "model").is_some());
         assert!(config_option(&result["configOptions"], "thought_level").is_some());
@@ -4640,7 +4642,7 @@ async fn acp_sdk_client_session_control_conformance() {
                     .await?;
                 let modes = created.modes.expect("SDK parses session modes");
                 assert_eq!(modes.current_mode_id.to_string(), "default");
-                assert_eq!(modes.available_modes.len(), 4);
+                assert_eq!(modes.available_modes.len(), 2);
                 let options = created.config_options.expect("SDK parses config options");
                 assert!(
                     options

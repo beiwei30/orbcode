@@ -447,14 +447,14 @@ mod tests {
             ),
             layer(
                 SettingOrigin::Local,
-                json!({"permissions": {"defaultMode": "acceptEdits"}}),
+                json!({"permissions": {"defaultMode": "auto"}}),
             ),
         ];
         let resolved = ResolvedSettings::resolve(&layers);
         let mode = resolved
             .attributed("/permissions/defaultMode")
             .expect("mode leaf");
-        assert_eq!(mode.value, json!("acceptEdits"));
+        assert_eq!(mode.value, json!("auto"));
         assert_eq!(mode.attribution.origin, SettingOrigin::Local);
 
         let language = resolved

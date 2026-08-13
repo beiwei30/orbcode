@@ -316,6 +316,7 @@ async fn build_test_session_manager() -> SessionManager {
         .collect(),
         append_system_prompt: None,
         permission_mode: None,
+        explicit_permission_overrides: Default::default(),
         trusted_project: true,
     };
     let tools = ToolRegistry::foundation();
@@ -331,6 +332,13 @@ pub(super) async fn test_manager_with_overrides(
     overrides: AppConfigOverrides,
 ) -> TestSessionManager {
     let mut manager = test_manager().await;
+    manager.config.explicit_permission_overrides.sandbox_mode = overrides.sandbox_mode.is_some();
+    manager
+        .config
+        .explicit_permission_overrides
+        .sandbox_allow_network = overrides.sandbox_allow_network.is_some();
+    manager.config.explicit_permission_overrides.allow_network = overrides.allow_network.is_some();
+    manager.config.explicit_permission_overrides.allow_tools = overrides.allow_tools.is_some();
     manager.config.default_provider = overrides.default_provider.unwrap_or(ProviderId::Anthropic);
     manager.config.fallback_provider = overrides.fallback_provider;
     manager.config.max_retries = overrides.max_retries.unwrap_or(1);

@@ -68,8 +68,8 @@ pub use background_progress::{
 mod types;
 pub use types::{
     AgentToolInput, AskUserRequest, InteractionToolVisibility, PluginDispatchError,
-    ToolCancellationToken, ToolContext, ToolError, ToolOutcome, ToolProgressReporter, ToolRegistry,
-    ToolSpec, ToolStatus, WorkspacePlanSnapshot,
+    ToolCancellationToken, ToolCapability, ToolContext, ToolError, ToolOutcome,
+    ToolProgressReporter, ToolRegistry, ToolSpec, ToolStatus, WorkspacePlanSnapshot,
 };
 
 #[cfg(test)]
