@@ -26,6 +26,8 @@ fn pr_and_release_workflows_build_each_platform_once() {
         .expect("read binary smoke script");
     let sandbox_smoke = fs::read_to_string(repo_root.join("scripts/ci-cross-platform-smoke.sh"))
         .expect("read sandbox smoke script");
+    let build_script =
+        fs::read_to_string(repo_root.join("cli/build.rs")).expect("read orbcode build script");
 
     assert_eq!(
         workflow
@@ -95,6 +97,11 @@ fn pr_and_release_workflows_build_each_platform_once() {
     assert!(
         !binary_smoke.contains("cargo build") && !binary_smoke.contains("cargo test"),
         "binary smoke must be profile-independent and never invoke Cargo"
+    );
+    assert!(
+        build_script.contains("target.ends_with(\"-pc-windows-msvc\")")
+            && build_script.contains("rustc-link-arg-bin=orbcode=/STACK:8388608"),
+        "Windows debug binaries need enough main-thread stack for black-box smoke"
     );
 }
 
