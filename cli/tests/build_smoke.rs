@@ -8,9 +8,51 @@
 //!   - the same prompt persists a `.jsonl` transcript under the project dir.
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 const ORBCODE_BIN: &str = env!("CARGO_BIN_EXE_orbcode");
+
+#[test]
+fn release_workflow_reuses_one_prebuilt_binary_per_platform() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let workflow = fs::read_to_string(repo_root.join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+    let packaged_smoke = fs::read_to_string(repo_root.join("scripts/smoke-release.sh"))
+        .expect("read packaged smoke script");
+    let sandbox_smoke = fs::read_to_string(repo_root.join("scripts/ci-cross-platform-smoke.sh"))
+        .expect("read sandbox smoke script");
+
+    assert_eq!(
+        workflow
+            .matches("cargo build --release -p orbcode --target")
+            .count(),
+        1,
+        "release workflow should build the platform binary exactly once"
+    );
+    assert!(
+        workflow.contains("smoke-release.sh --release --no-build --target"),
+        "packaged smoke must reuse the prebuilt target binary"
+    );
+    assert!(
+        workflow.contains("ci-cross-platform-smoke.sh --release --target"),
+        "sandbox smoke must receive the same target binary"
+    );
+    assert!(
+        !workflow.contains("cargo test -p orbcode --test build_smoke --release"),
+        "release workflow must not compile a separate build_smoke harness"
+    );
+    assert!(
+        !sandbox_smoke.contains("cargo build") && !sandbox_smoke.contains("cargo test"),
+        "sandbox smoke must execute the prebuilt binary without invoking Cargo"
+    );
+    assert!(
+        !packaged_smoke.contains("cargo test"),
+        "packaged smoke must not compile a Rust test harness"
+    );
+}
 
 #[test]
 fn version_long_form_exposes_git_sha_target_and_providers() {
