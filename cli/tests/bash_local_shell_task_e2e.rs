@@ -23,6 +23,10 @@ fn bash_prompt_persists_local_shell_task_record() {
         .env_remove("CLAUDE_CODE_USE_OPENAI")
         .env_remove("ORBCODE_ALLOWED_TOOLS")
         .env_remove("ORBCODE_DISALLOWED_TOOLS")
+        // This test exercises durable task records, not the platform sandbox.
+        // The default workspace-write preset requires bubblewrap on Linux CI.
+        .arg("--sandbox-mode")
+        .arg("danger-full-access")
         .arg("prompt")
         .arg(prompt)
         .output()
