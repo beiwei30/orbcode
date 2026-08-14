@@ -1,5 +1,7 @@
 # ACP support matrix
 
+[English](acp-support.md) · [简体中文](zh-CN/acp-support.md)
+
 Last verified: 2026-08-06
 
 `orbcode acp` is an experimental Agent Client Protocol (ACP) v1 adapter over

@@ -126,6 +126,9 @@ if [ "$PTY_E2E_ONLY" = true ]; then
     exit 0
 fi
 
+step "documentation audit"
+"${REPO_ROOT}/scripts/check-docs.sh"
+
 step "rustfmt --check"
 cargo fmt --all --check
 

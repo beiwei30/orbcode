@@ -1,5 +1,7 @@
 # Interactive questions
 
+[English](interactive-questions.md) · [简体中文](zh-CN/interactive-questions.md)
+
 `AskUserQuestion` is exposed to the model only for a turn owned by a client
 that declares the complete version-1 interaction capability. The default is
 off, so unknown clients, ordinary `--print` text/JSON, background turns, and
