@@ -177,7 +177,7 @@ pub(super) async fn pinned_oauth_client(
         .no_proxy()
         .resolve_to_addrs(host, &addrs)
         .build()
-        .map_err(|error| McpError::Http(error.to_string()))
+        .map_err(McpError::http)
 }
 
 #[cfg(test)]

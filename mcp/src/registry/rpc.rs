@@ -435,4 +435,20 @@ mod rpc_retry_tests {
             "connection closed before message completed".into()
         )));
     }
+
+    #[tokio::test]
+    async fn request_provably_not_delivered_accepts_typed_reqwest_connect_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local listener");
+        let addr = listener.local_addr().expect("local listener address");
+        drop(listener);
+        let source = reqwest::Client::new()
+            .get(format!("http://{addr}"))
+            .send()
+            .await
+            .expect_err("closed local port should fail during connect");
+
+        assert!(request_provably_not_delivered(&McpError::http(source)));
+    }
 }

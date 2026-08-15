@@ -49,7 +49,8 @@ impl RestartBackoff {
     pub(crate) fn next_delay(&self) -> std::time::Duration {
         let raw = (Self::BASE_SECS * 2.0_f64.powi(self.attempt as i32)).min(Self::MAX_SECS);
         let jitter_range = raw * Self::JITTER_FRACTION;
-        let jitter = (rand_u32() as f64 / u32::MAX as f64) * 2.0 * jitter_range - jitter_range;
+        let jitter =
+            (f64::from(rand_u32()) / f64::from(u32::MAX)) * 2.0 * jitter_range - jitter_range;
         let delay = (raw + jitter).max(0.1);
         std::time::Duration::from_secs_f64(delay)
     }

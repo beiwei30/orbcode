@@ -73,7 +73,7 @@ pub(super) async fn discover_oauth_metadata_struct(
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|error| McpError::Http(error.to_string()))?;
+        .map_err(McpError::http)?;
     let response = timeout(
         HTTP_REQUEST_TIMEOUT,
         client
@@ -98,7 +98,7 @@ pub(super) async fn discover_oauth_metadata_struct(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth discovery initialize".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?;
+    .map_err(McpError::http)?;
 
     if response.status() != reqwest::StatusCode::UNAUTHORIZED
         && response.status() != reqwest::StatusCode::FORBIDDEN
@@ -148,12 +148,12 @@ pub(super) async fn discover_oauth_metadata_struct(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth protected resource metadata".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?
+    .map_err(McpError::http)?
     .error_for_status()
-    .map_err(|error| McpError::Http(error.to_string()))?
+    .map_err(McpError::http)?
     .json()
     .await
-    .map_err(|error| McpError::Http(error.to_string()))?;
+    .map_err(McpError::http)?;
 
     let Some(authorization_server) = protected.authorization_servers.first() else {
         return Err(McpError::Protocol(format!(
@@ -176,12 +176,12 @@ pub(super) async fn discover_oauth_metadata_struct(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth authorization server metadata".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?
+    .map_err(McpError::http)?
     .error_for_status()
-    .map_err(|error| McpError::Http(error.to_string()))?
+    .map_err(McpError::http)?
     .json()
     .await
-    .map_err(|error| McpError::Http(error.to_string()))?;
+    .map_err(McpError::http)?;
 
     // RFC 8414 §3.3: authenticate the metadata document by requiring its
     // `issuer` to equal the authorization server identifier we fetched it from.

@@ -78,7 +78,7 @@ pub(crate) async fn refresh_mcp_oauth_token(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth token refresh".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?;
+    .map_err(McpError::http)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -96,10 +96,7 @@ pub(crate) async fn refresh_mcp_oauth_token(
         });
     }
 
-    let refresh: OAuthTokenResponse = response
-        .json()
-        .await
-        .map_err(|error| McpError::Http(error.to_string()))?;
+    let refresh: OAuthTokenResponse = response.json().await.map_err(McpError::http)?;
     let input = oauth_token_input_from_response(
         refresh,
         token.token_endpoint.clone(),
