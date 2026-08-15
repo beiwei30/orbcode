@@ -1,5 +1,7 @@
 # Experimental Persistent Goals
 
+[English](persistent-goals.md) · [简体中文](zh-CN/persistent-goals.md)
+
 Persistent goals are a session-scoped, transcript-backed capability. A session
 has at most one current goal, while prior snapshots and checkpoints remain in
 the JSONL transcript. The feature is experimental: a connection must set both

@@ -1,5 +1,7 @@
 # ACP with Zed
 
+[English](acp-zed-smoke.md) · [简体中文](zh-CN/acp-zed-smoke.md)
+
 Last verified: 2026-08-05
 
 This guide configures Zed to launch `orbcode acp` as a custom external agent

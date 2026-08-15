@@ -1,5 +1,7 @@
 # Typed Settings Ownership and Raw JSON Boundaries
 
+[English](settings-architecture.md) · [简体中文](zh-CN/settings-architecture.md)
+
 This document records the post-boundary settings architecture. Stable client
 settings are typed; raw JSON remains only where compatibility or an extension
 owner requires an open schema.

@@ -6,8 +6,8 @@ body:
     attributes:
       value: |
         Orb Code is alpha software, so "not implemented yet" is a real possibility —
-        the [feature maturity tables](https://github.com/beiwei30/orbcode#features-and-maturity)
-        in the README say what is stable, beta, experimental, or deferred.
+        the [feature status matrix](https://github.com/beiwei30/orbcode/blob/main/docs/feature-status.md)
+        says what is stable, beta, experimental, or deferred.
 
         If this is a security issue, please **stop** and use
         [SECURITY.md](https://github.com/beiwei30/orbcode/blob/main/SECURITY.md) instead.
