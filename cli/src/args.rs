@@ -737,21 +737,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn control_support_inventory_matches_help_and_readme() {
+    fn control_support_inventory_matches_help_and_docs() {
         let help = Cli::command().render_long_help().to_string();
-        let readme = include_str!("../../README.md");
+        let docs = include_str!("../../docs/stream-json.md");
         for subtype in SUPPORTED_CONTROL_SUBTYPES {
             assert!(help.contains(subtype), "long help missing {subtype}");
             assert!(
-                readme.contains(&format!("`{subtype}`")),
-                "README missing {subtype}"
+                docs.contains(&format!("`{subtype}`")),
+                "stream-JSON docs missing {subtype}"
             );
         }
         for subtype in UNSUPPORTED_CONTROL_SUBTYPES {
             assert!(help.contains(subtype), "long help missing {subtype}");
             assert!(
-                readme.contains(&format!("`{subtype}`")) && readme.contains("unsupported"),
-                "README must document {subtype} as unsupported"
+                docs.contains(&format!("`{subtype}`")) && docs.contains("unsupported"),
+                "stream-JSON docs must document {subtype} as unsupported"
             );
         }
     }
