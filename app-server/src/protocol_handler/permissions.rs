@@ -28,11 +28,12 @@ pub(crate) fn wire_to_core(
     match wire {
         PermissionDecisionWire::Approve => Ok(orbcode_core::PermissionDecision::Approve),
         PermissionDecisionWire::Deny => Ok(orbcode_core::PermissionDecision::Deny),
-        PermissionDecisionWire::ApproveAlways { rules } => {
+        PermissionDecisionWire::ApproveAlways { mut rules } => {
             if rules.len() == 1 {
-                Ok(orbcode_core::PermissionDecision::ApproveAlways(
-                    rules.into_iter().next().unwrap(),
-                ))
+                let Some(rule) = rules.pop() else {
+                    return Err(invalid_params("approve_always requires one rule"));
+                };
+                Ok(orbcode_core::PermissionDecision::ApproveAlways(rule))
             } else if rules.len() > 1 {
                 Ok(orbcode_core::PermissionDecision::ApproveAlwaysMany(rules))
             } else {

@@ -412,14 +412,10 @@ fn url_decode(input: &str) -> String {
                 let hi = iter.next();
                 let lo = iter.next();
                 match (hi, lo) {
-                    (Some(hi), Some(lo))
-                        if (hi as char).is_ascii_hexdigit() && (lo as char).is_ascii_hexdigit() =>
-                    {
-                        let value = ((hi as char).to_digit(16).unwrap() * 16
-                            + (lo as char).to_digit(16).unwrap())
-                            as u8;
-                        bytes.push(value);
-                    }
+                    (Some(hi), Some(lo)) => match decode_hex_pair(hi, lo) {
+                        Some(value) => bytes.push(value),
+                        None => bytes.extend_from_slice(&[b'%', hi, lo]),
+                    },
                     // Malformed escape: preserve the literal bytes read.
                     (hi, lo) => {
                         bytes.push(b'%');
@@ -437,6 +433,19 @@ fn url_decode(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn decode_hex_pair(high: u8, low: u8) -> Option<u8> {
+    Some((hex_value(high)? << 4) | hex_value(low)?)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Strip HTML tags and decode entities from `raw`, returning trimmed plain text.
