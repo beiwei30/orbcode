@@ -24,6 +24,10 @@ struct BedrockCountTokensResponse {
     input_tokens: Option<u64>,
 }
 
+fn saturating_provider_token_count(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 use super::{
     build_provider_http_client, parse_http_error, provider_interrupted_error,
     provider_transport_error_for, rate_limit_from_headers,
@@ -83,7 +87,9 @@ pub async fn count_tokens_anthropic(
         )
     })?;
 
-    Ok(response_body.input_tokens.map(|v| v as usize))
+    Ok(response_body
+        .input_tokens
+        .map(saturating_provider_token_count))
 }
 
 /// Count tokens through a Bedrock-compatible count-tokens endpoint.
@@ -130,7 +136,9 @@ pub async fn count_tokens_bedrock(
         Err(_) => return Ok(None),
     };
 
-    Ok(response_body.input_tokens.map(|v| v as usize))
+    Ok(response_body
+        .input_tokens
+        .map(saturating_provider_token_count))
 }
 
 /// Count tokens with a Haiku-class fallback model.
@@ -332,4 +340,14 @@ fn chunk_text(text: &str) -> Vec<String> {
     }
 
     chunks
+}
+
+#[cfg(test)]
+mod numeric_tests {
+    use super::saturating_provider_token_count;
+
+    #[test]
+    fn provider_token_count_saturates_to_platform_limit() {
+        assert_eq!(saturating_provider_token_count(u64::MAX), usize::MAX);
+    }
 }

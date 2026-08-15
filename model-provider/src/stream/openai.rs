@@ -295,6 +295,10 @@ struct OpenAiStreamAdapter {
     stopped: bool,
 }
 
+fn saturating_token_count(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 impl OpenAiStreamAdapter {
     fn events_from_chunk(
         &mut self,
@@ -398,20 +402,20 @@ impl OpenAiStreamAdapter {
             return;
         };
         if let Some(input_tokens) = usage.prompt_tokens {
-            self.input_tokens = input_tokens as u32;
+            self.input_tokens = saturating_token_count(input_tokens);
         }
         if let Some(cached) = usage
             .prompt_tokens_details
             .as_ref()
             .and_then(|d| d.cached_tokens)
         {
-            self.cache_read_input_tokens = cached as u32;
+            self.cache_read_input_tokens = saturating_token_count(cached);
         }
         if let Some(output_tokens) = usage.completion_tokens {
-            self.output_tokens = output_tokens as u32;
+            self.output_tokens = saturating_token_count(output_tokens);
         }
         if let Some(total_tokens) = usage.total_tokens {
-            self.total_tokens = total_tokens as u32;
+            self.total_tokens = saturating_token_count(total_tokens);
         }
     }
 
@@ -562,4 +566,28 @@ fn map_openai_finish_reason(reason: &str) -> String {
         _ => "end_turn",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_usage_saturates_instead_of_wrapping() {
+        let mut adapter = OpenAiStreamAdapter::default();
+        adapter.update_usage(Some(&OpenAiUsagePayload {
+            prompt_tokens: Some(u64::MAX),
+            prompt_tokens_details: Some(OpenAiPromptTokensDetails {
+                cached_tokens: Some(1),
+            }),
+            completion_tokens: Some(u64::MAX),
+            total_tokens: Some(u64::MAX),
+        }));
+
+        let usage = adapter.current_usage(true);
+        assert_eq!(usage.input_tokens, u32::MAX - 1);
+        assert_eq!(usage.cache_read_input_tokens, 1);
+        assert_eq!(usage.output_tokens, u32::MAX);
+        assert_eq!(usage.total_tokens, u32::MAX);
+    }
 }

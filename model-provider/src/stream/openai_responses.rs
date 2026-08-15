@@ -428,24 +428,28 @@ impl OpenAiResponsesStreamReader {
     }
 }
 
+fn saturating_token_count(value: Option<u64>) -> u32 {
+    match value {
+        Some(value) => u32::try_from(value).unwrap_or(u32::MAX),
+        None => 0,
+    }
+}
+
 fn responses_usage(value: &Value) -> TokenUsage {
-    let input_tokens = value
-        .get("input_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or_default() as u32;
-    let cached = value
-        .pointer("/input_tokens_details/cached_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or_default() as u32;
-    let output_tokens = value
-        .get("output_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or_default() as u32;
+    let input_tokens = saturating_token_count(value.get("input_tokens").and_then(Value::as_u64));
+    let cached = saturating_token_count(
+        value
+            .pointer("/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64),
+    );
+    let output_tokens = saturating_token_count(value.get("output_tokens").and_then(Value::as_u64));
     let total_tokens = value
         .get("total_tokens")
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| u64::from(input_tokens) + u64::from(output_tokens))
-        as u32;
+        .map_or_else(
+            || input_tokens.saturating_add(output_tokens),
+            |value| saturating_token_count(Some(value)),
+        );
     TokenUsage {
         input_tokens: input_tokens.saturating_sub(cached),
         cache_read_input_tokens: cached,
@@ -508,6 +512,31 @@ mod tests {
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::ContentBlockDelta { delta: ProviderContentBlockDelta::Signature(value), .. } if value == "opaque")));
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::ContentBlockStart { block: ProviderContentBlockStart::ToolUse { id, name, .. }, .. } if id == "call-1" && name == "Read")));
         assert!(events.iter().any(|event| matches!(event, ProviderStreamEvent::MessageDelta { stop_reason: Some(reason), usage } if reason == "tool_use" && usage.input_tokens == 8 && usage.cache_read_input_tokens == 2)));
+    }
+
+    #[test]
+    fn oversized_usage_saturates_instead_of_wrapping() {
+        let usage = responses_usage(&serde_json::json!({
+            "input_tokens": u64::MAX,
+            "input_tokens_details": { "cached_tokens": 1 },
+            "output_tokens": u64::MAX,
+            "total_tokens": u64::MAX,
+        }));
+
+        assert_eq!(usage.input_tokens, u32::MAX - 1);
+        assert_eq!(usage.cache_read_input_tokens, 1);
+        assert_eq!(usage.output_tokens, u32::MAX);
+        assert_eq!(usage.total_tokens, u32::MAX);
+    }
+
+    #[test]
+    fn derived_total_saturates_when_components_exceed_u32() {
+        let usage = responses_usage(&serde_json::json!({
+            "input_tokens": u32::MAX,
+            "output_tokens": u32::MAX,
+        }));
+
+        assert_eq!(usage.total_tokens, u32::MAX);
     }
 
     #[test]
