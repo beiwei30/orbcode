@@ -359,7 +359,12 @@ impl GlobalOptions {
         }
         if let Some(mode) = self.permission_mode {
             args.push("--permission-mode".to_string());
-            args.push(mode.to_possible_value().unwrap().get_name().to_string());
+            args.push(
+                mode.to_possible_value()
+                    .expect("CliPermissionMode variants always have clap possible values")
+                    .get_name()
+                    .to_string(),
+            );
         }
         if let Some(text) = &self.append_system_prompt {
             args.push("--append-system-prompt".to_string());

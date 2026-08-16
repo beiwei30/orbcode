@@ -439,11 +439,11 @@ where
         ));
     }
     let masked = header[1] & 0x80 != 0;
-    let mut len = (header[1] & 0x7f) as u64;
+    let mut len = u64::from(header[1] & 0x7f);
     if len == 126 {
         let mut extended = [0_u8; 2];
         stream.read_exact(&mut extended).await?;
-        len = u16::from_be_bytes(extended) as u64;
+        len = u64::from(u16::from_be_bytes(extended));
     } else if len == 127 {
         let mut extended = [0_u8; 8];
         stream.read_exact(&mut extended).await?;

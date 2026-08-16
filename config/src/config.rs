@@ -820,8 +820,10 @@ impl AppConfig {
         }
         if self.policy.available_models.is_some() {
             options.retain(|option| {
-                option.value.is_none()
-                    || self.policy.model_allowed(option.value.as_deref().unwrap())
+                option
+                    .value
+                    .as_deref()
+                    .is_none_or(|model| self.policy.model_allowed(model))
             });
         }
         options

@@ -310,7 +310,7 @@ pub(crate) async fn register_oauth_client(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth dynamic client registration".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?;
+    .map_err(McpError::http)?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
@@ -324,10 +324,8 @@ pub(crate) async fn register_oauth_client(
             }
         )));
     }
-    let registration: OAuthClientRegistrationResponse = response
-        .json()
-        .await
-        .map_err(|error| McpError::Http(error.to_string()))?;
+    let registration: OAuthClientRegistrationResponse =
+        response.json().await.map_err(McpError::http)?;
     let client_id = registration.client_id.trim().to_string();
     if client_id.is_empty() {
         return Err(McpError::Protocol(
@@ -373,13 +371,10 @@ async fn exchange_oauth_authorization_code(
     )
     .await
     .map_err(|_| McpError::Timeout("oauth authorization code token".to_string()))?
-    .map_err(|error| McpError::Http(error.to_string()))?
+    .map_err(McpError::http)?
     .error_for_status()
-    .map_err(|error| McpError::Http(error.to_string()))?;
-    response
-        .json()
-        .await
-        .map_err(|error| McpError::Http(error.to_string()))
+    .map_err(McpError::http)?;
+    response.json().await.map_err(McpError::http)
 }
 
 /// A cryptographically random CSRF `state` value. The previous

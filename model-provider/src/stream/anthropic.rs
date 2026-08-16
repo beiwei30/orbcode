@@ -93,6 +93,10 @@ fn usage_from_optional(usage: Option<TokenUsage>) -> TokenUsage {
     }
 }
 
+fn saturating_content_index(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 pub fn provider_stream_event_from_sse_frame(
     event_name: &str,
     data: &str,
@@ -134,7 +138,7 @@ pub fn provider_stream_event_from_sse_frame(
             let Some(block) = frame.content_block else {
                 return Ok(None);
             };
-            let index = frame.index.map_or(usize::MAX, |v| v as usize);
+            let index = frame.index.map_or(usize::MAX, saturating_content_index);
             let content = match block.block_type.as_deref() {
                 Some("text") => ProviderContentBlockStart::Text {
                     text: block.text.unwrap_or_default(),
@@ -159,7 +163,7 @@ pub fn provider_stream_event_from_sse_frame(
             })
         }
         Some("content_block_delta") => {
-            let index = frame.index.map_or(usize::MAX, |v| v as usize);
+            let index = frame.index.map_or(usize::MAX, saturating_content_index);
             let Some(delta) = frame.delta else {
                 return Ok(None);
             };
@@ -177,7 +181,7 @@ pub fn provider_stream_event_from_sse_frame(
             delta.map(|delta| ProviderStreamEvent::ContentBlockDelta { index, delta })
         }
         Some("content_block_stop") => Some(ProviderStreamEvent::ContentBlockStop {
-            index: frame.index.map_or(usize::MAX, |v| v as usize),
+            index: frame.index.map_or(usize::MAX, saturating_content_index),
         }),
         Some("message_stop") => Some(ProviderStreamEvent::MessageStop),
         Some("error") => {
@@ -447,4 +451,14 @@ fn serialize_initial_tool_input(value: Option<&Value>) -> String {
         return String::new();
     }
     serialize_block_payload(Some(value))
+}
+
+#[cfg(test)]
+mod numeric_tests {
+    use super::saturating_content_index;
+
+    #[test]
+    fn content_index_saturates_to_platform_limit() {
+        assert_eq!(saturating_content_index(u64::MAX), usize::MAX);
+    }
 }

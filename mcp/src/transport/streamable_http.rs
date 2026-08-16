@@ -36,7 +36,7 @@ impl StreamableHttpMcpClient {
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .map_err(|error| McpError::Http(error.to_string()))?,
+                .map_err(McpError::http)?,
             endpoint: endpoint.into(),
             headers,
             next_id: 1,
@@ -117,7 +117,7 @@ impl StreamableHttpMcpClient {
         )
         .await
         .map_err(|_| McpError::Timeout(format!("http {method}")))?
-        .map_err(|error| McpError::Http(error.to_string()))?;
+        .map_err(McpError::http)?;
 
         if let Some(session_id) = response
             .headers()
@@ -174,7 +174,7 @@ impl StreamableHttpMcpClient {
         let text = timeout(self.request_timeout, response.text())
             .await
             .map_err(|_| McpError::Timeout(format!("http {method} body")))?
-            .map_err(|error| McpError::Http(error.to_string()))?;
+            .map_err(McpError::http)?;
         let media_type = content_type
             .split(';')
             .next()
@@ -212,7 +212,7 @@ impl StreamableHttpMcpClient {
         )
         .await
         .map_err(|_| McpError::Timeout("http shutdown".to_string()))?
-        .map_err(|error| McpError::Http(error.to_string()))?;
+        .map_err(McpError::http)?;
 
         if response.status().is_success()
             || response.status() == reqwest::StatusCode::NOT_FOUND

@@ -47,11 +47,25 @@ pub enum McpError {
 
 impl McpError {
     pub(crate) fn http(source: reqwest::Error) -> Self {
+        let message = sanitized_reqwest_error_message(&source);
         Self::HttpWithSource {
-            message: source.to_string(),
-            source,
+            message,
+            source: source.without_url(),
         }
     }
+}
+
+fn sanitized_reqwest_error_message(source: &reqwest::Error) -> String {
+    let message = source.to_string();
+    let Some(url) = source.url() else {
+        return message;
+    };
+    let mut sanitized = url.clone();
+    let _ = sanitized.set_password(None);
+    let _ = sanitized.set_username("");
+    sanitized.set_query(None);
+    sanitized.set_fragment(None);
+    message.replace(url.as_str(), sanitized.as_str())
 }
 
 #[cfg(test)]
@@ -77,8 +91,44 @@ mod tests {
             .send()
             .await
             .expect_err("closed local port should fail");
+        let source_message = source.to_string();
         let error = McpError::http(source);
 
+        assert!(error.source().is_some());
+        assert_eq!(
+            error.to_string(),
+            format!("MCP HTTP transport error: {source_message}")
+        );
+    }
+
+    #[tokio::test]
+    async fn http_error_redacts_url_secrets_from_display_and_debug() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local listener");
+        let addr = listener.local_addr().expect("local listener address");
+        drop(listener);
+
+        let source = reqwest::Client::new()
+            .get(format!(
+                "http://canary-user:canary-password@{addr}/mcp?access_token=canary-token"
+            ))
+            .send()
+            .await
+            .expect_err("closed local port should fail");
+        let error = McpError::http(source);
+        let rendered = error.to_string();
+        let debug = format!("{error:?}");
+
+        for secret in [
+            "canary-user",
+            "canary-password",
+            "access_token",
+            "canary-token",
+        ] {
+            assert!(!rendered.contains(secret), "Display leaked {secret}");
+            assert!(!debug.contains(secret), "Debug leaked {secret}");
+        }
         assert!(error.source().is_some());
     }
 }

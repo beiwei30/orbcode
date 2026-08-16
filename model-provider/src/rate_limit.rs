@@ -10,7 +10,7 @@
 //!   headers are parsed off 429/5xx responses so the retry loop can honor the
 //!   server directive.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Base retry delay (`BASE_DELAY_MS` in TypeScript).
 pub const BASE_RETRY_DELAY_MS: u64 = 500;
@@ -84,7 +84,7 @@ impl RateLimitMetadata {
         if reset <= now {
             return None;
         }
-        Some((reset - now) * 1000)
+        Some((reset - now).saturating_mul(1000))
     }
 }
 
@@ -132,11 +132,20 @@ pub fn retry_delay_ms_with_base(
         return secs.saturating_mul(1000);
     }
 
-    let exponent = attempt.saturating_sub(1).min(32) as u32;
+    let exponent = u32::try_from(attempt.saturating_sub(1).min(32))
+        .expect("retry exponent is clamped to at most 32");
     let scaled = base_delay_ms.saturating_mul(1u64 << exponent);
     let base = scaled.min(max_delay_ms);
-    let jitter = (jitter_factor.clamp(0.0, 1.0) * 0.25 * base as f64) as u64;
-    base + jitter
+    let jitter_factor = if jitter_factor.is_nan() {
+        0.0
+    } else {
+        jitter_factor.clamp(0.0, 1.0)
+    };
+    let jitter = Duration::from_millis(base)
+        .mul_f64(jitter_factor * 0.25)
+        .as_millis();
+    let jitter = u64::try_from(jitter).unwrap_or(u64::MAX);
+    base.saturating_add(jitter)
 }
 
 /// A process-local pseudo-random jitter factor in `0.0..1.0`.
@@ -148,7 +157,7 @@ pub fn default_jitter_factor() -> f64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    (nanos % 1_000_000) as f64 / 1_000_000.0
+    f64::from(nanos % 1_000_000) / 1_000_000.0
 }
 
 #[cfg(test)]
@@ -226,6 +235,19 @@ mod tests {
             retry_delay_ms(3, None, DEFAULT_MAX_RETRY_DELAY_MS, -1.0),
             2_000
         );
+        assert_eq!(
+            retry_delay_ms(3, None, DEFAULT_MAX_RETRY_DELAY_MS, f64::NAN),
+            2_000
+        );
+    }
+
+    #[test]
+    fn extreme_delays_saturate_instead_of_overflowing() {
+        assert_eq!(retry_delay_ms(1, Some(u64::MAX), u64::MAX, 1.0), u64::MAX);
+        assert_eq!(
+            retry_delay_ms_with_base(1, None, u64::MAX, u64::MAX, 1.0),
+            u64::MAX
+        );
     }
 
     #[test]
@@ -271,5 +293,14 @@ mod tests {
             ..Default::default()
         };
         assert!(meta.reset_delay_ms().is_none());
+    }
+
+    #[test]
+    fn reset_delay_saturates_for_extreme_future_timestamp() {
+        let meta = RateLimitMetadata {
+            unified_reset_unix: Some(u64::MAX),
+            ..Default::default()
+        };
+        assert_eq!(meta.reset_delay_ms(), Some(u64::MAX));
     }
 }

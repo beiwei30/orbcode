@@ -49,7 +49,8 @@ impl RestartBackoff {
     pub(crate) fn next_delay(&self) -> std::time::Duration {
         let raw = (Self::BASE_SECS * 2.0_f64.powi(self.attempt as i32)).min(Self::MAX_SECS);
         let jitter_range = raw * Self::JITTER_FRACTION;
-        let jitter = (rand_u32() as f64 / u32::MAX as f64) * 2.0 * jitter_range - jitter_range;
+        let jitter =
+            (f64::from(rand_u32()) / f64::from(u32::MAX)) * 2.0 * jitter_range - jitter_range;
         let delay = (raw + jitter).max(0.1);
         std::time::Duration::from_secs_f64(delay)
     }
@@ -104,6 +105,16 @@ pub(crate) struct StdioClientSlot {
     client: std::sync::Mutex<Option<StdioMcpClient>>,
 }
 
+fn lock_client_slot<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    // The mutex only protects a replaceable client slot. Recovering the inner
+    // Option after a task panic is safe: an interrupted take remains `None` and
+    // is reported by the existing typed "client unavailable" path.
+    match mutex.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 impl StdioClientSlot {
     pub(crate) fn new(client: StdioMcpClient) -> Self {
         Self {
@@ -120,17 +131,14 @@ impl StdioClientSlot {
             .acquire()
             .await
             .map_err(|_| McpError::Protocol("stdio client closed".into()))?;
-        let client = self
-            .client
-            .lock()
-            .unwrap()
+        let client = lock_client_slot(&self.client)
             .take()
             .ok_or_else(|| McpError::Protocol("stdio client unavailable".into()))?;
         Ok((permit, client))
     }
 
     pub(crate) fn return_client(&self, client: StdioMcpClient) {
-        *self.client.lock().unwrap() = Some(client);
+        *lock_client_slot(&self.client) = Some(client);
     }
 }
 
@@ -155,10 +163,7 @@ impl StreamableHttpClientSlot {
             .acquire()
             .await
             .map_err(|_| McpError::Protocol("streamable HTTP client closed".into()))?;
-        let client = self
-            .client
-            .lock()
-            .unwrap()
+        let client = lock_client_slot(&self.client)
             .take()
             .ok_or_else(|| McpError::Protocol("streamable HTTP client unavailable".into()))?;
         Ok(StreamableHttpClientLease {
@@ -169,7 +174,7 @@ impl StreamableHttpClientSlot {
     }
 
     fn return_client(&self, client: StreamableHttpMcpClient) {
-        *self.client.lock().unwrap() = Some(client);
+        *lock_client_slot(&self.client) = Some(client);
     }
 }
 
@@ -751,5 +756,22 @@ fn apply_settings_trust(
             }
             Some(orbcode_config::McpServerTrustSetting::Cleared) | None => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod client_slot_tests {
+    use super::lock_client_slot;
+
+    #[test]
+    fn client_slot_lock_recovers_after_poisoning() {
+        let slot = std::sync::Mutex::new(Some(1_u8));
+        let panic = std::panic::catch_unwind(|| {
+            let _guard = slot.lock().expect("lock before poisoning");
+            panic!("poison client slot lock");
+        });
+        assert!(panic.is_err());
+
+        assert_eq!(lock_client_slot(&slot).take(), Some(1));
     }
 }

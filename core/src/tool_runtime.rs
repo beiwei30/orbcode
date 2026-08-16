@@ -11,7 +11,10 @@ use orbcode_protocol::{
 use orbcode_tools::{
     SkillDefinition, ToolContext, ToolOutcome, ToolProgressReporter, ToolRegistry, ToolSpec,
 };
-use tokio::sync::mpsc;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::{JoinHandle, JoinSet},
+};
 
 use crate::{
     CoreError,
@@ -554,11 +557,15 @@ where
             context.skill_definitions = Some(self.host.skill_definitions(session_id).await);
         }
 
-        let _ask_forward_handle = self
+        let ask_forward_handle = self
             .attach_ask_user_channel(session_id, tool_use_id, &mut context, tx)
             .await;
 
-        match self.tools.invoke(tool_name, tool_input, &context).await {
+        let invoke_result = self.tools.invoke(tool_name, tool_input, &context).await;
+        drop(context);
+        finish_ask_user_forwarder(ask_forward_handle).await?;
+
+        match invoke_result {
             Ok(outcome) => {
                 let details = self
                     .host
@@ -717,11 +724,15 @@ where
         if tool_name.eq_ignore_ascii_case("Skill") {
             context.skill_definitions = Some(self.host.skill_definitions(session_id).await);
         }
-        let _ask_forward_handle = self
+        let ask_forward_handle = self
             .attach_ask_user_channel(session_id, &tool_use_id, &mut context, tx)
             .await;
 
-        let result = match self.tools.invoke(&tool_name, &tool_input, &context).await {
+        let invoke_result = self.tools.invoke(&tool_name, &tool_input, &context).await;
+        drop(context);
+        finish_ask_user_forwarder(ask_forward_handle).await?;
+
+        let result = match invoke_result {
             Ok(outcome) => {
                 let details = self
                     .host
@@ -763,7 +774,7 @@ where
         tool_use_id: &str,
         context: &mut ToolContext,
         tx: &mpsc::UnboundedSender<StreamEvent>,
-    ) -> Option<tokio::task::JoinHandle<()>> {
+    ) -> Option<JoinHandle<Result<(), CoreError>>> {
         let (turn_id, interaction) = self.host.active_interaction_context(session_id).await?;
         if !interaction.capabilities.any_supported() {
             return None;
@@ -779,60 +790,162 @@ where
         let capability_snapshot = interaction.capabilities;
         let interaction_runtime = self.host.ask_user_pending();
         Some(tokio::spawn(async move {
-            while let Some(req) = ask_rx.recv().await {
-                let request_id = req.request_id.clone();
-                let questions = req.questions.clone();
-                if !capability_snapshot.can_complete(&questions) {
-                    let _ = req.response_tx.send(AskUserResponseOutcome::Cancelled {
-                        reason: AskUserCancellationReason::ClientClosed,
-                    });
-                    continue;
+            let mut request_tasks = JoinSet::new();
+            loop {
+                tokio::select! {
+                    request = ask_rx.recv() => {
+                        let Some(req) = request else {
+                            break;
+                        };
+                        let request_id = req.request_id.clone();
+                        let questions = req.questions.clone();
+                        if !capability_snapshot.can_complete(&questions) {
+                            let _ = req.response_tx.send(AskUserResponseOutcome::Cancelled {
+                                reason: AskUserCancellationReason::ClientClosed,
+                            });
+                            continue;
+                        }
+                        let legacy = legacy_stream_fields(&questions);
+                        let deadline = chrono::Utc::now() + chrono::Duration::seconds(300);
+                        let (pending_response_tx, pending_response_rx) = oneshot::channel();
+                        if interaction_runtime
+                            .register(
+                                request_id.clone(),
+                                PendingInteraction {
+                                    session_id: session_id.clone(),
+                                    turn_id: turn_id.clone(),
+                                    tool_use_id: tool_use_id.clone(),
+                                    owner_id: owner_id.clone(),
+                                    capability_snapshot: capability_snapshot.clone(),
+                                    deadline: Some(deadline.to_rfc3339()),
+                                    questions: questions.clone(),
+                                    response_tx: pending_response_tx,
+                                },
+                            )
+                            .is_err()
+                        {
+                            continue;
+                        }
+                        if tx_clone
+                            .send(StreamEvent::AskUserQuestionRequested {
+                                session_id: session_id.clone(),
+                                turn_id: Some(turn_id.clone()),
+                                tool_use_id: tool_use_id.clone(),
+                                request_id: request_id.clone(),
+                                deadline: Some(deadline.to_rfc3339()),
+                                questions,
+                                question: legacy.0,
+                                options: legacy.1,
+                            })
+                            .is_err()
+                        {
+                            interaction_runtime.cancel_request(
+                                &request_id,
+                                AskUserCancellationReason::DeliveryFailed,
+                            );
+                        }
+                        request_tasks.spawn(run_pending_ask_user_request(
+                            interaction_runtime.clone(),
+                            request_id,
+                            pending_response_rx,
+                            req.response_tx,
+                            std::time::Duration::from_secs(300),
+                        ));
+                    }
+                    joined = request_tasks.join_next(), if !request_tasks.is_empty() => {
+                        let Some(joined) = joined else {
+                            continue;
+                        };
+                        observe_ask_user_request_task(joined)?;
+                    }
                 }
-                let legacy = legacy_stream_fields(&questions);
-                let deadline = chrono::Utc::now() + chrono::Duration::seconds(300);
-                if interaction_runtime
-                    .register(
-                        request_id.clone(),
-                        PendingInteraction {
-                            session_id: session_id.clone(),
-                            turn_id: turn_id.clone(),
-                            tool_use_id: tool_use_id.clone(),
-                            owner_id: owner_id.clone(),
-                            capability_snapshot: capability_snapshot.clone(),
-                            deadline: Some(deadline.to_rfc3339()),
-                            questions: questions.clone(),
-                            response_tx: req.response_tx,
-                        },
-                    )
-                    .is_err()
-                {
-                    continue;
-                }
-                if tx_clone
-                    .send(StreamEvent::AskUserQuestionRequested {
-                        session_id: session_id.clone(),
-                        turn_id: Some(turn_id.clone()),
-                        tool_use_id: tool_use_id.clone(),
-                        request_id: request_id.clone(),
-                        deadline: Some(deadline.to_rfc3339()),
-                        questions,
-                        question: legacy.0,
-                        options: legacy.1,
-                    })
-                    .is_err()
-                {
-                    interaction_runtime
-                        .cancel_request(&request_id, AskUserCancellationReason::DeliveryFailed);
-                    continue;
-                }
-                let timeout_runtime = interaction_runtime.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                    timeout_runtime.cancel_request(&request_id, AskUserCancellationReason::Timeout);
-                });
             }
+            while let Some(joined) = request_tasks.join_next().await {
+                observe_ask_user_request_task(joined)?;
+            }
+            Ok(())
         }))
     }
+}
+
+struct PendingAskUserRequestGuard {
+    interaction_runtime: InteractionRuntime,
+    request_id: String,
+    armed: bool,
+}
+
+impl PendingAskUserRequestGuard {
+    fn new(interaction_runtime: InteractionRuntime, request_id: String) -> Self {
+        Self {
+            interaction_runtime,
+            request_id,
+            armed: true,
+        }
+    }
+
+    fn cancel(&mut self, reason: AskUserCancellationReason) {
+        self.armed = false;
+        self.interaction_runtime
+            .cancel_request(&self.request_id, reason);
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingAskUserRequestGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.interaction_runtime
+                .cancel_request(&self.request_id, AskUserCancellationReason::ClientClosed);
+        }
+    }
+}
+
+async fn run_pending_ask_user_request(
+    interaction_runtime: InteractionRuntime,
+    request_id: String,
+    mut pending_response_rx: oneshot::Receiver<AskUserResponseOutcome>,
+    mut response_tx: oneshot::Sender<AskUserResponseOutcome>,
+    timeout: std::time::Duration,
+) {
+    let mut guard = PendingAskUserRequestGuard::new(interaction_runtime, request_id);
+    tokio::select! {
+        outcome = &mut pending_response_rx => {
+            guard.disarm();
+            if let Ok(outcome) = outcome {
+                let _ = response_tx.send(outcome);
+            }
+        }
+        () = response_tx.closed() => {
+            guard.cancel(AskUserCancellationReason::Interrupt);
+        }
+        () = tokio::time::sleep(timeout) => {
+            guard.cancel(AskUserCancellationReason::Timeout);
+            let outcome = pending_response_rx.await.unwrap_or(AskUserResponseOutcome::Cancelled {
+                reason: AskUserCancellationReason::Timeout,
+            });
+            let _ = response_tx.send(outcome);
+        }
+    }
+}
+
+fn observe_ask_user_request_task(
+    result: Result<(), tokio::task::JoinError>,
+) -> Result<(), CoreError> {
+    result.map_err(|error| CoreError::Tool(format!("AskUser request task failed: {error}")))
+}
+
+async fn finish_ask_user_forwarder(
+    handle: Option<JoinHandle<Result<(), CoreError>>>,
+) -> Result<(), CoreError> {
+    let Some(handle) = handle else {
+        return Ok(());
+    };
+    handle
+        .await
+        .map_err(|error| CoreError::Tool(format!("AskUser forwarder task failed: {error}")))?
 }
 
 fn legacy_stream_fields(
@@ -849,5 +962,133 @@ fn legacy_stream_fields(
         )
     } else {
         (String::new(), Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use orbcode_protocol::AskUserQuestionSpec;
+
+    use super::*;
+
+    fn spawn_pending_request(
+        runtime: &InteractionRuntime,
+        timeout: Duration,
+    ) -> (oneshot::Receiver<AskUserResponseOutcome>, JoinHandle<()>) {
+        let request_id = "request-1".to_string();
+        let (pending_response_tx, pending_response_rx) = oneshot::channel();
+        let (response_tx, response_rx) = oneshot::channel();
+        runtime
+            .register(
+                request_id.clone(),
+                PendingInteraction {
+                    session_id: "session-1".into(),
+                    turn_id: "turn-1".into(),
+                    tool_use_id: "tool-1".into(),
+                    owner_id: "owner-1".into(),
+                    capability_snapshot: crate::InteractiveQuestionCapabilities::full(),
+                    deadline: None,
+                    questions: vec![AskUserQuestionSpec {
+                        id: "question-1".into(),
+                        question: "Continue?".into(),
+                        header: "Continue".into(),
+                        multi_select: false,
+                        options: Vec::new(),
+                        allow_free_text: true,
+                        allow_annotation: false,
+                    }],
+                    response_tx: pending_response_tx,
+                },
+            )
+            .expect("unique test request id");
+        let task = tokio::spawn(run_pending_ask_user_request(
+            runtime.clone(),
+            request_id,
+            pending_response_rx,
+            response_tx,
+            timeout,
+        ));
+        (response_rx, task)
+    }
+
+    #[tokio::test]
+    async fn ask_user_response_stops_timeout_task() {
+        let runtime = InteractionRuntime::default();
+        let (response_rx, task) = spawn_pending_request(&runtime, Duration::from_secs(60));
+        runtime
+            .resolve("session-1", "request-1", AskUserResponseOutcome::Rejected)
+            .expect("resolve request");
+
+        let outcome = tokio::time::timeout(Duration::from_millis(100), response_rx)
+            .await
+            .expect("response is forwarded without waiting for the timer")
+            .expect("response sender remains open");
+        assert_eq!(outcome, AskUserResponseOutcome::Rejected);
+        tokio::time::timeout(Duration::from_millis(100), task)
+            .await
+            .expect("request task stops after forwarding the response")
+            .expect("request task does not panic");
+        assert_eq!(runtime.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn ask_user_timeout_cancels_pending_request_once() {
+        let runtime = InteractionRuntime::default();
+        let (response_rx, task) = spawn_pending_request(&runtime, Duration::from_millis(1));
+
+        assert_eq!(
+            response_rx.await.expect("timeout response"),
+            AskUserResponseOutcome::Cancelled {
+                reason: AskUserCancellationReason::Timeout,
+            }
+        );
+        task.await.expect("request task does not panic");
+        assert_eq!(runtime.len(), 0);
+        assert!(matches!(
+            runtime.resolve("session-1", "request-1", AskUserResponseOutcome::Rejected,),
+            Err(crate::interaction_runtime::InteractionResolveError::UnknownRequest { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn ask_user_receiver_drop_cancels_pending_request_and_timer() {
+        let runtime = InteractionRuntime::default();
+        let (response_rx, task) = spawn_pending_request(&runtime, Duration::from_secs(60));
+        drop(response_rx);
+
+        tokio::time::timeout(Duration::from_millis(100), task)
+            .await
+            .expect("request task observes the closed tool receiver")
+            .expect("request task does not panic");
+        assert_eq!(runtime.len(), 0);
+    }
+
+    async fn panic_request_task() {
+        panic!("request task panic canary");
+    }
+
+    #[tokio::test]
+    async fn ask_user_request_task_panic_is_observable() {
+        let joined = tokio::spawn(panic_request_task()).await;
+        let error = observe_ask_user_request_task(joined).expect_err("panic must be an error");
+        assert!(
+            matches!(error, CoreError::Tool(message) if message.contains("request task failed"))
+        );
+    }
+
+    async fn panic_forwarder_task() -> Result<(), CoreError> {
+        panic!("forwarder task panic canary");
+    }
+
+    #[tokio::test]
+    async fn ask_user_forwarder_panic_is_observable() {
+        let error = finish_ask_user_forwarder(Some(tokio::spawn(panic_forwarder_task())))
+            .await
+            .expect_err("panic must be an error");
+        assert!(
+            matches!(error, CoreError::Tool(message) if message.contains("forwarder task failed"))
+        );
     }
 }

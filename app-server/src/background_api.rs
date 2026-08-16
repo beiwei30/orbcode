@@ -378,24 +378,44 @@ impl AppServer {
         prompt: impl Into<String>,
         job_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<StreamEvent>, CoreError> {
-        let rx = self.sessions.submit_turn(session_id, prompt).await?;
+        let mut turn_rx = self.sessions.submit_turn(session_id, prompt).await?;
 
         if let Some(cancel_flag) = self.background.cancel_token(job_id) {
             let sessions = self.sessions.clone();
             let sid = session_id.to_string();
-            // Detached cancellation watcher; it exits after cancel or when the flag is dropped.
-            let _cancel_watcher_handle = tokio::spawn(async move {
+            let (tx, rx) = mpsc::unbounded_channel();
+            // The returned receiver owns this detached supervisor. It forwards
+            // the source stream byte-for-byte and exits on its terminal event,
+            // source/consumer closure, or after forwarding cancellation. No
+            // task remains after the background turn retires.
+            tokio::spawn(async move {
+                let mut cancel_poll = tokio::time::interval(tokio::time::Duration::from_millis(50));
+                cancel_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut cancellation_forwarded = false;
                 loop {
-                    if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                        sessions.cancel_turn(&sid).await;
-                        break;
+                    tokio::select! {
+                        event = turn_rx.recv() => {
+                            let Some(event) = event else {
+                                break;
+                            };
+                            let terminal = event.is_terminal();
+                            if tx.send(event).is_err() || terminal {
+                                break;
+                            }
+                        }
+                        _ = cancel_poll.tick(), if !cancellation_forwarded => {
+                            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                                sessions.cancel_turn(&sid).await;
+                                cancellation_forwarded = true;
+                            }
+                        }
                     }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                 }
             });
+            return Ok(rx);
         }
 
-        Ok(rx)
+        Ok(turn_rx)
     }
 
     pub async fn cancel_background_job(

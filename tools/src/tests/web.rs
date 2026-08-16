@@ -375,6 +375,14 @@ fn web_search_ddg_redirect_resolution() {
         ),
         "https://example.com/café"
     );
+    assert_eq!(
+        resolve_ddg_redirect("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F%zz"),
+        "https://example.com/%zz"
+    );
+    assert_eq!(
+        resolve_ddg_redirect("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F%"),
+        "https://example.com/%"
+    );
 }
 
 #[test]

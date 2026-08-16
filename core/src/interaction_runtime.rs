@@ -140,12 +140,21 @@ pub(crate) struct InteractionRuntime {
 }
 
 impl InteractionRuntime {
+    fn lock_pending(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingInteraction>> {
+        // A poisoned lock only means a prior owner panicked. Each mutation keeps
+        // the map structurally valid, so continue serving or cancelling requests.
+        match self.pending.lock() {
+            Ok(pending) => pending,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     pub(crate) fn register(
         &self,
         request_id: String,
         interaction: PendingInteraction,
     ) -> Result<(), InteractionResolveError> {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         if pending.contains_key(&request_id) {
             return Err(InteractionResolveError::DuplicateRequest { request_id });
         }
@@ -161,7 +170,7 @@ impl InteractionRuntime {
         request_id: &str,
         outcome: AskUserResponseOutcome,
     ) -> Result<(), InteractionResolveError> {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         let interaction =
             pending
                 .get(request_id)
@@ -175,9 +184,11 @@ impl InteractionRuntime {
             });
         }
         validate_ask_user_outcome(&interaction.questions, &outcome)?;
-        let interaction = pending
-            .remove(request_id)
-            .expect("pending interaction exists after validation");
+        let Some(interaction) = pending.remove(request_id) else {
+            return Err(InteractionResolveError::UnknownRequest {
+                request_id: request_id.to_string(),
+            });
+        };
         interaction
             .response_tx
             .send(outcome)
@@ -187,7 +198,7 @@ impl InteractionRuntime {
     }
 
     pub(crate) fn cancel_request(&self, request_id: &str, reason: AskUserCancellationReason) {
-        if let Some(interaction) = self.pending.lock().unwrap().remove(request_id) {
+        if let Some(interaction) = self.lock_pending().remove(request_id) {
             let _ = interaction
                 .response_tx
                 .send(AskUserResponseOutcome::Cancelled { reason });
@@ -199,7 +210,7 @@ impl InteractionRuntime {
         request_ids: &[String],
         reason: AskUserCancellationReason,
     ) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         let interactions = request_ids
             .iter()
             .filter_map(|request_id| pending.remove(request_id))
@@ -233,7 +244,7 @@ impl InteractionRuntime {
         reason: AskUserCancellationReason,
         predicate: impl Fn(&PendingInteraction) -> bool,
     ) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         let request_ids = pending
             .iter()
             .filter_map(|(request_id, interaction)| {
@@ -253,13 +264,11 @@ impl InteractionRuntime {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.pending.lock().unwrap().len()
+        self.lock_pending().len()
     }
 
     pub(crate) fn has_pending_session(&self, session_id: &str) -> bool {
-        self.pending
-            .lock()
-            .unwrap()
+        self.lock_pending()
             .values()
             .any(|interaction| interaction.session_id == session_id)
     }
@@ -454,5 +463,26 @@ mod tests {
             InteractionResolveError::DuplicateRequest { .. }
         ));
         assert_eq!(runtime.len(), 1);
+    }
+
+    #[test]
+    fn ask_user_runtime_recovers_poisoned_pending_lock() {
+        let runtime = InteractionRuntime::default();
+        let pending = Arc::clone(&runtime.pending);
+        let panic = std::panic::catch_unwind(move || {
+            let _guard = pending.lock().expect("lock before poisoning");
+            panic!("poison pending interaction lock");
+        });
+        assert!(panic.is_err());
+
+        let response_rx = register(&runtime, "request-after-poison");
+        runtime.cancel_request("request-after-poison", AskUserCancellationReason::Shutdown);
+        assert_eq!(runtime.len(), 0);
+        assert_eq!(
+            response_rx.blocking_recv().expect("cancellation outcome"),
+            AskUserResponseOutcome::Cancelled {
+                reason: AskUserCancellationReason::Shutdown,
+            }
+        );
     }
 }
