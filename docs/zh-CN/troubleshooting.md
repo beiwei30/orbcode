@@ -102,6 +102,11 @@ issue 中注明 terminal、tmux、OS、窗口尺寸。附加前检查 trace 是�
 | `ORBCODE_FORCE_RG_FALLBACK=1` | 强制内置 Grep engine。 |
 | `ORBCODE_TRUSTED_PROJECT=0` | 标记项目不受信任，禁用 project-origin hooks。 |
 
+Render metrics 是不稳定诊断。其中 `output.draw_command_count` 表示该帧排队的
+逻辑终端命令总数：cursor、style、print、clear 命令，加上关闭/恢复自动换行的
+两个命令。因此，无变化的增量帧固定计为五条命令（两个自动换行命令和三个样式
+重置命令）；`output.bytes` 则记录编码后的字节数。
+
 ## 报告有效 issue
 
 请提供 `orbcode --version`、OS/target、脱敏 doctor rows、准确命令与退出码、active home、最小
