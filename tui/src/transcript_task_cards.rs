@@ -9,6 +9,7 @@ pub(crate) struct TranscriptTaskCardsState {
     session_id: Option<String>,
     rows: Vec<BackgroundTaskView>,
     finished_since: Option<Instant>,
+    expiry_notified: bool,
     subscribed_task_ids: HashSet<String>,
     pending_subscriptions: VecDeque<String>,
 }
@@ -19,6 +20,7 @@ impl TranscriptTaskCardsState {
             session_id: None,
             rows: Vec::new(),
             finished_since: None,
+            expiry_notified: false,
             subscribed_task_ids: HashSet::new(),
             pending_subscriptions: VecDeque::new(),
         }
@@ -30,6 +32,7 @@ impl TranscriptTaskCardsState {
             self.session_id = Some(next);
             self.rows.clear();
             self.finished_since = None;
+            self.expiry_notified = false;
             self.subscribed_task_ids.clear();
             self.pending_subscriptions.clear();
         }
@@ -56,7 +59,11 @@ impl TranscriptTaskCardsState {
         let Some(at) = self.finished_since else {
             return false;
         };
-        !self.has_active() && now.duration_since(at) >= FINISHED_TTL
+        if !self.has_active() && !self.expiry_notified && now.duration_since(at) >= FINISHED_TTL {
+            self.expiry_notified = true;
+            return true;
+        }
+        false
     }
 
     pub(crate) fn apply_pushed_view(&mut self, view: BackgroundTaskView, now: Instant) -> bool {
@@ -86,11 +93,21 @@ impl TranscriptTaskCardsState {
     fn apply_views(&mut self, next: Vec<BackgroundTaskView>, now: Instant) -> bool {
         let changed = next != self.rows;
         let next_has_active = next.iter().any(|row| row.status.is_active());
+        let has_new_finished_generation = !next_has_active
+            && next.iter().any(|next_row| {
+                !next_row.status.is_active()
+                    && !self.rows.iter().any(|current_row| {
+                        current_row.task_id == next_row.task_id
+                            && current_row.status == next_row.status
+                    })
+            });
         self.rows = next;
         if next_has_active || self.rows.is_empty() {
             self.finished_since = None;
-        } else if self.finished_since.is_none() {
+            self.expiry_notified = false;
+        } else if self.finished_since.is_none() || has_new_finished_generation {
             self.finished_since = Some(now);
+            self.expiry_notified = false;
         }
         changed
     }
@@ -146,5 +163,85 @@ mod tests {
             vec!["workflow-1".to_string()]
         );
         assert!(state.drain_subscription_requests().is_empty());
+    }
+
+    #[test]
+    fn finished_expiry_requests_exactly_one_redraw() {
+        let mut state = TranscriptTaskCardsState::new();
+        state.set_session_id("session");
+        let start = Instant::now();
+        state.apply_pushed_view(
+            task("workflow-1", BackgroundTaskViewStatus::Completed),
+            start,
+        );
+
+        assert!(state.is_visible(start));
+        assert!(!state.tick(start + FINISHED_TTL - Duration::from_millis(1)));
+        assert!(state.tick(start + FINISHED_TTL));
+        assert!(!state.tick(start + FINISHED_TTL));
+        assert!(!state.tick(start + FINISHED_TTL + Duration::from_secs(10)));
+        assert!(!state.is_visible(start + FINISHED_TTL));
+        state.apply_pushed_view(
+            task("workflow-1", BackgroundTaskViewStatus::Completed),
+            start + FINISHED_TTL + Duration::from_secs(11),
+        );
+        assert!(!state.tick(start + FINISHED_TTL * 2 + Duration::from_secs(11)));
+    }
+
+    #[test]
+    fn active_and_new_completed_generations_reset_expiry_latch() {
+        let mut state = TranscriptTaskCardsState::new();
+        state.set_session_id("session");
+        let start = Instant::now();
+        state.apply_pushed_view(
+            task("workflow-1", BackgroundTaskViewStatus::Completed),
+            start,
+        );
+        assert!(state.tick(start + FINISHED_TTL));
+        assert!(!state.tick(start + FINISHED_TTL));
+
+        let active_at = start + FINISHED_TTL + Duration::from_secs(1);
+        state.apply_pushed_view(
+            task("workflow-2", BackgroundTaskViewStatus::Running),
+            active_at,
+        );
+        assert_eq!(
+            state.drain_subscription_requests(),
+            vec!["workflow-2".to_string()]
+        );
+        assert!(!state.tick(active_at + FINISHED_TTL));
+
+        let completed_at = active_at + Duration::from_secs(1);
+        state.apply_pushed_view(
+            task("workflow-2", BackgroundTaskViewStatus::Completed),
+            completed_at,
+        );
+        assert!(state.tick(completed_at + FINISHED_TTL));
+        assert!(!state.tick(completed_at + FINISHED_TTL));
+
+        let next_generation_at = completed_at + FINISHED_TTL + Duration::from_secs(1);
+        state.apply_pushed_view(
+            task("workflow-3", BackgroundTaskViewStatus::Completed),
+            next_generation_at,
+        );
+        assert!(!state.tick(next_generation_at + FINISHED_TTL - Duration::from_millis(1)));
+        assert!(state.tick(next_generation_at + FINISHED_TTL));
+        assert!(!state.tick(next_generation_at + FINISHED_TTL));
+    }
+
+    #[test]
+    fn empty_rows_and_session_reset_do_not_request_expiry_redraw() {
+        let mut state = TranscriptTaskCardsState::new();
+        state.set_session_id("session");
+        let start = Instant::now();
+        assert!(!state.tick(start + FINISHED_TTL));
+
+        state.apply_pushed_view(
+            task("workflow-1", BackgroundTaskViewStatus::Completed),
+            start,
+        );
+        state.set_session_id("other-session");
+        assert!(state.rows().is_empty());
+        assert!(!state.tick(start + FINISHED_TTL));
     }
 }
