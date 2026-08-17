@@ -440,31 +440,6 @@ impl TuiState {
         ))
     }
 
-    pub(crate) fn finalize_deferred_assistant_message(
-        &mut self,
-        transcript_width: usize,
-        terminal_height: u16,
-    ) -> bool {
-        let _ = (transcript_width, terminal_height);
-        self.commit_deferred_assistant_message()
-    }
-
-    pub(crate) fn commit_deferred_assistant_message(&mut self) -> bool {
-        if !self.pending_assistant.is_empty() {
-            return false;
-        }
-
-        let Some(deferred) = self.deferred_assistant_message.take() else {
-            return false;
-        };
-
-        self.clear_latest_message_focus();
-        self.messages.push(deferred.message);
-        self.pending_history_flush = true;
-        self.focus_latest_message_start = false;
-        true
-    }
-
     pub(crate) fn reset_pending_assistant_stream(&mut self) {
         if self.assistant_stream_history_started() {
             self.reset_assistant_stream_history_for_reflow();
@@ -472,7 +447,6 @@ impl TuiState {
             self.reset_assistant_stream_history();
         }
         self.pending_assistant.clear();
-        self.deferred_assistant_message = None;
     }
 
     /// Whether a completed (non-streaming, non-empty) thinking block is sitting
@@ -902,7 +876,6 @@ impl TuiState {
                     );
                     self.clear_latest_message_focus();
                     self.pending_assistant.clear();
-                    self.deferred_assistant_message = None;
                     self.messages.push(message);
                     self.pending_history_flush = true;
                     self.focus_latest_message_start = false;
@@ -997,7 +970,6 @@ impl TuiState {
                 if !overlay_persists_after_turn(self.overlay.as_ref()) {
                     self.overlay = None;
                 }
-                self.commit_deferred_assistant_message();
                 self.stop_waiting_animation();
                 self.last_provider = Some(provider);
                 self.update_status_context_percent(&usage);
@@ -1038,7 +1010,6 @@ impl TuiState {
                 if !overlay_persists_after_turn(self.overlay.as_ref()) {
                     self.overlay = None;
                 }
-                self.commit_deferred_assistant_message();
                 self.stop_waiting_animation();
                 let rendered = match outcome {
                     BudgetOutcome::Exceeded => format!(
@@ -1081,7 +1052,6 @@ impl TuiState {
                 if !overlay_persists_after_turn(self.overlay.as_ref()) {
                     self.overlay = None;
                 }
-                self.commit_deferred_assistant_message();
                 self.stop_waiting_animation();
                 if let Some(ref cat) = category {
                     match cat {

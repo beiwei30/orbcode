@@ -1238,7 +1238,6 @@ fn header_info_lines_truncate_path_tail_on_narrow_width() {
         queued_followups: std::collections::VecDeque::new(),
         pending_assistant: String::new(),
         compact_started_at: None,
-        deferred_assistant_message: None,
         active_thinking: None,
         live_tool_cells: LiveToolCells::default(),
         in_progress_tool_use_ids: HashSet::new(),

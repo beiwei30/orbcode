@@ -412,7 +412,6 @@ fn active_thinking_visibility_expires_after_retention_window() {
         queued_followups: std::collections::VecDeque::new(),
         pending_assistant: String::new(),
         compact_started_at: None,
-        deferred_assistant_message: None,
         active_thinking: Some(ActiveThinkingState {
             text: "done".to_string(),
             is_streaming: false,

@@ -1,5 +1,4 @@
 use super::support::*;
-use crate::prompt_state::DeferredAssistantMessage;
 use std::time::Instant;
 
 #[test]
@@ -1228,57 +1227,6 @@ fn completed_tool_then_next_active_has_no_chrome_interleave() {
 }
 
 #[test]
-fn app_loop_finalizes_before_desired_height() {
-    let mut state = normal_state("", 0);
-    state.pending_assistant.clear();
-    state.request_in_flight = false;
-    state.deferred_assistant_message = Some(DeferredAssistantMessage {
-        message: TranscriptMessage::new(MessageRole::Assistant, "short final answer".to_string()),
-    });
-
-    let width = 80u16;
-    let terminal_height = 24u16;
-
-    let height_before_finalize = state.desired_viewport_height(width, terminal_height);
-
-    state.finalize_deferred_assistant_message(width as usize, terminal_height);
-    state.prune_completed_live_tool_activity();
-    state.prepare_pending_history_emission(width as usize, terminal_height);
-
-    let height_after_finalize = state.desired_viewport_height(width, terminal_height);
-
-    assert!(
-        height_after_finalize > height_before_finalize || state.messages.len() == 1,
-        "after finalize commits a deferred message, the committed message should \
-         increase transcript height or be present in messages: \
-         before={height_before_finalize}, after={height_after_finalize}, \
-         messages={}",
-        state.messages.len(),
-    );
-    assert_eq!(
-        state.messages.len(),
-        1,
-        "finalize should have committed the deferred message"
-    );
-    assert!(
-        state.deferred_assistant_message.is_none(),
-        "deferred_assistant_message should be consumed after finalize"
-    );
-
-    let backend = RenderFixtureBackend::new(80, 24);
-    let mut terminal = Terminal::with_options(backend).expect("create terminal");
-    terminal.set_viewport_area(Rect::new(0, 4, 80, 20));
-    let mut screen_model = TerminalScreenModel::new(80, 24);
-    let result = run_prompt_transition(&mut state, &mut terminal, &mut screen_model);
-    let gap = max_blank_gap(&result.buffer_screen);
-    assert!(
-        gap <= 2,
-        "after finalize + transition, no large gap: gap={gap}\n{:#?}",
-        result.buffer_screen,
-    );
-}
-
-#[test]
 fn app_loop_terminal_mutation_always_draws() {
     let backend = RenderFixtureBackend::new(80, 24);
     let mut terminal = Terminal::with_options(backend).expect("create terminal");
@@ -1294,7 +1242,6 @@ fn app_loop_terminal_mutation_always_draws() {
     );
 
     let size = terminal.size().expect("size");
-    state.finalize_deferred_assistant_message(size.width as usize, size.height);
     state.prune_completed_live_tool_activity();
     state.prepare_pending_history_emission(size.width as usize, size.height);
     let desired = state.desired_viewport_height(size.width, size.height);

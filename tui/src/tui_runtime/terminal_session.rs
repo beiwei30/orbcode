@@ -353,7 +353,6 @@ where
             }),
         );
     }
-    state.finalize_deferred_assistant_message(size.width as usize, size.height);
     state.prune_completed_live_tool_activity();
     let last_size = terminal.last_known_screen_size();
     let width_changed = terminal.viewport_area.width != size.width;
