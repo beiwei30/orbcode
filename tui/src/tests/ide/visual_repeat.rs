@@ -151,7 +151,6 @@ fn normal_mode_f_waits_for_target_and_moves_cursor() {
         queued_followups: std::collections::VecDeque::new(),
         pending_assistant: String::new(),
         compact_started_at: None,
-        deferred_assistant_message: None,
         active_thinking: None,
         live_tool_cells: LiveToolCells::default(),
         in_progress_tool_use_ids: HashSet::new(),

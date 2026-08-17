@@ -128,6 +128,12 @@ These are unstable diagnostics, not compatibility promises:
 | `ORBCODE_FORCE_RG_FALLBACK=1` | Force the built-in Grep engine. |
 | `ORBCODE_TRUSTED_PROJECT=0` | Disable project-origin hooks by marking the project untrusted. |
 
+Render metrics are unstable diagnostics. Their `output.draw_command_count` is
+the total number of logical terminal commands queued for that frame: cursor,
+style, print, and clear commands plus the line-wrap disable/enable pair. An
+unchanged incremental frame therefore has a fixed count of five (two line-wrap
+commands and three style resets), while `output.bytes` records encoded bytes.
+
 ## Reporting a useful issue
 
 Include `orbcode --version`, OS/target, the redacted `doctor` rows, exact command

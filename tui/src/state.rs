@@ -19,9 +19,7 @@ use crate::editor_mode::{EditorMode, editor_mode_from_setting};
 use crate::external_editor::ExternalEditorRequest;
 use crate::history_cell::state::TranscriptUiState;
 use crate::overlays::{InteractivePermissionMode, OverlayState, overlay_cursor_style};
-use crate::prompt_state::{
-    ActiveThinkingState, DeferredAssistantMessage, InputSelectionState, NormalPending,
-};
+use crate::prompt_state::{ActiveThinkingState, InputSelectionState, NormalPending};
 use crate::task_panel::TaskPanelState;
 use crate::tool_cell::live_state::LiveToolCells;
 use crate::transcript_task_cards::TranscriptTaskCardsState;
@@ -86,6 +84,7 @@ pub(crate) struct TuiState {
     pub(crate) input_tail_pinned: bool,
     pub(crate) input_area: Rect,
     pub(crate) input_selection: Option<InputSelectionState>,
+    /// Display column retained across vertical prompt motions.
     pub(crate) desired_column: Option<usize>,
     pub(crate) prompt_history: Vec<String>,
     pub(crate) prompt_history_index: Option<usize>,
@@ -94,7 +93,6 @@ pub(crate) struct TuiState {
     pub(crate) queued_followups: VecDeque<String>,
     pub(crate) pending_assistant: String,
     pub(crate) compact_started_at: Option<Instant>,
-    pub(crate) deferred_assistant_message: Option<DeferredAssistantMessage>,
     pub(crate) active_thinking: Option<ActiveThinkingState>,
     pub(crate) live_tool_cells: LiveToolCells,
     pub(crate) in_progress_tool_use_ids: HashSet<String>,
@@ -202,7 +200,6 @@ impl TuiState {
             queued_followups: VecDeque::new(),
             pending_assistant: String::new(),
             compact_started_at: None,
-            deferred_assistant_message: None,
             active_thinking: None,
             live_tool_cells: LiveToolCells::default(),
             in_progress_tool_use_ids: HashSet::new(),

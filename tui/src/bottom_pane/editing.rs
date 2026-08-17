@@ -308,6 +308,7 @@ mod tests {
     use ratatui::prelude::Rect;
 
     use crate::background_agent_panel::BackgroundAgentPanelState;
+    use crate::bottom_pane::input_layout::input_inner_width;
     use crate::bottom_pane::slash_suggestions::SlashSuggestionLinesCache;
     use crate::bottom_pane::vim::VimRuntimeState;
     use crate::history_cell::state::TranscriptUiState;
@@ -336,7 +337,6 @@ mod tests {
             queued_followups: std::collections::VecDeque::new(),
             pending_assistant: String::new(),
             compact_started_at: None,
-            deferred_assistant_message: None,
             active_thinking: None,
             live_tool_cells: LiveToolCells::default(),
             in_progress_tool_use_ids: HashSet::new(),
@@ -758,5 +758,63 @@ mod tests {
         // Subsequent vertical move uses new position (column 1)
         s.move_cursor_logical_vertical(1);
         assert_eq!(s.input_cursor, 14); // offset 13 + 1 = 14
+    }
+
+    #[test]
+    fn logical_vertical_motion_uses_display_columns_for_unicode() {
+        let cases = [
+            ("abcdx\n可可z", 4, 12, "ASCII to CJK"),
+            ("a可b\nabcd", 4, 9, "CJK to ASCII"),
+            ("可可z\nab可z", 6, 13, "CJK to CJK"),
+            ("😀😀x\nabcdeZ", 8, 14, "emoji"),
+            ("👩‍💻x\nabcdeZ", 11, 18, "ZWJ sequence"),
+            ("e\u{301}x\nabz", 3, 7, "combining mark"),
+            ("a\tb\nxyz", 2, 6, "tab"),
+            ("a可\r\nabcd", 4, 9, "CRLF boundary"),
+        ];
+
+        for (input, cursor, expected, label) in cases {
+            let mut s = state(input, cursor);
+            assert!(s.move_cursor_logical_vertical(1), "{label}");
+            assert_eq!(s.input_cursor, expected, "{label}");
+            assert!(s.input.is_char_boundary(s.input_cursor), "{label}");
+        }
+    }
+
+    #[test]
+    fn unicode_display_column_survives_short_and_empty_lines() {
+        let mut s = state("😀😀x\na\n\nabcdeZ", 8);
+
+        assert!(s.move_cursor_logical_vertical(1));
+        assert_eq!(s.input_cursor, "😀😀x\na".len());
+        assert!(s.move_cursor_logical_vertical(1));
+        assert_eq!(s.input_cursor, "😀😀x\na\n".len());
+        assert!(s.move_cursor_logical_vertical(1));
+        assert_eq!(s.input_cursor, "😀😀x\na\n\nabcd".len());
+        assert_eq!(s.desired_column, Some(4));
+    }
+
+    #[test]
+    fn repeated_logical_motion_preserves_unicode_display_column() {
+        let mut s = state("可可z\na\nab可z", 6);
+
+        s.repeat_logical_vertical_or_history(2, 1);
+
+        assert_eq!(s.input_cursor, "可可z\na\nab可".len());
+        assert_eq!(s.desired_column, Some(4));
+    }
+
+    #[test]
+    fn repeated_visual_motion_restores_display_column_after_short_row() {
+        let width = input_inner_width().max(8);
+        let first_line = "a".repeat(width + 2);
+        let second_line = "b".repeat(width);
+        let input = format!("{first_line}\n{second_line}");
+        let mut s = state(&input, width - 1);
+
+        s.repeat_visual_vertical_motion(2, 1);
+
+        assert_eq!(s.input_cursor, first_line.len() + 1 + width - 1);
+        assert_eq!(s.desired_column, Some(width - 1));
     }
 }

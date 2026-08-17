@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use orbcode_protocol::TranscriptMessage;
-
 use crate::bottom_pane::vim::{FindKind, IndentDirection, OperatorKind, TextObjectScope};
 
 pub(crate) struct ActiveThinkingState {
@@ -28,10 +26,6 @@ impl InputSelectionState {
     pub(crate) fn is_collapsed(&self) -> bool {
         self.anchor == self.focus
     }
-}
-
-pub(crate) struct DeferredAssistantMessage {
-    pub(crate) message: TranscriptMessage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

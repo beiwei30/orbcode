@@ -81,7 +81,6 @@ fn assistant_message_discarded_clears_primary_stream_without_committing() {
     assert!(state.messages.is_empty());
     assert!(state.pending_assistant.is_empty());
     assert!(state.active_thinking.is_none());
-    assert!(state.deferred_assistant_message.is_none());
 }
 
 #[test]

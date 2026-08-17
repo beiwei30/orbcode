@@ -827,6 +827,52 @@ mod tests {
     }
 
     #[test]
+    fn builtin_collision_current_behavior_is_explicit() {
+        let _lock = test_guard().lock().expect("test guard poisoned");
+        reset_registry();
+
+        register_dynamic_slash_commands(vec![make_dynamic(
+            "config",
+            DynamicSlashCommandSource::User,
+        )]);
+        let suggestions = slash_command_suggestions("/config");
+        let exact = suggestions
+            .iter()
+            .filter(|spec| spec.name == "config")
+            .collect::<Vec<_>>();
+        assert_eq!(exact.len(), 2, "both entries are currently discoverable");
+        assert_eq!(exact[0].source, SlashCommandSource::Local);
+        assert_eq!(
+            exact[1].source,
+            SlashCommandSource::Extension(ExtensionSource::User)
+        );
+        assert!(matches!(
+            exact[1].execution,
+            SlashCommandExecution::PromptExpansion(_)
+        ));
+
+        let invocation = slash_command_invocation("/config").expect("builtin invocation");
+        assert_eq!(invocation.spec.source, SlashCommandSource::Local);
+        assert!(matches!(
+            invocation.spec.execution,
+            SlashCommandExecution::TuiLocal(TuiLocalSlashCommand::Config)
+        ));
+
+        let mut alias_collision = make_dynamic("custom-config", DynamicSlashCommandSource::Project);
+        alias_collision.aliases = vec!["config".to_string()];
+        register_dynamic_slash_commands(vec![alias_collision]);
+        let invocation = slash_command_invocation("/config").expect("builtin alias collision");
+        assert_eq!(invocation.spec.source, SlashCommandSource::Local);
+        assert!(
+            slash_command_suggestions("/config")
+                .iter()
+                .any(|spec| spec.name == "custom-config")
+        );
+
+        reset_registry();
+    }
+
+    #[test]
     fn group_headers_appear_between_builtin_and_extension_commands() {
         let _lock = test_guard().lock().expect("test guard poisoned");
         reset_registry();

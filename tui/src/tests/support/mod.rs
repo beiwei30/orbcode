@@ -305,7 +305,6 @@ pub(super) fn normal_state(input: &str, cursor: usize) -> TuiState {
         queued_followups: std::collections::VecDeque::new(),
         pending_assistant: String::new(),
         compact_started_at: None,
-        deferred_assistant_message: None,
         active_thinking: None,
         live_tool_cells: LiveToolCells::default(),
         in_progress_tool_use_ids: HashSet::new(),

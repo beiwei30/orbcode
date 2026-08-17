@@ -59,6 +59,8 @@ pub struct TerminalDrawMetrics {
     pub diff_command_generation_duration_us: u64,
     pub terminal_write_duration_us: u64,
     pub backend_flush_duration_us: u64,
+    /// Total logical terminal commands queued by the renderer, including the
+    /// line-wrap disable/enable pair around a terminal write.
     pub draw_command_count: u64,
     pub terminal_cursor_move_count: u64,
     pub terminal_style_command_count: u64,
@@ -75,6 +77,16 @@ struct TerminalOutputCommandStats {
     style_command_count: u64,
     print_command_count: u64,
     clear_command_count: u64,
+}
+
+impl TerminalOutputCommandStats {
+    fn draw_command_count(self) -> u64 {
+        self.cursor_move_count
+            .saturating_add(self.style_command_count)
+            .saturating_add(self.print_command_count)
+            .saturating_add(self.clear_command_count)
+            .saturating_add(2)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
@@ -309,8 +321,13 @@ where
         if !self.has_drawn_once {
             let current_buffer = self.current_buffer().clone();
             metrics.initial_frame = true;
-            metrics.draw_command_count = initial_frame_draw_command_count(&current_buffer) as u64;
-            metrics.set_output_command_stats(initial_frame_output_command_stats(&current_buffer));
+            let output_stats = initial_frame_output_command_stats(&current_buffer);
+            metrics.draw_command_count = if current_buffer.area.is_empty() {
+                0
+            } else {
+                output_stats.draw_command_count()
+            };
+            metrics.set_output_command_stats(output_stats);
             let (position, output_bytes) = {
                 let write_start = Instant::now();
                 let mut writer = CountingWriter::new(&mut self.backend);
@@ -331,8 +348,9 @@ where
         metrics.diff_duration_us = diff_metrics.total_duration_us;
         metrics.diff_buffer_scan_duration_us = diff_metrics.buffer_scan_duration_us;
         metrics.diff_command_generation_duration_us = diff_metrics.command_generation_duration_us;
-        metrics.draw_command_count = updates.len() as u64;
-        metrics.set_output_command_stats(draw_commands_output_stats(&updates));
+        let output_stats = draw_commands_output_stats(&updates);
+        metrics.draw_command_count = output_stats.draw_command_count();
+        metrics.set_output_command_stats(output_stats);
         let last_put = updates
             .iter()
             .rfind(|command| matches!(command, DrawCommand::Put { .. }));
@@ -713,37 +731,6 @@ fn last_visible_column(row: &[Cell]) -> Option<usize> {
         column += width;
     }
     last_visible
-}
-
-fn initial_frame_draw_command_count(buffer: &Buffer) -> usize {
-    if buffer.area.is_empty() {
-        return 0;
-    }
-
-    let mut count = 3;
-    for row_index in 0..buffer.area.height as usize {
-        if row_index > 0 {
-            count += 1;
-        }
-
-        let row_start = row_index * buffer.area.width as usize;
-        let row_end = row_start + buffer.area.width as usize;
-        let row = &buffer.content[row_start..row_end];
-        let Some(last_visible_column) = last_visible_column(row) else {
-            continue;
-        };
-        let mut column = 0usize;
-        while column <= last_visible_column && column < row.len() {
-            let cell = &row[column];
-            let width = display_width(cell.symbol()).max(1);
-            if !cell.skip {
-                count += 1;
-            }
-            column += width;
-        }
-    }
-
-    count + 1
 }
 
 fn initial_frame_output_command_stats(buffer: &Buffer) -> TerminalOutputCommandStats {
@@ -1212,25 +1199,42 @@ mod tests {
     }
 
     #[test]
-    fn initial_frame_metrics_match_full_buffer_shape() {
+    fn draw_command_metric_uses_same_terminal_units_for_initial_and_full_diff() {
         let area = Rect::new(0, 0, 12, 3);
         let mut buffer = Buffer::empty(area);
         fill_test_grid(&mut buffer, 0);
 
-        let command_count = initial_frame_draw_command_count(&buffer);
-        let stats = initial_frame_output_command_stats(&buffer);
+        let initial_stats = initial_frame_output_command_stats(&buffer);
+        let full_diff = diff_buffers(&Buffer::empty(Rect::ZERO), &buffer);
+        let diff_stats = draw_commands_output_stats(&full_diff);
 
+        assert_eq!(initial_stats.cursor_move_count, 1);
         assert_eq!(
-            command_count,
-            buffer_cell_count(area) + area.height as usize + 3
-        );
-        assert_eq!(stats.cursor_move_count, 1);
-        assert_eq!(
-            stats.print_command_count,
+            initial_stats.print_command_count,
             (buffer_cell_count(area) + area.height as usize - 1) as u64
         );
-        assert!(stats.style_command_count > 3);
+        assert!(initial_stats.style_command_count > 3);
+        assert_eq!(initial_stats.clear_command_count, 0);
+        assert_eq!(
+            initial_stats.draw_command_count(),
+            diff_stats.draw_command_count(),
+            "initial and resize/full-diff draws must count the same terminal command units"
+        );
+    }
+
+    #[test]
+    fn identical_diff_has_documented_fixed_command_floor() {
+        let area = Rect::new(0, 0, 12, 2);
+        let buffer = Buffer::empty(area);
+        let updates = diff_buffers(&buffer, &buffer);
+        let stats = draw_commands_output_stats(&updates);
+
+        assert!(updates.is_empty());
+        assert_eq!(stats.cursor_move_count, 0);
+        assert_eq!(stats.print_command_count, 0);
         assert_eq!(stats.clear_command_count, 0);
+        assert_eq!(stats.style_command_count, 3);
+        assert_eq!(stats.draw_command_count(), 5);
     }
 
     #[test]
@@ -1523,13 +1527,11 @@ mod tests {
         let mut buffer = Buffer::empty(area);
 
         let started = Instant::now();
-        let mut last_command_count = 0;
         let mut last_stats = TerminalOutputCommandStats::default();
         let mut last_bytes = 0;
         let mut last_position = None;
         for frame in 0..FRAME_COUNT {
             fill_test_grid(&mut buffer, frame);
-            last_command_count = initial_frame_draw_command_count(&buffer);
             last_stats = initial_frame_output_command_stats(&buffer);
             let mut output = Vec::new();
             let mut writer = CountingWriter::new(&mut output);
@@ -1539,10 +1541,7 @@ mod tests {
         }
         let duration = started.elapsed();
 
-        assert_eq!(
-            last_command_count,
-            buffer_cell_count(area) + area.height as usize + 1
-        );
+        assert!(last_stats.draw_command_count() > buffer_cell_count(area) as u64);
         assert_eq!(last_stats.cursor_move_count, 1);
         assert_eq!(
             last_stats.print_command_count,
@@ -1559,8 +1558,9 @@ mod tests {
             })
         );
         eprintln!(
-            "frames={FRAME_COUNT} cells={} command_count={last_command_count} cursor_moves={} style_commands={} print_commands={} clear_commands={} bytes={last_bytes} loop_us={}",
+            "frames={FRAME_COUNT} cells={} command_count={} cursor_moves={} style_commands={} print_commands={} clear_commands={} bytes={last_bytes} loop_us={}",
             buffer_cell_count(area),
+            last_stats.draw_command_count(),
             last_stats.cursor_move_count,
             last_stats.style_command_count,
             last_stats.print_command_count,
