@@ -84,6 +84,7 @@ pub(crate) struct TuiState {
     pub(crate) input_tail_pinned: bool,
     pub(crate) input_area: Rect,
     pub(crate) input_selection: Option<InputSelectionState>,
+    /// Display column retained across vertical prompt motions.
     pub(crate) desired_column: Option<usize>,
     pub(crate) prompt_history: Vec<String>,
     pub(crate) prompt_history_index: Option<usize>,

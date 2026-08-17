@@ -163,16 +163,33 @@ pub(crate) fn build_input_view_with_tail_pin(
 }
 
 pub(crate) fn input_cursor_for_column(line: &InputLineLayout, target_col: usize) -> usize {
+    line.start + input_byte_offset_for_display_column(&line.text, target_col)
+}
+
+pub(crate) fn input_display_column(input: &str, line_start: usize, cursor: usize) -> usize {
+    input[line_start..cursor].chars().map(display_width).sum()
+}
+
+pub(crate) fn input_cursor_for_display_column(
+    input: &str,
+    line_start: usize,
+    line_end: usize,
+    target_col: usize,
+) -> usize {
+    line_start + input_byte_offset_for_display_column(&input[line_start..line_end], target_col)
+}
+
+fn input_byte_offset_for_display_column(text: &str, target_col: usize) -> usize {
     let mut col = 0;
-    for (offset, ch) in line.text.char_indices() {
+    for (offset, ch) in text.char_indices() {
         if target_col <= col {
-            return line.start + offset;
+            return offset;
         }
         let next_col = col + display_width(ch);
         if target_col < next_col {
-            return line.start + offset;
+            return offset;
         }
         col = next_col;
     }
-    line.end
+    text.len()
 }

@@ -1,12 +1,13 @@
 use crate::bottom_pane::input_layout::{
-    build_input_layout, input_cursor_for_column, input_inner_width,
+    build_input_layout, input_cursor_for_column, input_cursor_for_display_column,
+    input_display_column, input_inner_width,
 };
 use crate::bottom_pane::vim::{
     FindKind, LastFind, current_line_end_boundary, current_line_end_motion, current_line_start,
     end_big_word, end_prev_big_word, end_prev_vim_word, end_vim_word, find_character,
     find_matching_delimiter, first_non_blank_in_line, go_to_last_line as vim_go_to_last_line,
     go_to_line_from_command, next_big_word_start, next_char_boundary, next_vim_word_start,
-    prev_big_word_start, prev_char_boundary, prev_vim_word_start, snap_to_char_boundary_clamped,
+    prev_big_word_start, prev_char_boundary, prev_vim_word_start,
 };
 use crate::state::TuiState;
 
@@ -158,8 +159,10 @@ impl TuiState {
             return false;
         }
 
+        let current_column = self.desired_column.unwrap_or(layout.cursor_col);
         self.input_tail_pinned = false;
-        self.input_cursor = input_cursor_for_column(&layout.lines[target_row], layout.cursor_col);
+        self.input_cursor = input_cursor_for_column(&layout.lines[target_row], current_column);
+        self.desired_column = Some(current_column);
         true
     }
 
@@ -168,7 +171,7 @@ impl TuiState {
         let current_end = current_line_end_boundary(&self.input, self.input_cursor);
         let current_column = self
             .desired_column
-            .unwrap_or_else(|| self.input_cursor.saturating_sub(current_start));
+            .unwrap_or_else(|| input_display_column(&self.input, current_start, self.input_cursor));
 
         let (target_start, target_end) = if direction < 0 {
             if current_start == 0 {
@@ -187,10 +190,9 @@ impl TuiState {
             )
         };
 
-        let desired = (target_start + current_column).min(target_end);
         self.input_tail_pinned = false;
         self.input_cursor =
-            snap_to_char_boundary_clamped(&self.input, target_start, target_end, desired);
+            input_cursor_for_display_column(&self.input, target_start, target_end, current_column);
         self.desired_column = Some(current_column);
         true
     }
