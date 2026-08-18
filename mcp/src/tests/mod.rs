@@ -3677,6 +3677,77 @@ async fn streamable_http_shutdown_sends_delete_on_remove() {
 }
 
 #[tokio::test]
+async fn streamable_http_shutdown_sends_delete_on_reload_remove() {
+    let saw_delete = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw_delete_inner = saw_delete.clone();
+    let endpoint = spawn_fake_http_mcp_server(3, move |index, request| {
+        if index == 0 {
+            return FakeHttpResponse::ok(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": http_json_rpc_id(&request),
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fake-http", "version": "0.1.0"}
+                    }
+                })
+                .to_string(),
+            )
+            .with_header("Mcp-Session-Id", "session-reload-delete");
+        }
+        if request.starts_with("DELETE /mcp ") {
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("mcp-session-id: session-reload-delete"),
+                "{request}"
+            );
+            saw_delete_inner.store(true, std::sync::atomic::Ordering::SeqCst);
+            return FakeHttpResponse::status("204 No Content", "");
+        }
+        FakeHttpResponse::ok(json_rpc_response(
+            &request,
+            json!({
+                "tools": [{
+                    "name": "echo",
+                    "description": "Echo.",
+                    "inputSchema": {"type": "object"}
+                }]
+            }),
+        ))
+    });
+    let (home, cwd) = temp_paths("streamable-http-reload-delete");
+    write_mcp_json(
+        &cwd,
+        json!({
+            "remote": {
+                "type": "streamable_http",
+                "url": endpoint
+            }
+        }),
+    );
+    let registry = McpRegistry::load(&home, &cwd).await.expect("load");
+    registry
+        .set_server_trust("remote", McpServerTrust::Trusted)
+        .await
+        .expect("trust remote");
+
+    registry.list_tools("remote").await.expect("list tools");
+    write_mcp_json(&cwd, json!({}));
+    let result = registry
+        .reload_config(McpLoadOptions::default())
+        .await
+        .expect("reload");
+
+    assert_eq!(result.removed, vec!["remote"]);
+    assert!(
+        saw_delete.load(std::sync::atomic::Ordering::SeqCst),
+        "config reload removal must send Streamable HTTP DELETE when a session exists"
+    );
+}
+
+#[tokio::test]
 async fn streamable_http_reinitializes_once_after_session_expiry_for_list() {
     let endpoint = spawn_fake_http_mcp_server(4, |index, request| match index {
         0 | 2 => FakeHttpResponse::ok(

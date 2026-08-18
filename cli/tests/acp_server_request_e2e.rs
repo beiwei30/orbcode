@@ -3033,7 +3033,7 @@ async fn acp_session_mcp_http_server_is_accepted_by_load_and_resume_without_pers
 #[tokio::test]
 async fn acp_session_mcp_sse_server_is_rejected() {
     let mut proc = AcpProcess::spawn().await;
-    let session_cwd = tempfile::tempdir().expect("session cwd");
+    let session_cwd = proc.cwd().canonicalize().expect("canonical session cwd");
 
     proc.send(&json!({
         "jsonrpc": "2.0",
@@ -3058,7 +3058,7 @@ async fn acp_session_mcp_sse_server_is_rejected() {
         "id": 2,
         "method": "session/new",
         "params": {
-            "cwd": session_cwd.path(),
+            "cwd": session_cwd,
             "mcpServers": [{
                 "type": "sse",
                 "name": "Docs SSE",
@@ -3069,7 +3069,35 @@ async fn acp_session_mcp_sse_server_is_rejected() {
     }))
     .await;
     let rejected = proc.recv_response(2).await;
-    assert!(rejected.get("error").is_some(), "{rejected:?}");
+    assert_eq!(rejected["error"]["code"], json!(-32602), "{rejected:?}");
+    assert!(
+        rejected["error"]["data"]
+            .as_str()
+            .is_some_and(|message| message.contains("SSE transport is not supported")),
+        "{rejected:?}"
+    );
+    assert!(
+        !proc.home().join("mcp").join("servers.json").exists(),
+        "rejected ACP SSE setup must not persist a partial MCP overlay"
+    );
+
+    proc.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/list",
+        "params": {
+            "cwd": session_cwd
+        }
+    }))
+    .await;
+    let listed = proc.recv_response(3).await;
+    assert!(listed.get("error").is_none(), "{listed:?}");
+    let listed: ListSessionsResponse =
+        serde_json::from_value(listed["result"].clone()).expect("valid session/list response");
+    assert!(
+        listed.sessions.is_empty(),
+        "rejected ACP SSE session/new must not create a partial session"
+    );
 
     proc.close().await;
 }

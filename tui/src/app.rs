@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio::time::{self, Duration, MissedTickBehavior};
 
 const STATUSLINE_CMD_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_RESIZE_SETTLE_MS: u64 = 150;
 const PAGER_DEFERRED_FIXTURE_TEXT: &str = "pager deferred fixture committed while ctrl-o open";
 const FINAL_ANSWER_FIXTURE_HEAD: &str = "final answer fixture head";
 const FINAL_ANSWER_FIXTURE_TAIL: &str = "final answer fixture tail";
@@ -148,11 +149,10 @@ pub async fn run_tui(client: Arc<AppClient>, requested_session: Option<String>) 
         // While a turn streams, the rebuild is deferred to this settle so we do
         // not purge/flash on every SIGWINCH frame mid-turn. Tunable via
         // `ORBCODE_TUI_RESIZE_SETTLE_MS` for terminal-specific drag cadence.
-        let resize_settle: Duration = Duration::from_millis(
+        let resize_settle = resize_settle_duration(
             std::env::var("ORBCODE_TUI_RESIZE_SETTLE_MS")
                 .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(150),
+                .as_deref(),
         );
         let mut resize_settle_deadline: Option<time::Instant> = None;
         'main: loop {
@@ -558,6 +558,14 @@ fn background_task_update_is_terminal(event: &StreamEvent) -> bool {
     }
 }
 
+fn resize_settle_duration(value: Option<&str>) -> Duration {
+    Duration::from_millis(
+        value
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_RESIZE_SETTLE_MS),
+    )
+}
+
 async fn run_statusline_command(command: &str, cwd: &Path) -> Option<String> {
     let result = tokio::time::timeout(
         STATUSLINE_CMD_TIMEOUT,
@@ -698,5 +706,22 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let result = run_statusline_command("echo ''", dir.path()).await;
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resize_settle_duration_defaults_on_missing_or_invalid_override() {
+        assert_eq!(resize_settle_duration(None), Duration::from_millis(150));
+        assert_eq!(
+            resize_settle_duration(Some("not-a-number")),
+            Duration::from_millis(150)
+        );
+    }
+
+    #[test]
+    fn resize_settle_duration_uses_numeric_override() {
+        assert_eq!(
+            resize_settle_duration(Some("75")),
+            Duration::from_millis(75)
+        );
     }
 }

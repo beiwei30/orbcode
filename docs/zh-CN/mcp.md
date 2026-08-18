@@ -61,6 +61,21 @@ bearer 或 OAuth，不要把 literal secret 留在 shell history/settings。
 
 `orbcode mcp capabilities` 输出实时 transport inventory。
 
+持久化 MCP 配置接受的旧 `sse` 拼写只是兼容输入，会规范化到 remote HTTP family。它不是 ACP
+`McpServer::Sse` 支持，也没有实现旧 endpoint event + message POST transport。
+
+### Streamable HTTP 协议边界
+
+现有 client 在 initialize 时提出 MCP `2024-11-05`，随后把 server 选择的版本放入后续
+protocol header。它是 request/response client：每个 JSON-RPC call 使用 POST；该 POST 可以
+返回 JSON，也可以返回包含对应 response 的有限 SSE body。session id、session expiry 恢复和
+DELETE shutdown 均已支持。
+
+当前不声明也不实现 standalone GET event reader、`Last-Event-ID` 恢复、server notification
+routing 或 subscription/listen API。2025-era standalone GET 继续 Deferred，除非受支持 server
+出现 POST response 无法完成的可重复 workflow。modern 2026-era subscription lifecycle 必须走
+独立 protocol-era 计划，不能隐式扩展当前 transport。
+
 ## 检查与使用
 
 ```bash

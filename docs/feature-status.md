@@ -74,7 +74,7 @@ Use `orbcode tools` as the live registry rather than a numeric claim.
 
 | Surface | Status | Notes |
 | --- | --- | --- |
-| MCP stdio/Streamable HTTP | Stable | Tools, resources, prompts, JSON/SSE HTTP responses. |
+| MCP stdio/Streamable HTTP | Stable | Current HTTP path proposes `2024-11-05` and supports POST JSON/finite SSE responses; standalone GET and modern subscriptions are deferred. |
 | MCP WebSocket | Beta | JSON-RPC over ws/wss. |
 | MCP OAuth | Beta | Imported tokens, refresh, device/browser PKCE, dynamic registration. |
 | MCP trust and permissions | Stable | Independent gates; neither bypasses the other. |
