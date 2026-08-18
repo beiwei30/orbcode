@@ -112,6 +112,12 @@ terminal trace for reproducible scrollback/resize bugs and include terminal,
 tmux, OS, and window-size details in the issue. Do not attach a trace until you
 have checked it for prompt/tool content.
 
+The resize settle default remains 150 ms. Each observed resize replaces the
+pending deadline, so a burst performs one source-backed history rebuild after
+it settles. There is no post-reflow size probe. Use the override below only to
+diagnose a repeatable terminal-specific problem; an invalid value falls back to
+the default.
+
 ## Diagnostic switches
 
 These are unstable diagnostics, not compatibility promises:

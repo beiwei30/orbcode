@@ -72,7 +72,7 @@ PushNotification、ScheduleWakeup、EnterWorktree、ExitWorktree。实时清单�
 
 | Surface | 状态 | 说明 |
 | --- | --- | --- |
-| MCP stdio/Streamable HTTP | Stable | Tools、resources、prompts、JSON/SSE HTTP。 |
+| MCP stdio/Streamable HTTP | Stable | 当前 HTTP path 提出 `2024-11-05`，支持 POST JSON/有限 SSE response；standalone GET 与 modern subscription Deferred。 |
 | MCP WebSocket | Beta | ws/wss 上 JSON-RPC。 |
 | MCP OAuth | Beta | token import/refresh、device/browser PKCE、dynamic registration。 |
 | MCP trust + permissions | Stable | 独立 gates，不能互相绕过。 |

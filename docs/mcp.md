@@ -66,6 +66,26 @@ secret in shell history/settings.
 
 `orbcode mcp capabilities` prints the live transport inventory.
 
+The legacy `sse` spelling accepted in persisted MCP configuration is only a
+compatibility input normalized to the remote HTTP family. It is not ACP
+`McpServer::Sse` support and does not implement the legacy endpoint-event plus
+message-POST transport.
+
+### Streamable HTTP protocol boundary
+
+The retained client proposes MCP `2024-11-05` during initialization and then
+uses the version selected by the server in subsequent protocol headers. It is a
+request/response client: each JSON-RPC call is sent with POST, and that POST may
+return either JSON or a finite SSE response body containing the correlated
+response. Session IDs, expiry recovery, and DELETE shutdown are supported.
+
+A standalone GET event reader, `Last-Event-ID` recovery, server notification
+routing, and subscription/listen APIs are not advertised or implemented. A
+2025-era standalone GET client remains deferred until a supported server has a
+reproducible workflow that POST responses cannot satisfy. A modern 2026-era
+subscription lifecycle requires a separate protocol-era plan rather than an
+implicit extension of the current transport.
+
 ## Inspect and use servers
 
 ```bash

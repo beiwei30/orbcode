@@ -86,6 +86,10 @@ orbcode doctor cleanup-orphans --dry-run --stale-running-days 7
 用 `/theme`、`/keybindings`、`/vim` 排除配置。为 scrollback/resize bug 保存 terminal trace，
 issue 中注明 terminal、tmux、OS、窗口尺寸。附加前检查 trace 是否含 prompt/tool 私密内容。
 
+resize settle 默认值保持 150 ms。每个新 resize 会替换 pending deadline，因此一个 burst settle
+后只执行一次 source-backed history rebuild；当前没有 post-reflow size probe。下方 override 只用于
+诊断可重复的 terminal-specific 问题；非法值回退到默认值。
+
 ## 诊断开关
 
 这些是非稳定诊断接口：
