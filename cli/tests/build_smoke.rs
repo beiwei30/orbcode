@@ -106,6 +106,68 @@ fn pr_and_release_workflows_build_each_platform_once() {
 }
 
 #[test]
+fn oauth_test_support_is_dev_only_and_absent_from_public_configuration() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let config_manifest =
+        fs::read_to_string(repo_root.join("config/Cargo.toml")).expect("read config manifest");
+    let cli_manifest =
+        fs::read_to_string(repo_root.join("cli/Cargo.toml")).expect("read CLI manifest");
+    let config_auth =
+        fs::read_to_string(repo_root.join("config/src/auth.rs")).expect("read config auth");
+    let env_compat = fs::read_to_string(repo_root.join("config/src/env_compat.rs"))
+        .expect("read env compatibility table");
+
+    assert!(
+        config_manifest.contains("default = []")
+            && config_manifest.contains("oauth-test-support = []"),
+        "OAuth test support must remain off by default"
+    );
+    let normal_dependencies = cli_manifest
+        .split("[dev-dependencies]")
+        .next()
+        .expect("normal dependency section");
+    let dev_dependencies = cli_manifest
+        .split_once("[dev-dependencies]")
+        .expect("dev dependency section")
+        .1
+        .split("[build-dependencies]")
+        .next()
+        .expect("bounded dev dependency section");
+    assert!(
+        normal_dependencies.contains("orbcode-config = { path = \"../config\" }")
+            && !normal_dependencies.contains("oauth-test-support"),
+        "normal/release orbcode dependencies must not activate OAuth test support"
+    );
+    assert!(
+        dev_dependencies.contains(
+            "orbcode-config = { path = \"../config\", features = [\"oauth-test-support\"] }"
+        ),
+        "only the orbcode test graph should activate OAuth test support"
+    );
+    assert!(
+        config_auth.contains("#[cfg(feature = \"oauth-test-support\")]")
+            && config_auth.contains("oauth_test_support::from_process_env()"),
+        "runtime test input loading must remain feature-gated"
+    );
+
+    let test_env_prefix = ["ORBCODE", "_TEST_OPENAI_"].concat();
+    assert!(
+        !env_compat.contains(&test_env_prefix),
+        "test inputs must not enter ordinary environment compatibility"
+    );
+    for public_path in ["README.md", "AGENTS.md", "CLAUDE.md"] {
+        let contents = fs::read_to_string(repo_root.join(public_path))
+            .unwrap_or_else(|error| panic!("read {public_path}: {error}"));
+        assert!(
+            !contents.contains(&test_env_prefix),
+            "test inputs must not be documented as public configuration in {public_path}"
+        );
+    }
+}
+
+#[test]
 fn version_long_form_exposes_git_sha_target_and_providers() {
     let output = Command::new(ORBCODE_BIN)
         .arg("--version")
