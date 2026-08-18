@@ -9,6 +9,12 @@ homepage.workspace = true
 readme.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Binary-level OAuth fixtures may override the otherwise fixed OpenAI hosts.
+# This feature is intentionally activated only by `orbcode` dev-dependencies.
+oauth-test-support = []
+
 [dependencies]
 orbcode-protocol = { path = "../protocol" }
 base64.workspace = true

@@ -8,6 +8,8 @@ mod keybindings;
 mod layers;
 mod memory;
 mod model_resolver;
+#[cfg(any(test, feature = "oauth-test-support"))]
+mod oauth_test_support;
 mod openai_oauth;
 mod output_styles;
 mod permission_rules;

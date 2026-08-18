@@ -35,10 +35,13 @@ uuid.workspace = true
 # base URL instead of prompt markers. Feature unification scopes this to test
 # builds only.
 orbcode-compat-fixtures = { path = "../compat-fixtures" }
+orbcode-config = { path = "../config", features = ["oauth-test-support"] }
 orbcode-model-provider = { path = "../model-provider", features = ["mock-provider"] }
+base64.workspace = true
 libc = "0.2"
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
+url.workspace = true
 
 [build-dependencies]
 chrono = { workspace = true }

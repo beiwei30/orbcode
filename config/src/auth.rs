@@ -82,6 +82,8 @@ pub struct AuthManager {
     /// attempt to authenticate with a different method.
     forced_method: Option<AuthMethod>,
     openai_oauth: OpenAiOAuthOptions,
+    #[cfg(feature = "oauth-test-support")]
+    openai_oauth_test_error: Option<String>,
     openai_refresh_lock: Arc<tokio::sync::Mutex<()>>,
     cached_state: Arc<RwLock<StoredAuthState>>,
 }
@@ -135,11 +137,23 @@ struct StoredAuthState {
 
 impl AuthManager {
     pub fn new(home_dir: PathBuf) -> Self {
+        #[cfg(feature = "oauth-test-support")]
+        let (openai_oauth, openai_oauth_test_error) =
+            match crate::oauth_test_support::from_process_env() {
+                Ok(Some(options)) => (options, None),
+                Ok(None) => (OpenAiOAuthOptions::default(), None),
+                Err(error) => (OpenAiOAuthOptions::default(), Some(error)),
+            };
+        #[cfg(not(feature = "oauth-test-support"))]
+        let openai_oauth = OpenAiOAuthOptions::default();
+
         Self {
             home_dir,
             env_overrides: HashMap::new(),
             forced_method: None,
-            openai_oauth: OpenAiOAuthOptions::default(),
+            openai_oauth,
+            #[cfg(feature = "oauth-test-support")]
+            openai_oauth_test_error,
             openai_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             cached_state: Arc::new(RwLock::new(StoredAuthState::default())),
         }
@@ -165,6 +179,10 @@ impl AuthManager {
     /// the fixed defaults; this exists so tests can use local fake servers.
     pub fn with_openai_oauth_options(mut self, options: OpenAiOAuthOptions) -> Self {
         self.openai_oauth = options;
+        #[cfg(feature = "oauth-test-support")]
+        {
+            self.openai_oauth_test_error = None;
+        }
         self
     }
 
@@ -204,6 +222,7 @@ impl AuthManager {
     pub async fn start_chatgpt_browser_login(
         &self,
     ) -> Result<ChatGptBrowserLoginSession, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         self.ensure_login_method_allowed(AuthMethod::ChatGpt)?;
         openai_oauth::start_browser_login(self.openai_oauth.clone()).await
     }
@@ -212,6 +231,7 @@ impl AuthManager {
         &self,
         session: ChatGptBrowserLoginSession,
     ) -> Result<AuthStatusEntry, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         let credentials = openai_oauth::complete_browser_login(session).await?;
         self.store_chatgpt_oauth(credentials).await
     }
@@ -219,6 +239,7 @@ impl AuthManager {
     pub async fn start_chatgpt_device_login(
         &self,
     ) -> Result<ChatGptDeviceLoginSession, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         self.ensure_login_method_allowed(AuthMethod::ChatGpt)?;
         openai_oauth::start_device_login(self.openai_oauth.clone()).await
     }
@@ -227,6 +248,7 @@ impl AuthManager {
         &self,
         session: ChatGptDeviceLoginSession,
     ) -> Result<AuthStatusEntry, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         let credentials = openai_oauth::complete_device_login(session).await?;
         self.store_chatgpt_oauth(credentials).await
     }
@@ -236,6 +258,7 @@ impl AuthManager {
     pub async fn resolve_chatgpt_oauth(
         &self,
     ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         let Some(credentials) = self.load_chatgpt_oauth().await? else {
             return Ok(None);
         };
@@ -262,6 +285,7 @@ impl AuthManager {
     pub async fn refresh_chatgpt_oauth(
         &self,
     ) -> Result<Option<ChatGptOAuthCredentials>, ConfigError> {
+        self.ensure_openai_oauth_test_support_valid()?;
         let _refresh_guard = self.openai_refresh_lock.lock().await;
         let Some(credentials) = self.load_chatgpt_oauth().await? else {
             return Ok(None);
@@ -279,6 +303,14 @@ impl AuthManager {
             return Err(ConfigError::Config(format!(
                 "login method is locked by managed policy to {forced}; cannot log in with {method}"
             )));
+        }
+        Ok(())
+    }
+
+    fn ensure_openai_oauth_test_support_valid(&self) -> Result<(), ConfigError> {
+        #[cfg(feature = "oauth-test-support")]
+        if let Some(error) = &self.openai_oauth_test_error {
+            return Err(ConfigError::Config(error.clone()));
         }
         Ok(())
     }
