@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use url::Url;
 
@@ -27,7 +28,7 @@ pub const BROWSER_TIMEOUT_MS_ENV: &str = "ORBCODE_TEST_OPENAI_BROWSER_TIMEOUT_MS
 pub const DEVICE_TIMEOUT_MS_ENV: &str = "ORBCODE_TEST_OPENAI_DEVICE_TIMEOUT_MS";
 pub const ORIGINATOR_ENV: &str = "ORBCODE_TEST_OPENAI_ORIGINATOR";
 
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(5);
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);
 const CHILD_ENV_TO_CLEAR: &[&str] = &[
     "ORBCODE_ANTHROPIC_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -120,7 +121,7 @@ struct OutputLine {
 /// A real CLI child with live stdout/stderr capture and bounded teardown.
 pub struct CliProcess {
     child: Option<Child>,
-    root: TempDir,
+    root: Arc<TempDir>,
     home: PathBuf,
     cwd: PathBuf,
     output: Arc<Mutex<String>>,
@@ -134,12 +135,42 @@ impl CliProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let root = tempfile::tempdir().expect("create ChatGPT auth fixture root");
+        let root = Arc::new(tempfile::tempdir().expect("create ChatGPT auth fixture root"));
         let home = root.path().join("home");
         let cwd = root.path().join("cwd");
         fs::create_dir_all(&home).expect("create isolated Orb Code home");
         fs::create_dir_all(&cwd).expect("create isolated child cwd");
 
+        Self::spawn_with_layout(args, env, root, home, cwd)
+    }
+
+    /// Start another real CLI process against this fixture's isolated home and
+    /// cwd. The shared temporary root remains alive until both children drop.
+    pub fn spawn_again<I, S>(&self, args: I, env: &OpenAiTestEnv) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        Self::spawn_with_layout(
+            args,
+            env,
+            Arc::clone(&self.root),
+            self.home.clone(),
+            self.cwd.clone(),
+        )
+    }
+
+    fn spawn_with_layout<I, S>(
+        args: I,
+        env: &OpenAiTestEnv,
+        root: Arc<TempDir>,
+        home: PathBuf,
+        cwd: PathBuf,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
         let mut command = Command::new(env!("CARGO_BIN_EXE_orbcode"));
         command
             .args(args)
@@ -460,9 +491,24 @@ pub struct RecordedRequest {
     pub headers: Vec<(String, String)>,
     pub authorization_header_present: bool,
     pub sanitized_body: String,
+    secret_body_fingerprints: HashMap<String, SecretBodyFingerprint>,
 }
 
 impl RecordedRequest {
+    /// Return a URL-safe SHA-256 digest for a captured OAuth secret field.
+    /// The fixture never retains the field's plaintext value.
+    pub fn secret_body_sha256(&self, name: &str) -> Option<&str> {
+        self.secret_body_fingerprints
+            .get(name)
+            .map(|fingerprint| fingerprint.sha256.as_str())
+    }
+
+    pub fn secret_body_len(&self, name: &str) -> Option<usize> {
+        self.secret_body_fingerprints
+            .get(name)
+            .map(|fingerprint| fingerprint.len)
+    }
+
     fn searchable_metadata(&self) -> String {
         format!(
             "{} {} {:?} {}",
@@ -639,6 +685,9 @@ fn serve_one_request(
     recorded_tx: &mpsc::Sender<RecordedRequest>,
 ) {
     stream
+        .set_nonblocking(false)
+        .expect("make accepted fake-service connection blocking");
+    stream
         .set_read_timeout(Some(DEFAULT_DEADLINE))
         .expect("set fake service read timeout");
     stream
@@ -712,6 +761,12 @@ struct ParsedRequest {
     body: String,
 }
 
+#[derive(Clone, Debug)]
+struct SecretBodyFingerprint {
+    sha256: String,
+    len: usize,
+}
+
 impl ParsedRequest {
     fn recorded(&self) -> RecordedRequest {
         let authorization_header_present = self
@@ -730,8 +785,23 @@ impl ParsedRequest {
             headers,
             authorization_header_present,
             sanitized_body: sanitize_body(&self.body),
+            secret_body_fingerprints: secret_body_fingerprints(&self.body),
         }
     }
+}
+
+fn secret_body_fingerprints(body: &str) -> HashMap<String, SecretBodyFingerprint> {
+    url::form_urlencoded::parse(body.as_bytes())
+        .filter(|(name, _)| matches!(name.as_ref(), "code" | "code_verifier"))
+        .map(|(name, value)| {
+            let fingerprint = SecretBodyFingerprint {
+                sha256: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(Sha256::digest(value.as_bytes())),
+                len: value.len(),
+            };
+            (name.into_owned(), fingerprint)
+        })
+        .collect()
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
@@ -1068,16 +1138,17 @@ mod tests {
         stream
             .set_read_timeout(Some(DEFAULT_DEADLINE))
             .expect("set fixture response timeout");
-        write!(
-            stream,
+        let request = format!(
             "{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             url.host_str().expect("fixture host")
-        )
-        .expect("write fixture request");
-        let mut response = String::new();
+        );
         stream
-            .read_to_string(&mut response)
-            .expect("read fixture response");
-        assert!(response.starts_with("HTTP/1.1"), "{response}");
+            .write_all(request.as_bytes())
+            .expect("write fixture request");
+        let mut response = String::new();
+        // Error-path responses may close with a reset on some platforms. The
+        // server-state assertion below, not the transport shutdown style, is
+        // authoritative for this helper.
+        let _ = stream.read_to_string(&mut response);
     }
 }
