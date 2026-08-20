@@ -478,18 +478,22 @@ pub(crate) async fn run_auth(
                 }
                 if device_code {
                     let session = app_server.start_chatgpt_device_login().await?;
-                    println!("open {}", session.verification_uri);
-                    println!("code {}", session.user_code);
-                    println!(
+                    let mut stdout = io::BufWriter::new(io::stdout());
+                    writeln!(stdout, "open {}", session.verification_uri)?;
+                    writeln!(stdout, "code {}", session.user_code)?;
+                    writeln!(
+                        stdout,
                         "waiting for authorization; interval={}s",
                         session.interval_secs
-                    );
-                    io::stdout().flush()?;
+                    )?;
+                    stdout.flush()?;
                     let entry = app_server.complete_chatgpt_device_login(session).await?;
-                    println!(
+                    writeln!(
+                        stdout,
                         "signed in to {} via {} ({})",
                         entry.provider, entry.method, entry.source_summary
-                    );
+                    )?;
+                    stdout.flush()?;
                     return Ok(());
                 }
 
