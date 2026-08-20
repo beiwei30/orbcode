@@ -571,11 +571,11 @@ fn raw_callback(redirect_uri: &str, target: &str) -> String {
     stream
         .set_write_timeout(Some(DEADLINE))
         .expect("bound callback write");
-    write!(
-        stream,
-        "GET {target} HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
-    )
-    .expect("write callback request");
+    let request =
+        format!("GET {target} HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .expect("write callback request");
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
