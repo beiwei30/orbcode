@@ -144,6 +144,23 @@ impl CliProcess {
         Self::spawn_with_layout(args, env, root, home, cwd)
     }
 
+    /// Spawn against an auth store written before the child starts. Failure
+    /// scenarios use this to prove unrelated credentials are byte-preserved.
+    pub fn spawn_with_auth<I, S>(args: I, env: &OpenAiTestEnv, auth: &[u8]) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let root = Arc::new(tempfile::tempdir().expect("create ChatGPT auth fixture root"));
+        let home = root.path().join("home");
+        let cwd = root.path().join("cwd");
+        fs::create_dir_all(&home).expect("create isolated Orb Code home");
+        fs::create_dir_all(&cwd).expect("create isolated child cwd");
+        fs::write(home.join("auth.json"), auth).expect("seed unrelated auth entry");
+
+        Self::spawn_with_layout(args, env, root, home, cwd)
+    }
+
     /// Start another real CLI process against this fixture's isolated home and
     /// cwd. The shared temporary root remains alive until both children drop.
     pub fn spawn_again<I, S>(&self, args: I, env: &OpenAiTestEnv) -> Self
@@ -389,18 +406,29 @@ pub struct ExpectedRequest {
     response_content_type: String,
     response_headers: Vec<(String, String)>,
     response_body: String,
+    close_without_response: bool,
 }
 
 impl ExpectedRequest {
     pub fn json(method: &str, path: &str, response_body: Value) -> Self {
+        Self::raw(method, path, "application/json", response_body.to_string())
+    }
+
+    pub fn raw(
+        method: &str,
+        path: &str,
+        content_type: &str,
+        response_body: impl Into<String>,
+    ) -> Self {
         Self {
             method: method.to_string(),
             path: path.to_string(),
             required_body_markers: Vec::new(),
             response_status: 200,
-            response_content_type: "application/json".to_string(),
+            response_content_type: content_type.to_string(),
             response_headers: Vec::new(),
-            response_body: response_body.to_string(),
+            response_body: response_body.into(),
+            close_without_response: false,
         }
     }
 
@@ -411,6 +439,11 @@ impl ExpectedRequest {
 
     pub fn responding_with_status(mut self, status: u16) -> Self {
         self.response_status = status;
+        self
+    }
+
+    pub fn closing_connection(mut self) -> Self {
+        self.close_without_response = true;
         self
     }
 
@@ -486,6 +519,7 @@ impl ExpectedRequest {
             response_content_type: "text/event-stream".to_string(),
             response_headers: Vec::new(),
             response_body: body,
+            close_without_response: false,
         }
     }
 }
@@ -628,6 +662,26 @@ impl ScriptedServer {
             .clone()
     }
 
+    pub fn assert_no_request(&self, deadline: Duration) {
+        match self.recorded_requests.recv_timeout(deadline) {
+            Ok(request) => panic!(
+                "fake OpenAI service received an unexpected request after terminal failure: {} {}",
+                request.method, request.path
+            ),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("fake OpenAI service stopped before the quiet period completed")
+            }
+        }
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(failure) = &state.failure {
+            panic!("fake OpenAI service failed: {failure}");
+        }
+    }
+
     pub fn assert_finished(mut self) {
         if let Err(error) = self.verify_finished(DEFAULT_DEADLINE) {
             panic!("fake OpenAI service failed: {error}");
@@ -741,6 +795,9 @@ fn serve_one_request(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .failure
         .is_some();
+    if step.close_without_response {
+        return;
+    }
     if failed {
         write_response(stream, 500, "text/plain", &[], "script mismatch");
     } else {
@@ -891,6 +948,8 @@ fn write_response(
         401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
         _ => "Internal Server Error",
     };
     let extra_headers = headers
