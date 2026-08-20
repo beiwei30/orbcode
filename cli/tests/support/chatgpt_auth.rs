@@ -432,14 +432,20 @@ impl ExpectedRequest {
         .requiring("client_id")
     }
 
-    pub fn device_poll(user_code: &str, device_auth_id: &str, authorization_code: &str) -> Self {
+    pub fn device_poll(
+        user_code: &str,
+        device_auth_id: &str,
+        authorization_code: &str,
+        code_verifier: &str,
+        code_challenge: &str,
+    ) -> Self {
         Self::json(
             "POST",
             "/api/accounts/deviceauth/token",
             json!({
                 "authorization_code": authorization_code,
-                "code_verifier": "fixture-device-verifier",
-                "code_challenge": "fixture-device-challenge"
+                "code_verifier": code_verifier,
+                "code_challenge": code_challenge
             }),
         )
         .requiring(user_code)
@@ -491,6 +497,7 @@ pub struct RecordedRequest {
     pub headers: Vec<(String, String)>,
     pub authorization_header_present: bool,
     pub sanitized_body: String,
+    pub received_at: Instant,
     secret_body_fingerprints: HashMap<String, SecretBodyFingerprint>,
 }
 
@@ -785,6 +792,7 @@ impl ParsedRequest {
             headers,
             authorization_header_present,
             sanitized_body: sanitize_body(&self.body),
+            received_at: Instant::now(),
             secret_body_fingerprints: secret_body_fingerprints(&self.body),
         }
     }
@@ -882,6 +890,7 @@ fn write_response(
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
+        404 => "Not Found",
         _ => "Internal Server Error",
     };
     let extra_headers = headers
