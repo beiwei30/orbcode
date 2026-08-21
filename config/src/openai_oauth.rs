@@ -52,6 +52,10 @@ impl ChatGptOAuthCredentials {
                 .is_some_and(|account_id| !account_id.trim().is_empty())
     }
 
+    pub(crate) fn is_expired(&self) -> bool {
+        Utc::now().timestamp_millis() >= self.expires_at
+    }
+
     pub(crate) fn needs_refresh(&self) -> bool {
         Utc::now().timestamp_millis() + 5 * 60 * 1000 >= self.expires_at
     }

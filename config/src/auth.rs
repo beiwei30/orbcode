@@ -584,18 +584,15 @@ fn stored_source_summary(source: &StoredAuthSource) -> String {
         }
         StoredAuthSource::StoredHint { hint } => format!("stored:{hint} (metadata only)"),
         StoredAuthSource::ChatGptOAuth { credentials } => {
-            let mut status = if credentials.needs_refresh() {
-                "refresh required".to_string()
+            let status = if !credentials.is_usable() {
+                "incomplete"
+            } else if credentials.is_expired() {
+                "expired"
+            } else if credentials.needs_refresh() {
+                "refresh required"
             } else {
-                "ready".to_string()
+                "ready"
             };
-            if let Some(plan_type) = credentials.plan_type.as_deref() {
-                write!(status, "; subscription:{plan_type}")
-                    .expect("writing to String cannot fail");
-            }
-            if let Some(email) = credentials.email.as_deref() {
-                write!(status, "; {email}").expect("writing to String cannot fail");
-            }
             format!("chatgpt oauth ({status})")
         }
     }
@@ -604,7 +601,9 @@ fn stored_source_summary(source: &StoredAuthSource) -> String {
 fn stored_source_usable(source: &StoredAuthSource) -> bool {
     match source {
         StoredAuthSource::StoredHint { .. } => false,
-        StoredAuthSource::ChatGptOAuth { credentials } => credentials.is_usable(),
+        StoredAuthSource::ChatGptOAuth { credentials } => {
+            credentials.is_usable() && !credentials.is_expired()
+        }
         _ => true,
     }
 }
@@ -1076,8 +1075,7 @@ mod tests {
             .expect("ChatGPT status");
         assert!(api_key.active);
         assert!(!chatgpt.active);
-        assert!(!chatgpt.source_summary.contains("access-token"));
-        assert!(!chatgpt.source_summary.contains("refresh-token"));
+        assert_eq!(chatgpt.source_summary, "chatgpt oauth (ready)");
 
         #[cfg(unix)]
         {
@@ -1277,6 +1275,27 @@ mod tests {
 
         assert!(!entries[0].active);
         assert!(entries[1].active);
+    }
+
+    #[test]
+    fn active_auth_source_blocks_expired_chatgpt() {
+        let credentials = chatgpt_credentials(Utc::now().timestamp_millis() - 1);
+        let source = StoredAuthSource::ChatGptOAuth { credentials };
+        let mut entries = vec![AuthStatusEntry {
+            provider: ProviderId::OpenAi,
+            method: AuthMethod::ChatGpt,
+            source_summary: stored_source_summary(&source),
+            persisted: true,
+            usable: stored_source_usable(&source),
+            active: false,
+            updated_at: None,
+        }];
+
+        mark_active_entries(&mut entries);
+
+        assert_eq!(entries[0].source_summary, "chatgpt oauth (expired)");
+        assert!(!entries[0].usable);
+        assert!(!entries[0].active);
     }
 
     #[tokio::test]
