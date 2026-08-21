@@ -240,8 +240,8 @@ fn assert_signed_in_line(output: &str, canaries: &TokenCanaries) {
         .find(|line| line.contains("signed in to openai via chatgpt"))
         .unwrap_or_else(|| panic!("missing signed-in line\n{output}"));
     assert!(signed_in.contains("chatgpt oauth (ready"), "{signed_in}");
-    assert!(signed_in.contains(&canaries.email), "{signed_in}");
-    assert!(signed_in.contains(&canaries.plan), "{signed_in}");
+    assert!(!signed_in.contains(&canaries.email), "{signed_in}");
+    assert!(!signed_in.contains(&canaries.plan), "{signed_in}");
 }
 
 fn assert_persisted_credentials(home: &std::path::Path, canaries: &TokenCanaries) {
@@ -304,6 +304,11 @@ fn assert_secret_canaries_absent(
     assert!(
         !output.contains(&canaries.account_id),
         "CLI output leaked the account id"
+    );
+    assert!(!output.contains(&canaries.email), "CLI output leaked email");
+    assert!(
+        !output.contains(&canaries.plan),
+        "CLI output leaked the plan claim"
     );
     let verifier_len = request
         .secret_body_len("code_verifier")
