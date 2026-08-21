@@ -5,6 +5,7 @@
 //! credentials, and own child/listener cleanup through `Drop`.
 
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -67,13 +68,33 @@ const CHILD_ENV_TO_CLEAR: &[&str] = &[
     ORIGINATOR_ENV,
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OpenAiTestEnv {
     values: Vec<(&'static str, String)>,
+    network_guard: Arc<NetworkGuard>,
+}
+
+impl fmt::Debug for OpenAiTestEnv {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenAiTestEnv")
+            .field(
+                "variables",
+                &self.values.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            )
+            .field("network_guard", &self.network_guard)
+            .finish()
+    }
 }
 
 impl OpenAiTestEnv {
     pub fn for_server(server: &ScriptedServer) -> Self {
+        let network_guard = Arc::new(NetworkGuard::start());
+        let proxy_url = network_guard.base_url().to_string();
+        let allowed_authority = Url::parse(server.base_url())
+            .expect("parse fake OpenAI service URL")
+            .authority()
+            .to_string();
         Self {
             values: vec![
                 (ISSUER_ENV, server.base_url().to_string()),
@@ -85,7 +106,16 @@ impl OpenAiTestEnv {
                 (BROWSER_TIMEOUT_MS_ENV, "3000".to_string()),
                 (DEVICE_TIMEOUT_MS_ENV, "3000".to_string()),
                 (ORIGINATOR_ENV, "orbcode-harness".to_string()),
+                ("HTTP_PROXY", proxy_url.clone()),
+                ("HTTPS_PROXY", proxy_url.clone()),
+                ("ALL_PROXY", proxy_url.clone()),
+                ("http_proxy", proxy_url.clone()),
+                ("https_proxy", proxy_url.clone()),
+                ("all_proxy", proxy_url),
+                ("NO_PROXY", allowed_authority.clone()),
+                ("no_proxy", allowed_authority),
             ],
+            network_guard,
         }
     }
 
@@ -104,6 +134,199 @@ impl OpenAiTestEnv {
             command.env(name, value);
         }
     }
+
+    pub fn assert_no_public_network(&self) {
+        self.network_guard.assert_unused();
+    }
+}
+
+/// A fail-closed local HTTP proxy. Every scenario installs it for all standard
+/// proxy variables after clearing the developer's environment. The one fake
+/// service authority is placed in `NO_PROXY`; any other HTTP(S) destination is
+/// rejected locally and retained only as an authority for safe diagnostics.
+struct NetworkGuard {
+    base_url: String,
+    authorities: Arc<Mutex<Vec<String>>>,
+    shutdown: Mutex<Option<mpsc::Sender<()>>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl fmt::Debug for NetworkGuard {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NetworkGuard")
+            .field("base_url", &self.base_url)
+            .field("request_count", &self.authorities().len())
+            .finish()
+    }
+}
+
+impl NetworkGuard {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fail-closed proxy");
+        listener
+            .set_nonblocking(true)
+            .expect("make fail-closed proxy nonblocking");
+        let base_url = format!(
+            "http://{}",
+            listener.local_addr().expect("fail-closed proxy address")
+        );
+        let authorities = Arc::new(Mutex::new(Vec::new()));
+        let worker_authorities = Arc::clone(&authorities);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            loop {
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let authority = read_proxy_authority(&mut stream);
+                        worker_authorities
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(authority.clone());
+                        write_response(
+                            &mut stream,
+                            502,
+                            "text/plain",
+                            &[],
+                            &format!(
+                                "public network disabled by ChatGPT auth fixture: {authority}"
+                            ),
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => {
+                        worker_authorities
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(format!("proxy-listener-error:{error}"));
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            base_url,
+            authorities,
+            shutdown: Mutex::new(Some(shutdown_tx)),
+            worker: Mutex::new(Some(worker)),
+        }
+    }
+
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn authorities(&self) -> Vec<String> {
+        self.authorities
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn assert_unused(&self) {
+        if let Some(message) = self.failure_message() {
+            panic!("{message}");
+        }
+    }
+
+    fn failure_message(&self) -> Option<String> {
+        let authorities = self.authorities();
+        (!authorities.is_empty()).then(|| {
+            format!(
+                "ChatGPT auth fixture attempted non-fixture HTTP(S): {}",
+                authorities.join(", ")
+            )
+        })
+    }
+
+    fn stop(&self) {
+        if let Some(shutdown) = self
+            .shutdown
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            let _ = shutdown.send(());
+        }
+        if let Some(worker) = self
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            worker.join().expect("join fail-closed proxy");
+        }
+    }
+}
+
+impl Drop for NetworkGuard {
+    fn drop(&mut self) {
+        self.stop();
+        if !thread::panicking() {
+            self.assert_unused();
+        }
+    }
+}
+
+fn read_proxy_authority(stream: &mut TcpStream) -> String {
+    const MAX_PROXY_HEADERS: usize = 32 * 1024;
+    stream
+        .set_nonblocking(false)
+        .expect("make fail-closed proxy connection blocking");
+    stream
+        .set_read_timeout(Some(DEFAULT_DEADLINE))
+        .expect("set fail-closed proxy read timeout");
+    stream
+        .set_write_timeout(Some(DEFAULT_DEADLINE))
+        .expect("set fail-closed proxy write timeout");
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while bytes.len() < MAX_PROXY_HEADERS {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                bytes.extend_from_slice(&buffer[..read]);
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    let request = String::from_utf8_lossy(&bytes);
+    let mut lines = request.lines();
+    let request_line = lines.next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    if method.eq_ignore_ascii_case("CONNECT") && !target.is_empty() {
+        return target.to_string();
+    }
+    if let Ok(url) = Url::parse(target) {
+        return url.authority().to_string();
+    }
+    lines
+        .find_map(|line| {
+            line.split_once(':').and_then(|(name, value)| {
+                name.eq_ignore_ascii_case("host")
+                    .then(|| value.trim().to_string())
+            })
+        })
+        .filter(|authority| !authority.is_empty())
+        .unwrap_or_else(|| "unknown-authority".to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +344,7 @@ struct OutputLine {
 /// A real CLI child with live stdout/stderr capture and bounded teardown.
 pub struct CliProcess {
     child: Option<Child>,
+    binary: PathBuf,
     root: Arc<TempDir>,
     home: PathBuf,
     cwd: PathBuf,
@@ -141,7 +365,28 @@ impl CliProcess {
         fs::create_dir_all(&home).expect("create isolated Orb Code home");
         fs::create_dir_all(&cwd).expect("create isolated child cwd");
 
-        Self::spawn_with_layout(args, env, root, home, cwd)
+        Self::spawn_with_layout(
+            PathBuf::from(env!("CARGO_BIN_EXE_orbcode")),
+            args,
+            env,
+            root,
+            home,
+            cwd,
+        )
+    }
+
+    pub fn spawn_binary<I, S>(binary: &Path, args: I, env: &OpenAiTestEnv) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let root = Arc::new(tempfile::tempdir().expect("create ChatGPT auth fixture root"));
+        let home = root.path().join("home");
+        let cwd = root.path().join("cwd");
+        fs::create_dir_all(&home).expect("create isolated Orb Code home");
+        fs::create_dir_all(&cwd).expect("create isolated child cwd");
+
+        Self::spawn_with_layout(binary.to_path_buf(), args, env, root, home, cwd)
     }
 
     /// Spawn against an auth store written before the child starts. Failure
@@ -158,7 +403,14 @@ impl CliProcess {
         fs::create_dir_all(&cwd).expect("create isolated child cwd");
         fs::write(home.join("auth.json"), auth).expect("seed unrelated auth entry");
 
-        Self::spawn_with_layout(args, env, root, home, cwd)
+        Self::spawn_with_layout(
+            PathBuf::from(env!("CARGO_BIN_EXE_orbcode")),
+            args,
+            env,
+            root,
+            home,
+            cwd,
+        )
     }
 
     /// Start another real CLI process against this fixture's isolated home and
@@ -169,6 +421,7 @@ impl CliProcess {
         S: AsRef<std::ffi::OsStr>,
     {
         Self::spawn_with_layout(
+            self.binary.clone(),
             args,
             env,
             Arc::clone(&self.root),
@@ -178,6 +431,7 @@ impl CliProcess {
     }
 
     fn spawn_with_layout<I, S>(
+        binary: PathBuf,
         args: I,
         env: &OpenAiTestEnv,
         root: Arc<TempDir>,
@@ -188,7 +442,7 @@ impl CliProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_orbcode"));
+        let mut command = Command::new(&binary);
         command
             .args(args)
             .current_dir(&cwd)
@@ -219,6 +473,7 @@ impl CliProcess {
 
         Self {
             child: Some(child),
+            binary,
             root,
             home,
             cwd,
@@ -300,6 +555,10 @@ impl CliProcess {
 
     pub fn id(&self) -> u32 {
         self.child.as_ref().expect("child still owned").id()
+    }
+
+    pub fn terminate(&mut self) {
+        self.cleanup();
     }
 
     pub fn home(&self) -> &Path {
@@ -534,6 +793,7 @@ pub struct RecordedRequest {
     pub received_at: Instant,
     header_names: Vec<String>,
     authorization_bearer_sha256: Option<String>,
+    chatgpt_account_id_sha256: Option<String>,
     secret_body_fingerprints: HashMap<String, SecretBodyFingerprint>,
 }
 
@@ -556,6 +816,12 @@ impl RecordedRequest {
     /// full Authorization header in fake-server diagnostics.
     pub fn authorization_bearer_sha256(&self) -> Option<&str> {
         self.authorization_bearer_sha256.as_deref()
+    }
+
+    /// Return the digest of the account header without retaining its plaintext
+    /// value in fake-server diagnostics.
+    pub fn chatgpt_account_id_sha256(&self) -> Option<&str> {
+        self.chatgpt_account_id_sha256.as_deref()
     }
 
     pub fn header_count(&self, name: &str) -> usize {
@@ -869,6 +1135,11 @@ impl ParsedRequest {
             .first()
             .and_then(|value| value.strip_prefix("Bearer "))
             .map(secret_sha256);
+        let chatgpt_account_id_sha256 = self
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("chatgpt-account-id"))
+            .map(|(_, value)| secret_sha256(value));
         let header_names = self.headers.iter().map(|(name, _)| name.clone()).collect();
         let headers = self
             .headers
@@ -885,6 +1156,7 @@ impl ParsedRequest {
             received_at: Instant::now(),
             header_names,
             authorization_bearer_sha256,
+            chatgpt_account_id_sha256,
             secret_body_fingerprints: secret_body_fingerprints(&self.body),
         }
     }
@@ -895,16 +1167,46 @@ fn secret_sha256(value: &str) -> String {
 }
 
 fn secret_body_fingerprints(body: &str) -> HashMap<String, SecretBodyFingerprint> {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        let mut fingerprints = HashMap::new();
+        collect_json_secret_fingerprints(&value, &mut fingerprints);
+        return fingerprints;
+    }
     url::form_urlencoded::parse(body.as_bytes())
-        .filter(|(name, _)| matches!(name.as_ref(), "code" | "code_verifier"))
-        .map(|(name, value)| {
-            let fingerprint = SecretBodyFingerprint {
-                sha256: secret_sha256(&value),
-                len: value.len(),
-            };
-            (name.into_owned(), fingerprint)
-        })
+        .filter(|(name, _)| sensitive_name(name))
+        .map(|(name, value)| (name.into_owned(), fingerprint(&value)))
         .collect()
+}
+
+fn collect_json_secret_fingerprints(
+    value: &Value,
+    fingerprints: &mut HashMap<String, SecretBodyFingerprint>,
+) {
+    match value {
+        Value::Object(map) => {
+            for (name, value) in map {
+                if sensitive_name(name)
+                    && let Some(value) = value.as_str()
+                {
+                    fingerprints.insert(name.clone(), fingerprint(value));
+                }
+                collect_json_secret_fingerprints(value, fingerprints);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_json_secret_fingerprints(value, fingerprints);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fingerprint(value: &str) -> SecretBodyFingerprint {
+    SecretBodyFingerprint {
+        sha256: secret_sha256(value),
+        len: value.len(),
+    }
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, String> {
@@ -988,6 +1290,7 @@ fn write_response(
         404 => "Not Found",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
+        502 => "Bad Gateway",
         _ => "Internal Server Error",
     };
     let extra_headers = headers
@@ -1005,14 +1308,24 @@ fn sensitive_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     [
         "authorization",
+        "account-id",
+        "account_id",
         "cookie",
         "token",
         "secret",
         "api-key",
+        "api_key",
         "verifier",
+        "challenge",
+        "device_auth_id",
+        "email",
+        "plan",
     ]
     .iter()
     .any(|part| name.contains(part))
+        || name == "code"
+        || name.ends_with("_code")
+        || name == "state"
 }
 
 fn sanitize_body(body: &str) -> String {
@@ -1024,7 +1337,7 @@ fn sanitize_body(body: &str) -> String {
         return body
             .split('&')
             .map(|pair| match pair.split_once('=') {
-                Some((key, _)) if sensitive_name(key) || key == "code" => {
+                Some((key, _)) if sensitive_name(key) => {
                     format!("{key}=[REDACTED]")
                 }
                 _ => pair.to_string(),
@@ -1043,7 +1356,7 @@ fn redact_json(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, value) in map {
-                if sensitive_name(key) || key == "code" {
+                if sensitive_name(key) {
                     *value = Value::String("[REDACTED]".to_string());
                 } else {
                     redact_json(value);
@@ -1177,11 +1490,18 @@ impl TokenCanaries {
             .map(|request| request.searchable_metadata())
             .collect::<Vec<_>>()
             .join("\n");
-        for secret in [&self.id_token, &self.access_token, &self.refresh_token] {
-            assert!(!output.contains(secret), "CLI output leaked a token canary");
+        for secret in [
+            &self.id_token,
+            &self.access_token,
+            &self.refresh_token,
+            &self.account_id,
+            &self.email,
+            &self.plan,
+        ] {
+            assert!(!output.contains(secret), "CLI output leaked an auth canary");
             assert!(
                 !request_metadata.contains(secret),
-                "recorded request metadata leaked a token canary"
+                "recorded request metadata leaked an auth canary"
             );
         }
     }
@@ -1232,6 +1552,56 @@ mod tests {
             .verify_finished(Duration::from_millis(25))
             .expect_err("missing request must fail within a bounded deadline");
         assert!(error.contains("before the deadline"), "{error}");
+    }
+
+    #[test]
+    fn network_guard_fails_closed_with_authority_only_diagnostics() {
+        let guard = NetworkGuard::start();
+        let proxy = Url::parse(guard.base_url()).expect("parse fail-closed proxy URL");
+        let mut stream = TcpStream::connect((
+            proxy.host_str().expect("proxy host"),
+            proxy.port().expect("proxy port"),
+        ))
+        .expect("connect fail-closed proxy");
+        stream
+            .set_read_timeout(Some(DEFAULT_DEADLINE))
+            .expect("bound proxy response read");
+        stream
+            .write_all(
+                b"GET https://public-canary.invalid/private?token=secret-canary HTTP/1.1\r\nHost: public-canary.invalid\r\nConnection: close\r\n\r\n",
+            )
+            .expect("send request through fail-closed proxy");
+        let mut response = String::new();
+        let read_result = stream.read_to_string(&mut response);
+        assert!(
+            read_result.is_ok()
+                || read_result
+                    .as_ref()
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset),
+            "unexpected fail-closed response error: {read_result:?}"
+        );
+        guard.stop();
+
+        if !response.is_empty() {
+            assert!(
+                response.starts_with("HTTP/1.1 502 Bad Gateway"),
+                "{response}"
+            );
+            assert!(response.contains("public-canary.invalid"), "{response}");
+            assert!(!response.contains("private"), "{response}");
+            assert!(!response.contains("secret-canary"), "{response}");
+        }
+        assert_eq!(guard.authorities(), ["public-canary.invalid"]);
+        assert_eq!(
+            guard.failure_message().as_deref(),
+            Some("ChatGPT auth fixture attempted non-fixture HTTP(S): public-canary.invalid")
+        );
+
+        guard
+            .authorities
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     fn raw_request(base_url: &str, method: &str, path: &str) {

@@ -340,6 +340,34 @@ fn sanitize_provider_error_message_strips_sse_prefix_noise() {
 }
 
 #[test]
+fn sanitize_provider_error_message_redacts_credentials_and_bounds_output() {
+    let message = format!(
+        "request failed Authorization: Bearer bearer-canary \
+         https://url-user-canary:url-password-canary@example.invalid/error?access_token=token-canary&account_id=account-canary#fragment-canary \
+         code=code-canary device_auth_id=device-canary {}",
+        "x".repeat(2_000)
+    );
+    let sanitized = sanitize_provider_error_message(&message);
+    for secret in [
+        "bearer-canary",
+        "url-user-canary",
+        "url-password-canary",
+        "token-canary",
+        "account-canary",
+        "fragment-canary",
+        "code-canary",
+        "device-canary",
+    ] {
+        assert!(!sanitized.contains(secret), "leaked {secret}: {sanitized}");
+    }
+    assert!(
+        sanitized.contains("https://example.invalid/error"),
+        "{sanitized}"
+    );
+    assert!(sanitized.chars().count() <= 1_000, "{sanitized}");
+}
+
+#[test]
 fn chunked_stream_reader_reassembles_split_sse_frames() {
     let mut stream = AnthropicStreamReader::default();
     let mut accumulator = ProviderStreamAccumulator::new(ProviderId::Anthropic, None);

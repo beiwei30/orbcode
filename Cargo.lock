@@ -1840,6 +1840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "url",
  "uuid",
  "wiremock",
 ]

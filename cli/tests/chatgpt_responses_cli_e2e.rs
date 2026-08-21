@@ -445,8 +445,8 @@ fn assert_common_request(request: &RecordedRequest, canaries: &TokenCanaries, se
         Some(secret_sha256(&canaries.access_token).as_str())
     );
     assert_eq!(
-        request.header_value("chatgpt-account-id"),
-        Some(canaries.account_id.as_str())
+        request.chatgpt_account_id_sha256(),
+        Some(secret_sha256(&canaries.account_id).as_str())
     );
     assert_eq!(request.header_value("originator"), Some("orbcode"));
     assert_eq!(request.header_value("session-id"), Some(session_id));
@@ -457,8 +457,8 @@ fn assert_common_request(request: &RecordedRequest, canaries: &TokenCanaries, se
     assert_eq!(request.header_count("x-api-key"), 0);
     assert_eq!(request.header_count("api-key"), 0);
     assert_ne!(
-        request.header_value("chatgpt-account-id"),
-        Some(OVERRIDE_ACCOUNT)
+        request.chatgpt_account_id_sha256(),
+        Some(secret_sha256(OVERRIDE_ACCOUNT).as_str())
     );
     assert_ne!(
         request.authorization_bearer_sha256(),
