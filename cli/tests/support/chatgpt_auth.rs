@@ -532,6 +532,8 @@ pub struct RecordedRequest {
     pub authorization_header_present: bool,
     pub sanitized_body: String,
     pub received_at: Instant,
+    header_names: Vec<String>,
+    authorization_bearer_sha256: Option<String>,
     secret_body_fingerprints: HashMap<String, SecretBodyFingerprint>,
 }
 
@@ -548,6 +550,29 @@ impl RecordedRequest {
         self.secret_body_fingerprints
             .get(name)
             .map(|fingerprint| fingerprint.len)
+    }
+
+    /// Return the digest of the bearer token without retaining the token or
+    /// full Authorization header in fake-server diagnostics.
+    pub fn authorization_bearer_sha256(&self) -> Option<&str> {
+        self.authorization_bearer_sha256.as_deref()
+    }
+
+    pub fn header_count(&self, name: &str) -> usize {
+        self.header_names
+            .iter()
+            .filter(|candidate| candidate.eq_ignore_ascii_case(name))
+            .count()
+    }
+
+    /// Inspect a non-sensitive captured header. Sensitive header values are
+    /// deliberately omitted from `headers` and can only be checked through a
+    /// purpose-built digest or presence accessor.
+    pub fn header_value(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
     }
 
     fn searchable_metadata(&self) -> String {
@@ -833,10 +858,18 @@ struct SecretBodyFingerprint {
 
 impl ParsedRequest {
     fn recorded(&self) -> RecordedRequest {
-        let authorization_header_present = self
+        let authorization_headers = self
             .headers
             .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+            .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>();
+        let authorization_header_present = !authorization_headers.is_empty();
+        let authorization_bearer_sha256 = authorization_headers
+            .first()
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(secret_sha256);
+        let header_names = self.headers.iter().map(|(name, _)| name.clone()).collect();
         let headers = self
             .headers
             .iter()
@@ -850,9 +883,15 @@ impl ParsedRequest {
             authorization_header_present,
             sanitized_body: sanitize_body(&self.body),
             received_at: Instant::now(),
+            header_names,
+            authorization_bearer_sha256,
             secret_body_fingerprints: secret_body_fingerprints(&self.body),
         }
     }
+}
+
+fn secret_sha256(value: &str) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(value.as_bytes()))
 }
 
 fn secret_body_fingerprints(body: &str) -> HashMap<String, SecretBodyFingerprint> {
@@ -860,8 +899,7 @@ fn secret_body_fingerprints(body: &str) -> HashMap<String, SecretBodyFingerprint
         .filter(|(name, _)| matches!(name.as_ref(), "code" | "code_verifier"))
         .map(|(name, value)| {
             let fingerprint = SecretBodyFingerprint {
-                sha256: base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(Sha256::digest(value.as_bytes())),
+                sha256: secret_sha256(&value),
                 len: value.len(),
             };
             (name.into_owned(), fingerprint)
