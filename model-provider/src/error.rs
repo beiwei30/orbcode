@@ -550,23 +550,104 @@ pub fn sanitize_provider_error_message(message: &str) -> String {
             .rfind("\ndata:")
             .map(|index| &trimmed[index + "\ndata:".len()..])
     });
-    if let Some(payload) = sse_payload {
+    let normalized = if let Some(payload) = sse_payload {
         let payload = payload.trim();
         if payload.len() < trimmed.len() && !payload.is_empty() {
-            return payload.to_string();
+            payload
+        } else {
+            trimmed
         }
-    }
-
-    if let Some(index) = trimmed.find("HTTP_STATUS/") {
-        return trimmed[index..].trim().to_string();
-    }
-
-    if let Some(payload) = trimmed.rsplit("event:error").next() {
+    } else if let Some(index) = trimmed.find("HTTP_STATUS/") {
+        trimmed[index..].trim()
+    } else if let Some(payload) = trimmed.rsplit("event:error").next() {
         let payload = payload.trim_start_matches(':').trim();
         if payload.len() < trimmed.len() && !payload.is_empty() {
-            return payload.to_string();
+            payload
+        } else {
+            trimmed
         }
+    } else {
+        trimmed
+    };
+
+    sanitize_provider_text(normalized)
+}
+
+fn sanitize_provider_text(message: &str) -> String {
+    const MAX_PROVIDER_ERROR_CHARS: usize = 1_000;
+    let mut clean = String::new();
+    let mut pending_space = false;
+    for character in message.chars() {
+        if character.is_control() || character.is_whitespace() {
+            pending_space = !clean.is_empty();
+            continue;
+        }
+        if pending_space {
+            clean.push(' ');
+            pending_space = false;
+        }
+        clean.push(character);
     }
 
-    trimmed.to_string()
+    let mut redact_next_bearer = false;
+    let sanitized = clean
+        .split_whitespace()
+        .map(|word| {
+            if redact_next_bearer {
+                redact_next_bearer = false;
+                return "[redacted]".to_string();
+            }
+            let lower = word.to_ascii_lowercase();
+            if lower == "bearer" {
+                redact_next_bearer = true;
+                return word.to_string();
+            }
+            sanitize_provider_word(word)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let truncated = sanitized.chars().count() > MAX_PROVIDER_ERROR_CHARS;
+    let mut bounded = sanitized
+        .chars()
+        .take(MAX_PROVIDER_ERROR_CHARS)
+        .collect::<String>();
+    if truncated {
+        bounded.pop();
+        bounded.push('…');
+    }
+    bounded
+}
+
+fn sanitize_provider_word(word: &str) -> String {
+    let lower = word.to_ascii_lowercase();
+    let url_start = lower.find("https://").or_else(|| lower.find("http://"));
+    if let Some(start) = url_start
+        && let Ok(mut url) = url::Url::parse(&word[start..])
+    {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.set_query(None);
+        url.set_fragment(None);
+        return format!("{}{}", &word[..start], url);
+    }
+    if [
+        "code=",
+        "state=",
+        "verifier=",
+        "challenge=",
+        "token=",
+        "api_key=",
+        "account_id=",
+        "email=",
+        "plan=",
+        "device_auth_id=",
+        "callback_query=",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        "[redacted]".to_string()
+    } else {
+        word.to_string()
+    }
 }

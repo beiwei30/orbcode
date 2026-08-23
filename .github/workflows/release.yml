@@ -78,6 +78,10 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p orbcode --target ${{ matrix.target }}
 
+      - name: Audit ChatGPT auth release boundary
+        shell: bash
+        run: scripts/audit-chatgpt-auth-release.sh --binary target/${{ matrix.target }}/release/orbcode${{ matrix.bin_suffix }} --target ${{ matrix.target }}
+
       - name: Install bubblewrap (Linux)
         if: runner.os == 'Linux'
         run: |

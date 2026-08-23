@@ -1,7 +1,7 @@
 # ChatGPT/Codex 订阅登录支持计划
 
-状态：Phase 1–5 的核心链路、doctor 订阅探测、远程 app-server 登录协议、
-无公网测试和真实账户 smoke 已完成；完整 fake OAuth CLI e2e 仍待补充。
+状态：已完成（2026-08-21）。Phase 1–5 的产品链路以及 Phase 6 的完整
+fake OAuth CLI e2e、安全扫描和 release 边界门禁均已通过。
 
 工作分支：`codex/chatgpt-subscription-auth`
 
@@ -232,21 +232,38 @@ OpenAI 认证优先级暂定：
 
 ### Phase 6：端到端与发布门禁
 
-- 增加 fake OAuth + fake Codex Responses 的 CLI e2e：登录、prompt、工具调用、续轮、注销。
-- 使用隔离的临时 `ORBCODE_HOME` 做一次人工真实账户 smoke test，不提交 token、日志或 transcript。
-- 依次运行：
+- 已增加七个进程级 fake OAuth/fake Codex Responses CLI 目标，覆盖浏览器与
+  device 登录、失败/取消、状态/优先级/注销、prompt、工具调用、续轮、重启
+  resume 和安全收尾。
+- 每个场景使用隔离的临时 `ORBCODE_HOME`。fail-closed 本地代理只放行
+  fixture 拥有的精确 loopback authority；所有脚本化服务必须按预期次数
+  完整 drain。
+- access/refresh/ID token、API key、OAuth 临时值、账户 claims、header、
+  callback query、错误输出和运行产物均使用唯一 canary 扫描。`auth.json`
+  只允许必要字段，Unix 权限为 `0600`，且不得留下临时文件或重复明文副本。
+- 默认/release feature graph、release 二进制字符串和运行时行为均证明
+  `oauth-test-support` 与测试端点环境输入不能进入正常产品表面；
+  release workflow 在 Linux、macOS 和 Windows 上运行相同审计。
+- 已运行：
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo check --workspace
 cargo test --workspace
+scripts/audit-chatgpt-auth-release.sh
+scripts/audit-public-surface.sh
 scripts/audit-brand.sh
+scripts/check-docs.sh
+git diff --check
 ```
 
-- 对认证文件、debug 日志、provider trace 和错误输出执行 secret 扫描。
+完整七目标集群另外以 8 个 test threads 重复三次、以单线程重复一次，均通过。
+此前隔离环境中的真实账户 smoke 仍是生产路径证据；本轮没有改变 production
+OAuth contract，因此按收尾计划不重复真实账户登录。
 
-验收：完整检查通过；真实账户可以在无 `OPENAI_API_KEY` 的环境中执行 `prompt "回复 OK"` 和至少一个工具回合。
+验收：完整检查通过。fixture 证明的是固定 OpenAI issuer、固定 Codex backend
+和当前自定义 device pending 协议，不表示支持任意 OAuth issuer/backend。
 
 ## 测试矩阵
 
