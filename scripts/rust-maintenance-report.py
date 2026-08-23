@@ -45,6 +45,8 @@ CLASSIFICATION_ORDER = {
     "dependency": 6,
 }
 
+REPORT_VERSION = 2
+
 
 def run(command: list[str], *, cwd: Path, capture: bool = True) -> str:
     print(f"+ {' '.join(command)}", file=sys.stderr, flush=True)
@@ -177,7 +179,18 @@ def deduplicate(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         key = location_key(row)
         existing = by_key.get(key)
-        if existing is None or CLASSIFICATION_ORDER[row["classification"]] < CLASSIFICATION_ORDER[existing["classification"]]:
+        row_rank = (CLASSIFICATION_ORDER[row["classification"]], row["target"])
+        existing_rank = None
+        if existing is not None:
+            existing_rank = (
+                CLASSIFICATION_ORDER[existing["classification"]],
+                existing["target"],
+            )
+        # A shared integration-test support file can be compiled into several
+        # targets, whose Cargo JSON messages arrive in an unspecified order.
+        # Prefer the lexicographically first target after classification so the
+        # displayed target is stable without counting the source location twice.
+        if existing_rank is None or row_rank < existing_rank:
             by_key[key] = row
     return list(by_key.values())
 
@@ -265,8 +278,16 @@ def emit_report(
     print("# Rust maintenance lint inventory")
     print()
     print(f"- Commit: `{tool_output(['git', 'rev-parse', 'HEAD'], cwd=root)}`")
+    print(
+        "- origin/main: "
+        f"`{tool_output(['git', 'rev-parse', 'origin/main'], cwd=root)}`"
+    )
     status = tool_output(["git", "status", "--short", "--branch"], cwd=root)
     print(f"- Git status: `{status}`")
+    script_blob = tool_output(
+        ["git", "hash-object", "scripts/rust-maintenance-report.py"], cwd=root
+    )
+    print(f"- Report script: `v{REPORT_VERSION}` (Git blob `{script_blob}`)")
     print(f"- rustc: `{tool_output(['rustc', '--version', '--verbose'], cwd=root)}`")
     print(f"- cargo: `{tool_output(['cargo', '--version'], cwd=root)}`")
     print(f"- Clippy: `{tool_output(['cargo', 'clippy', '--version'], cwd=root)}`")

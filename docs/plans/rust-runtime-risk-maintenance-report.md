@@ -1,5 +1,10 @@
 # Rust 运行时风险维护完成报告
 
+> 历史快照说明（2026-08-23）：本文中的“当前”数字和行号描述的是
+> `abcc9b581e55c7e0d710391bf66546ddde5012e6` 完成态，不再代表 `main` 当前头。
+> `daa1f041ca5ebf2c2c6a5d7ff6dd1e27394e22a3` 的权威数字、位置和 P3
+> 交接清单见 [`rust-maintenance-current-head-inventory.md`](rust-maintenance-current-head-inventory.md)。
+
 ## 结论
 
 本轮已按 Slice 0 的权威清单处理确认的高信号运行时风险，未改变协议 DTO、
@@ -29,8 +34,11 @@ compatibility 中的 unwrap 没有为了改善指标而清理。pedantic 总量�
 | `cast_possible_wrap` | 28 | 28 | 0 |
 
 计数使用 Slice 0 同一工具链和同一分类脚本：Rust/Clippy 1.97.1，按 lint、crate、
-文件、行、列去重。当前 all-target `unwrap_used` 仍有 1,367 个 test 和 1 个
-compatibility 命中；它们不属于 production 风险口径。
+文件、行、列去重。本文完成时曾把 all-target `unwrap_used` 记为 1,367 个 test
+和 1 个 compatibility 命中；P3-01 在同一 `abcc9b5` commit、同一工具链上的
+可复现重跑校正为 **1,366 个 test + 1 个 compatibility = 1,367 个 all-target**。
+这不改变 production library/binary 均为 0 的结论，也不把这些非生产命中纳入
+风险下降口径。
 
 ## 已处理批次
 
