@@ -139,6 +139,58 @@ pub struct MessageProcessor {
     next_server_request_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SubscriptionPumpFailure {
+    Panicked,
+    UnexpectedCancellation,
+}
+
+impl SubscriptionPumpFailure {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Panicked => "subscription event pump panicked",
+            Self::UnexpectedCancellation => "subscription event pump was cancelled unexpectedly",
+        }
+    }
+}
+
+async fn observe_subscription_pump(
+    handle: JoinHandle<()>,
+    cancellation_expected: bool,
+) -> Option<SubscriptionPumpFailure> {
+    match handle.await {
+        Ok(()) => None,
+        Err(error) if error.is_cancelled() && cancellation_expected => None,
+        Err(error) if error.is_cancelled() => Some(SubscriptionPumpFailure::UnexpectedCancellation),
+        Err(_) => Some(SubscriptionPumpFailure::Panicked),
+    }
+}
+
+fn report_subscription_pump_failure(
+    sink: &dyn ServerSink,
+    subscription_id: &str,
+    failure: SubscriptionPumpFailure,
+) {
+    // Do not include the JoinError: a panic payload may contain arbitrary
+    // provider or tool data. The fixed diagnostic still distinguishes panic
+    // from unexpected cancellation.
+    eprintln!("subscription {subscription_id}: {}", failure.message());
+    let notification = StreamEventNotification {
+        subscription_id: subscription_id.to_string(),
+        event: StreamEvent::Error {
+            session_id: None,
+            provider: None,
+            category: None,
+            message: failure.message().to_string(),
+            suggestion: None,
+        },
+    };
+    sink.send(ServerMessage::Notification(ServerNotificationEnvelope {
+        method: method::NOTIFICATION_STREAM_EVENT.to_string(),
+        params: serde_json::to_value(notification).unwrap_or_default(),
+    }));
+}
+
 impl MessageProcessor {
     pub fn new(app_server: AppServer, sink: Arc<dyn ServerSink>) -> Self {
         Self {
@@ -155,15 +207,65 @@ impl MessageProcessor {
     }
 
     /// Process an incoming client message.
-    /// Drop handles of subscriptions whose pump has already finished (client
+    /// Join subscriptions whose pump has already finished (client
     /// disconnected, stream closed) so the map stays bounded to *live*
-    /// subscriptions. Called on every request — not only when a new
-    /// subscription is created — so a batch of pumps that complete after the
-    /// last `subscribe` is still reclaimed rather than lingering until the
-    /// processor is dropped.
-    fn prune_finished_subscriptions(&mut self) {
+    /// subscriptions and task failure cannot be discarded. Called on every
+    /// request — not only when a new subscription is created — so a batch of
+    /// pumps that complete after the last `subscribe` is still reclaimed
+    /// rather than lingering until the processor is dropped.
+    async fn prune_finished_subscriptions(&mut self) {
+        let finished = self
+            .active_subscriptions
+            .iter()
+            .filter(|(_, handle)| handle.is_finished())
+            .map(|(subscription_id, _)| subscription_id.clone())
+            .collect::<Vec<_>>();
+
+        for subscription_id in finished {
+            let Some(handle) = self.active_subscriptions.remove(&subscription_id) else {
+                continue;
+            };
+            if let Some(failure) = observe_subscription_pump(handle, false).await {
+                report_subscription_pump_failure(self.sink.as_ref(), &subscription_id, failure);
+            }
+        }
+    }
+
+    /// Register one connection-owned event pump.
+    ///
+    /// The source stream closing is normal completion. The processor owns the
+    /// returned handle, aborts it when the connection owner is dropped, and
+    /// joins completed handles at prune boundaries so panic or unexpected
+    /// cancellation becomes a terminal subscription diagnostic.
+    async fn register_subscription_pump(
+        &mut self,
+        rx: mpsc::UnboundedReceiver<StreamEvent>,
+        subscription_id: &str,
+    ) {
+        let sink = Arc::clone(&self.sink);
+        let pending = Arc::clone(&self.pending_server_requests);
+        let app_server = self.app_server.clone();
+        let sub_id = subscription_id.to_string();
+        let next_id = self.next_server_request_id;
+        // Reserve a range of IDs for this pump (generous upper bound).
+        self.next_server_request_id += 1_000_000;
+
+        let handle = tokio::spawn(async move {
+            pump_events(
+                rx,
+                sink,
+                pending,
+                app_server,
+                sub_id,
+                next_id,
+                DEFAULT_PERMISSION_TIMEOUT,
+            )
+            .await;
+        });
+
+        self.prune_finished_subscriptions().await;
         self.active_subscriptions
-            .retain(|_, handle| !handle.is_finished());
+            .insert(subscription_id.to_string(), handle);
     }
 
     pub async fn handle_message(&mut self, message: ClientMessage) {
@@ -200,7 +302,7 @@ impl MessageProcessor {
 
     /// Dispatch a client request, returning the response envelope.
     async fn handle_request(&mut self, req: ClientRequestEnvelope) -> ServerResponseEnvelope {
-        self.prune_finished_subscriptions();
+        self.prune_finished_subscriptions().await;
 
         if req.method == method::INITIALIZE {
             let result = self.handle_initialize(req.params);
@@ -363,31 +465,7 @@ impl MessageProcessor {
 
         let subscription_id = uuid::Uuid::new_v4().to_string();
 
-        // Spawn the event pump.
-        let sink = Arc::clone(&self.sink);
-        let pending = Arc::clone(&self.pending_server_requests);
-        let app_server = self.app_server.clone();
-        let sub_id = subscription_id.clone();
-        let next_id = self.next_server_request_id;
-        // Reserve a range of IDs for this pump (generous upper bound).
-        self.next_server_request_id += 1_000_000;
-
-        let handle = tokio::spawn(async move {
-            pump_events(
-                rx,
-                sink,
-                pending,
-                app_server,
-                sub_id,
-                next_id,
-                DEFAULT_PERMISSION_TIMEOUT,
-            )
-            .await;
-        });
-
-        self.prune_finished_subscriptions();
-        self.active_subscriptions
-            .insert(subscription_id.clone(), handle);
+        self.register_subscription_pump(rx, &subscription_id).await;
 
         crate::protocol_handler::success(TurnSubmitResult { subscription_id })
     }
@@ -412,29 +490,7 @@ impl MessageProcessor {
         };
 
         let subscription_id = uuid::Uuid::new_v4().to_string();
-        let sink = Arc::clone(&self.sink);
-        let pending = Arc::clone(&self.pending_server_requests);
-        let app_server = self.app_server.clone();
-        let sub_id = subscription_id.clone();
-        let next_id = self.next_server_request_id;
-        self.next_server_request_id += 1_000_000;
-
-        let handle = tokio::spawn(async move {
-            pump_events(
-                rx,
-                sink,
-                pending,
-                app_server,
-                sub_id,
-                next_id,
-                DEFAULT_PERMISSION_TIMEOUT,
-            )
-            .await;
-        });
-
-        self.prune_finished_subscriptions();
-        self.active_subscriptions
-            .insert(subscription_id.clone(), handle);
+        self.register_subscription_pump(rx, &subscription_id).await;
 
         crate::protocol_handler::success(orbcode_app_server_protocol::BackgroundSubscribeResult {
             subscription_id,
@@ -491,27 +547,8 @@ impl MessageProcessor {
             }
             GoalContinuationOutcome::Started(started) => {
                 let subscription_id = uuid::Uuid::new_v4().to_string();
-                let sink = Arc::clone(&self.sink);
-                let pending = Arc::clone(&self.pending_server_requests);
-                let app_server = self.app_server.clone();
-                let sub_id = subscription_id.clone();
-                let next_id = self.next_server_request_id;
-                self.next_server_request_id += 1_000_000;
-                let handle = tokio::spawn(async move {
-                    pump_events(
-                        started.events,
-                        sink,
-                        pending,
-                        app_server,
-                        sub_id,
-                        next_id,
-                        DEFAULT_PERMISSION_TIMEOUT,
-                    )
+                self.register_subscription_pump(started.events, &subscription_id)
                     .await;
-                });
-                self.prune_finished_subscriptions();
-                self.active_subscriptions
-                    .insert(subscription_id.clone(), handle);
                 crate::protocol_handler::success(SessionGoalContinueResult::Started {
                     subscription_id,
                     turn_id: started.turn_id,
@@ -606,8 +643,33 @@ impl MessageProcessor {
 
 impl Drop for MessageProcessor {
     fn drop(&mut self) {
-        for (_, handle) in self.active_subscriptions.drain() {
-            handle.abort();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            for (subscription_id, handle) in self.active_subscriptions.drain() {
+                let cancellation_expected = !handle.is_finished();
+                if cancellation_expected {
+                    handle.abort();
+                }
+                let sink = Arc::clone(&self.sink);
+                // The pump is already finished or has just been aborted, so
+                // this observer is bounded and owns no connection state. It
+                // distinguishes expected shutdown cancellation from a pump
+                // that had already failed before owner teardown.
+                std::mem::drop(runtime.spawn(async move {
+                    if let Some(failure) =
+                        observe_subscription_pump(handle, cancellation_expected).await
+                    {
+                        report_subscription_pump_failure(sink.as_ref(), &subscription_id, failure);
+                    }
+                }));
+            }
+        } else {
+            // Message processors normally live inside a Tokio transport task.
+            // If one is dropped outside a runtime, aborting still releases the
+            // connection-owned pumps; there is no executor available to join
+            // them or deliver a terminal notification.
+            for (_, handle) in self.active_subscriptions.drain() {
+                handle.abort();
+            }
         }
         self.app_server.cancel_pending_ask_user_for_owner(
             &self.connection_id,
@@ -999,6 +1061,7 @@ pub async fn pump_events(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use orbcode_app_server_protocol::ClientRequestEnvelope;
@@ -1034,6 +1097,67 @@ mod tests {
         fn is_closed(&self) -> bool {
             self.closed.load(std::sync::atomic::Ordering::Relaxed)
         }
+    }
+
+    struct PanicSink;
+
+    impl ServerSink for PanicSink {
+        fn send(&self, _message: ServerMessage) {
+            panic!("injected subscription pump panic");
+        }
+
+        fn is_closed(&self) -> bool {
+            false
+        }
+    }
+
+    struct DropCanary(Arc<AtomicUsize>);
+
+    impl Drop for DropCanary {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn wait_for_subscription_to_finish(processor: &MessageProcessor, subscription_id: &str) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if processor
+                    .active_subscriptions
+                    .get(subscription_id)
+                    .is_some_and(JoinHandle::is_finished)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("subscription pump should finish within timeout");
+    }
+
+    fn subscription_failure_messages(
+        messages: &[ServerMessage],
+        subscription_id: &str,
+    ) -> Vec<String> {
+        messages
+            .iter()
+            .filter_map(|message| {
+                let ServerMessage::Notification(notification) = message else {
+                    return None;
+                };
+                let notification =
+                    serde_json::from_value::<StreamEventNotification>(notification.params.clone())
+                        .ok()?;
+                if notification.subscription_id != subscription_id {
+                    return None;
+                }
+                let StreamEvent::Error { message, .. } = notification.event else {
+                    return None;
+                };
+                Some(message)
+            })
+            .collect()
     }
 
     fn test_path(label: &str) -> PathBuf {
@@ -2329,63 +2453,281 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Disconnect cleanup: dropping processor aborts subscriptions
+    // Subscription task ownership and failure observation
     // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn prune_observes_normal_subscription_completion_once() {
+        let app = test_app("prune-normal").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        drop(event_tx);
+        let (pump_sink, _) = TestSink::new();
+        let lifetime = Arc::new(());
+        let lifetime_weak = Arc::downgrade(&lifetime);
+        let drop_count = Arc::new(AtomicUsize::new(0));
+        let drop_canary = DropCanary(Arc::clone(&drop_count));
+        let app_server = processor.app_server.clone();
+        let pending = Arc::clone(&processor.pending_server_requests);
+        let handle = tokio::spawn(async move {
+            let _lifetime = lifetime;
+            let _drop_canary = drop_canary;
+            pump_events(
+                event_rx,
+                pump_sink,
+                pending,
+                app_server,
+                "normal-sub".to_string(),
+                0,
+                DEFAULT_PERMISSION_TIMEOUT,
+            )
+            .await;
+        });
+        processor
+            .active_subscriptions
+            .insert("normal-sub".to_string(), handle);
+
+        wait_for_subscription_to_finish(&processor, "normal-sub").await;
+        processor.prune_finished_subscriptions().await;
+        processor.prune_finished_subscriptions().await;
+
+        assert!(processor.active_subscriptions.is_empty());
+        assert!(lifetime_weak.upgrade().is_none());
+        assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+        assert!(
+            subscription_failure_messages(&messages.lock().await, "normal-sub").is_empty(),
+            "normal EOF must not emit a failure transition"
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_surfaces_subscription_panic_once() {
+        let app = test_app("prune-panic").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        event_tx
+            .send(StreamEvent::AskUserQuestionResolved {
+                request_id: "panic-request".to_string(),
+                outcome: None,
+                answer: None,
+            })
+            .expect("queue panic-triggering event");
+        drop(event_tx);
+        let lifetime = Arc::new(());
+        let lifetime_weak = Arc::downgrade(&lifetime);
+        let drop_count = Arc::new(AtomicUsize::new(0));
+        let drop_canary = DropCanary(Arc::clone(&drop_count));
+        let app_server = processor.app_server.clone();
+        let pending = Arc::clone(&processor.pending_server_requests);
+        let handle = tokio::spawn(async move {
+            let _lifetime = lifetime;
+            let _drop_canary = drop_canary;
+            pump_events(
+                event_rx,
+                Arc::new(PanicSink),
+                pending,
+                app_server,
+                "panic-sub".to_string(),
+                0,
+                DEFAULT_PERMISSION_TIMEOUT,
+            )
+            .await;
+        });
+        processor
+            .active_subscriptions
+            .insert("panic-sub".to_string(), handle);
+
+        wait_for_subscription_to_finish(&processor, "panic-sub").await;
+        processor.prune_finished_subscriptions().await;
+        processor.prune_finished_subscriptions().await;
+
+        assert!(processor.active_subscriptions.is_empty());
+        assert!(processor.pending_server_requests.lock().await.is_empty());
+        assert!(lifetime_weak.upgrade().is_none());
+        assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            subscription_failure_messages(&messages.lock().await, "panic-sub"),
+            [SubscriptionPumpFailure::Panicked.message()]
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_surfaces_unexpected_subscription_cancellation_once() {
+        let app = test_app("prune-cancel").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+        let (_event_tx, event_rx) = mpsc::unbounded_channel();
+        let (pump_sink, _) = TestSink::new();
+        let app_server = processor.app_server.clone();
+        let pending = Arc::clone(&processor.pending_server_requests);
+        let handle = tokio::spawn(pump_events(
+            event_rx,
+            pump_sink,
+            pending,
+            app_server,
+            "cancel-sub".to_string(),
+            0,
+            DEFAULT_PERMISSION_TIMEOUT,
+        ));
+        processor
+            .active_subscriptions
+            .insert("cancel-sub".to_string(), handle);
+        processor
+            .active_subscriptions
+            .get("cancel-sub")
+            .expect("subscription handle")
+            .abort();
+
+        wait_for_subscription_to_finish(&processor, "cancel-sub").await;
+        processor.prune_finished_subscriptions().await;
+        processor.prune_finished_subscriptions().await;
+
+        assert!(processor.active_subscriptions.is_empty());
+        assert_eq!(
+            subscription_failure_messages(&messages.lock().await, "cancel-sub"),
+            [SubscriptionPumpFailure::UnexpectedCancellation.message()]
+        );
+    }
+
+    #[tokio::test]
+    async fn processor_drop_surfaces_already_panicked_subscription_once() {
+        let app = test_app("drop-panic").await;
+        let (sink, messages) = TestSink::new();
+        let mut processor = MessageProcessor::new(app, sink);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        event_tx
+            .send(StreamEvent::AskUserQuestionResolved {
+                request_id: "drop-panic-request".to_string(),
+                outcome: None,
+                answer: None,
+            })
+            .expect("queue panic-triggering event");
+        drop(event_tx);
+        let app_server = processor.app_server.clone();
+        let pending = Arc::clone(&processor.pending_server_requests);
+        let handle = tokio::spawn(pump_events(
+            event_rx,
+            Arc::new(PanicSink),
+            pending,
+            app_server,
+            "drop-panic-sub".to_string(),
+            0,
+            DEFAULT_PERMISSION_TIMEOUT,
+        ));
+        processor
+            .active_subscriptions
+            .insert("drop-panic-sub".to_string(), handle);
+        wait_for_subscription_to_finish(&processor, "drop-panic-sub").await;
+
+        drop(processor);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if subscription_failure_messages(&messages.lock().await, "drop-panic-sub")
+                    == [SubscriptionPumpFailure::Panicked.message()]
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("owner shutdown should observe an already-panicked pump");
+        tokio::task::yield_now().await;
+        assert_eq!(
+            subscription_failure_messages(&messages.lock().await, "drop-panic-sub"),
+            [SubscriptionPumpFailure::Panicked.message()]
+        );
+    }
 
     #[tokio::test]
     async fn processor_drop_aborts_active_subscriptions() {
         let app = test_app("drop-abort").await;
-        let (sink, _messages) = TestSink::new();
+        let (sink, owner_messages) = TestSink::new();
         let mut processor = MessageProcessor::new(app, sink);
-
-        processor.handle_message(initialize_request()).await;
-
-        // Bootstrap
-        processor
-            .handle_message(ClientMessage::Request(ClientRequestEnvelope {
-                id: "bs-1".into(),
-                method: "session/bootstrap".into(),
-                params: None,
-            }))
+        let pending_weak = Arc::downgrade(&processor.pending_server_requests);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (pump_sink, pump_messages) = TestSink::new();
+        let lifetime = Arc::new(());
+        let lifetime_weak = Arc::downgrade(&lifetime);
+        let drop_count = Arc::new(AtomicUsize::new(0));
+        let drop_canary = DropCanary(Arc::clone(&drop_count));
+        let (started_tx, started_rx) = oneshot::channel();
+        let app_server = processor.app_server.clone();
+        let pending = Arc::clone(&processor.pending_server_requests);
+        let handle = tokio::spawn(async move {
+            let _lifetime = lifetime;
+            let _drop_canary = drop_canary;
+            let _ = started_tx.send(());
+            pump_events(
+                event_rx,
+                pump_sink,
+                pending,
+                app_server,
+                "drop-sub".to_string(),
+                0,
+                DEFAULT_PERMISSION_TIMEOUT,
+            )
             .await;
+        });
+        processor
+            .active_subscriptions
+            .insert("drop-sub".to_string(), handle);
+        started_rx.await.expect("pump should start");
 
-        // Submit a turn (creates an active subscription in the processor).
-        let msgs = _messages.lock().await;
-        let session_id = msgs
-            .iter()
-            .find_map(|m| {
-                if let ServerMessage::Response(r) = m {
-                    if let ResponseResult::Success { data: Some(ref d) } = r.result {
-                        d["session"]["session_id"].as_str().map(String::from)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+        event_tx
+            .send(StreamEvent::AskUserQuestionResolved {
+                request_id: "before-drop".to_string(),
+                outcome: None,
+                answer: None,
             })
-            .expect("session_id");
-        drop(msgs);
+            .expect("send before owner drop");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if pump_messages.lock().await.len() == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pump should write before owner drop");
 
-        processor
-            .handle_message(ClientMessage::Request(ClientRequestEnvelope {
-                id: "turn-1".into(),
-                method: "turn/submit".into(),
-                params: Some(json!({
-                    "session_id": session_id,
-                    "prompt": "hello",
-                })),
-            }))
-            .await;
-
-        // Processor has at least one active subscription now.
-        // Drop it — this should abort all subscription tasks cleanly.
         drop(processor);
 
-        // Give aborted tasks a moment to complete.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if drop_count.load(Ordering::SeqCst) == 1
+                    && lifetime_weak.upgrade().is_none()
+                    && pending_weak.upgrade().is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("owner drop should release pump and pending state");
 
-        // If we get here without panic or hang, cleanup worked.
+        assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+        assert!(
+            event_tx
+                .send(StreamEvent::AskUserQuestionResolved {
+                    request_id: "after-drop".to_string(),
+                    outcome: None,
+                    answer: None,
+                })
+                .is_err(),
+            "retired pump must not accept later state writes"
+        );
+        tokio::task::yield_now().await;
+        assert_eq!(pump_messages.lock().await.len(), 1);
+        assert!(
+            subscription_failure_messages(&owner_messages.lock().await, "drop-sub").is_empty(),
+            "owner-initiated abort is expected shutdown, not a failure"
+        );
     }
 
     // -----------------------------------------------------------------------
