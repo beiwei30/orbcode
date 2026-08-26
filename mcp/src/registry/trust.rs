@@ -99,7 +99,7 @@ impl McpRegistry {
         save_trust(&storage_dir, &trust_store).await?;
         orbcode_config::set_mcp_server_trust_setting(&home_dir, server_id, trust_to_setting(trust))
             .await
-            .map_err(|error| McpError::Io(std::io::Error::other(error.to_string())))?;
+            .map_err(|error| McpError::Io(std::io::Error::other(error)))?;
         Ok(())
     }
 
