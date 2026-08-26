@@ -1,6 +1,7 @@
 mod runtime_fault_fixtures;
 
 use std::collections::BTreeMap;
+use std::error::Error as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -3136,6 +3137,49 @@ async fn set_server_trust_persists_to_settings_layer_without_trust_json() {
         .await
         .expect_err("denied server refuses listing");
     assert!(matches!(error, McpError::ServerUntrusted { .. }));
+}
+
+#[tokio::test]
+async fn set_server_trust_retains_redacted_settings_error_source() {
+    const FILE_CONTENT_CANARY: &str = "settings-file-content-canary-p3-03";
+    const TOKEN_CANARY: &str = "settings-token-canary-p3-03";
+
+    let (home, cwd) = temp_paths("trust-settings-error-source");
+    std::fs::write(
+        cwd.join(".mcp.json"),
+        r#"{"mcpServers":{"docs":{"type":"ws","url":"wss://docs.example/mcp"}}}"#,
+    )
+    .expect("write mcp json");
+    let registry = McpRegistry::load(&home, &cwd).await.expect("load registry");
+    let malformed = format!(r#"{{"apiToken":"{TOKEN_CANARY}","content":"{FILE_CONTENT_CANARY}"#);
+    let parse_error = serde_json::from_str::<Value>(&malformed).expect_err("malformed JSON");
+    std::fs::write(home.join("settings.json"), malformed).expect("write malformed settings");
+    let error = registry
+        .set_server_trust("docs", McpServerTrust::Trusted)
+        .await
+        .expect_err("malformed settings must reject trust persistence");
+
+    let McpError::Io(io_error) = &error else {
+        panic!("settings persistence must preserve the McpError::Io boundary");
+    };
+    let stored_source = io_error
+        .get_ref()
+        .expect("io error stores the ConfigError source");
+    assert!(stored_source.is::<orbcode_config::ConfigError>());
+
+    let io_source = error.source().expect("McpError retains io source");
+    let json_source = io_source
+        .source()
+        .expect("io error chain reaches the serde_json source");
+    assert!(json_source.is::<serde_json::Error>());
+
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+    assert_eq!(display, format!("io error: json error: {parse_error}"));
+    for canary in [FILE_CONTENT_CANARY, TOKEN_CANARY] {
+        assert!(!display.contains(canary), "Display leaked {canary}");
+        assert!(!debug.contains(canary), "Debug leaked {canary}");
+    }
 }
 
 #[test]

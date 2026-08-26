@@ -1811,6 +1811,64 @@ async fn mcp_set_trust_then_verify_via_server_trust() {
 }
 
 #[tokio::test]
+async fn mcp_set_trust_settings_error_redacts_protocol_response() {
+    const FILE_CONTENT_CANARY: &str = "protocol-settings-content-canary-p3-03";
+    const TOKEN_CANARY: &str = "protocol-settings-token-canary-p3-03";
+
+    let app = test_app("mcp-set-trust-settings-error").await;
+    let upsert = app
+        .handle_request(make_request(
+            "mcp/upsert_server",
+            json!({
+                "id": "trust-settings-error-server",
+                "transport": "stdio",
+                "endpoint": "echo",
+                "enabled": false,
+                "summary": "trust settings error test",
+                "auth": {"kind": "none"},
+            }),
+        ))
+        .await;
+    assert!(matches!(upsert.result, ResponseResult::Success { .. }));
+
+    let home = &app.sessions.config().home_dir;
+    let malformed = format!(r#"{{"apiToken":"{TOKEN_CANARY}","content":"{FILE_CONTENT_CANARY}"#);
+    let parse_error =
+        serde_json::from_str::<serde_json::Value>(&malformed).expect_err("malformed JSON");
+    tokio::fs::write(home.join("settings.json"), malformed)
+        .await
+        .expect("write malformed settings");
+
+    let response = app
+        .handle_request(make_request(
+            "mcp/set_trust",
+            json!({
+                "server_id": "trust-settings-error-server",
+                "trust": "trusted",
+            }),
+        ))
+        .await;
+    match &response.result {
+        ResponseResult::Error(error) => {
+            assert_eq!(error.code, ErrorCode::McpError);
+            assert_eq!(
+                error.message,
+                format!("io error: json error: {parse_error}")
+            );
+        }
+        other => panic!("malformed settings should produce an MCP error, got: {other:?}"),
+    }
+
+    let serialized = serde_json::to_string(&response).expect("serialize protocol response");
+    for canary in [FILE_CONTENT_CANARY, TOKEN_CANARY] {
+        assert!(
+            !serialized.contains(canary),
+            "protocol response leaked {canary}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_read_resource_unknown_server_returns_error() {
     let app = test_app("mcp-read-res-err").await;
     let resp = app
