@@ -1,6 +1,221 @@
 use crate::tests::support::*;
 
 #[test]
+fn overlay_cursor_style_covers_every_overlay_variant() {
+    use orbcode_app_server_client::AskUserQuestionRequest;
+
+    type OverlayCase = (
+        &'static str,
+        fn() -> Option<OverlayState>,
+        Option<SetCursorStyle>,
+    );
+
+    let cases: &[OverlayCase] = &[
+        ("no overlay", || None, None),
+        (
+            "add directory picker",
+            || {
+                Some(OverlayState::AddDirPicker(AddDirPickerState::new(
+                    "/add-dir",
+                    Path::new("/path/that/does/not/exist"),
+                )))
+            },
+            None,
+        ),
+        (
+            "session picker",
+            || {
+                Some(OverlayState::SessionPicker(SessionPickerState::new(
+                    "/sessions",
+                    "Sessions",
+                    Vec::new(),
+                    "session",
+                )))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "model picker",
+            || {
+                Some(OverlayState::ModelPicker(ModelPickerState::new(
+                    "/model",
+                    Vec::new(),
+                    None,
+                )))
+            },
+            None,
+        ),
+        (
+            "theme picker",
+            || {
+                Some(OverlayState::ThemePicker(ThemePickerState::new(
+                    "/theme",
+                    ThemeSetting::Auto,
+                )))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "output style picker",
+            || {
+                Some(OverlayState::OutputStylePicker(
+                    OutputStylePickerState::new("/output-style", Vec::new(), false),
+                ))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "config picker",
+            || {
+                Some(OverlayState::ConfigPicker(ConfigPickerState {
+                    command: "/config".to_string(),
+                    output_style: "default".to_string(),
+                    all_options: Vec::new(),
+                    options: Vec::new(),
+                    selected: 0,
+                    query: String::new(),
+                    searching: false,
+                    lines_cache: Default::default(),
+                }))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "sandbox picker",
+            || {
+                Some(OverlayState::SandboxPicker(SandboxPickerState::new(
+                    "/sandbox",
+                    SandboxLocalSettings::default(),
+                )))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "memory picker",
+            || {
+                Some(OverlayState::MemoryPicker(MemoryPickerState {
+                    command: "/memory".to_string(),
+                    items: Vec::new(),
+                    auto_memory_enabled: false,
+                    selected: 0,
+                    lines_cache: Default::default(),
+                }))
+            },
+            None,
+        ),
+        (
+            "permission picker",
+            || {
+                Some(OverlayState::PermissionPicker(PermissionPickerState::new(
+                    "/permissions",
+                    Vec::new(),
+                )))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "permission request options",
+            || {
+                Some(OverlayState::PermissionRequest(
+                    PermissionOverlayState::new(long_agent_permission_request()),
+                ))
+            },
+            None,
+        ),
+        (
+            "permission request rule editor",
+            || {
+                let mut permission = PermissionOverlayState::new(long_agent_permission_request());
+                permission.editing_rule = true;
+                Some(OverlayState::PermissionRequest(permission))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "ask user question",
+            || {
+                Some(OverlayState::AskUserQuestion(
+                    AskUserQuestionOverlayState::new(AskUserQuestionRequest {
+                        session_id: "session".to_string(),
+                        turn_id: None,
+                        tool_use_id: "tool-use".to_string(),
+                        request_id: "request".to_string(),
+                        deadline: None,
+                        validation_error: None,
+                        questions: Vec::new(),
+                        question: String::new(),
+                        options: Vec::new(),
+                    }),
+                ))
+            },
+            Some(SetCursorStyle::BlinkingBar),
+        ),
+        (
+            "rewind picker",
+            || {
+                Some(OverlayState::RewindPicker(RewindPickerState {
+                    command: "/rewind".to_string(),
+                    session_id: "session".to_string(),
+                    entries: Vec::new(),
+                    selected: 0,
+                }))
+            },
+            None,
+        ),
+        (
+            "help",
+            || Some(OverlayState::Help(HelpOverlayState::default())),
+            None,
+        ),
+        (
+            "keybind help",
+            || Some(OverlayState::KeybindHelp(KeybindHelpOverlayState::default())),
+            None,
+        ),
+        (
+            "diff",
+            || {
+                Some(OverlayState::Diff(DiffOverlayState::new(WorkspaceDiff {
+                    cwd: PathBuf::new(),
+                    status: String::new(),
+                    staged_diff: String::new(),
+                    unstaged_diff: String::new(),
+                    untracked_files: Vec::new(),
+                })))
+            },
+            None,
+        ),
+        (
+            "background jobs",
+            || {
+                Some(OverlayState::BackgroundJobs(
+                    BackgroundJobsOverlayState::new(Vec::new(), "session".to_string()),
+                ))
+            },
+            None,
+        ),
+        (
+            "transcript pager",
+            || {
+                let mut state = normal_state("", 0);
+                state.open_transcript_pager(80, 24);
+                state.overlay.take()
+            },
+            None,
+        ),
+    ];
+
+    for &(name, make_overlay, expected) in cases {
+        let overlay = make_overlay();
+        assert_eq!(
+            overlay_cursor_style(overlay.as_ref()).map(|style| style.to_string()),
+            expected.map(|style| style.to_string()),
+            "cursor style changed for {name}"
+        );
+    }
+}
+
+#[test]
 fn render_metrics_fixture_covers_large_help_and_diff_overlays() {
     let mut help_state = normal_state("", 0);
     fill_long_transcript(&mut help_state, 80);

@@ -101,12 +101,12 @@ pub(crate) fn overlay_cursor_style(overlay: Option<&OverlayState>) -> Option<Set
             | OverlayState::OutputStylePicker(_)
             | OverlayState::ConfigPicker(_)
             | OverlayState::SandboxPicker(_)
-            | OverlayState::PermissionPicker(_),
+            | OverlayState::PermissionPicker(_)
+            | OverlayState::AskUserQuestion(_),
         ) => Some(SetCursorStyle::BlinkingBar),
         Some(OverlayState::PermissionRequest(permission)) if permission.editing_rule => {
             Some(SetCursorStyle::BlinkingBar)
         }
-        Some(OverlayState::AskUserQuestion(_)) => Some(SetCursorStyle::BlinkingBar),
         _ => None,
     }
 }
@@ -183,10 +183,8 @@ pub(crate) fn draw_overlay_after_layout(
                 frame.set_cursor_position(cursor);
             }
         }
-        OverlayState::TranscriptPager(_) => {
-            // Drawn before main layout by draw_fullscreen_overlay.
-        }
-        OverlayState::AddDirPicker(_)
+        OverlayState::TranscriptPager(_)
+        | OverlayState::AddDirPicker(_)
         | OverlayState::ModelPicker(_)
         | OverlayState::ThemePicker(_)
         | OverlayState::OutputStylePicker(_)
@@ -194,7 +192,8 @@ pub(crate) fn draw_overlay_after_layout(
         | OverlayState::SandboxPicker(_)
         | OverlayState::MemoryPicker(_)
         | OverlayState::RewindPicker(_) => {
-            // Rendered as the request-status panel above the prompt.
+            // The transcript pager is drawn before main layout by draw_fullscreen_overlay.
+            // The picker variants are rendered as the request-status panel above the prompt.
         }
     }
 }
