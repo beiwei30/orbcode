@@ -24,11 +24,24 @@ fn main() {
 
     #[cfg(unix)]
     if mode == "broken-stdin" {
+        let line = io::stdin()
+            .lock()
+            .lines()
+            .next()
+            .expect("broken-stdin arm request")
+            .expect("read broken-stdin arm request");
+        let message: Value = serde_json::from_str(&line).expect("valid arm request");
+        assert_eq!(message["type"], "request");
+        assert_eq!(message["method"], "fixture/arm-broken-stdin");
+        let id = message["id"].as_str().expect("arm request id");
+        let mut stdout = io::stdout().lock();
+        respond(&mut stdout, id, json!({"armed": true}));
+
         // SAFETY: this disposable fixture intentionally closes only its own
-        // inherited stdin descriptor to make the parent's next write fail.
+        // inherited stdin descriptor after acknowledging one writer handoff,
+        // making the parent's next write fail.
         let result = unsafe { libc::close(libc::STDIN_FILENO) };
         assert_eq!(result, 0, "close fixture stdin");
-        let mut stdout = io::stdout().lock();
         write_message(
             &mut stdout,
             json!({"type": "notification", "method": "fixture/ready", "params": {}}),

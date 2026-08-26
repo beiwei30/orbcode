@@ -1,14 +1,20 @@
 use std::time::Duration;
 
 use orbcode_app_server_client::{
-    AppClient, ChildExitReason, ChildStdioTransport, ChildStdioTransportConfig, ChildTermination,
-    ClientError, ClientTransport, ResponseResult,
+    AppClient, ChildExitDiagnostics, ChildExitReason, ChildStdioHandle, ChildStdioTransport,
+    ChildStdioTransportConfig, ChildTermination, ClientError, ClientTransport, ResponseResult,
 };
 use serde_json::json;
 use tokio::process::Command;
 use tokio::time::{Instant, timeout};
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(3);
+// Fixture messages and process diagnostics prove progress. This duration is
+// only the outer deadlock watchdog for a complete asynchronous operation.
+const DEADLOCK_WATCHDOG: Duration = Duration::from_secs(20);
+// A ready child may still need an OS scheduling turn to consume stdin EOF.
+const LIFECYCLE_GRACE_TIMEOUT: Duration = Duration::from_secs(10);
+// Only the explicit escalation test intentionally compresses these phases.
+const ESCALATION_PHASE_TIMEOUT: Duration = Duration::from_millis(100);
 
 fn fixture_command(mode: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_orbcode-child-stdio-fixture"));
@@ -16,38 +22,91 @@ fn fixture_command(mode: &str) -> Command {
     command
 }
 
-fn fast_config() -> ChildStdioTransportConfig {
+fn lifecycle_config() -> ChildStdioTransportConfig {
     let mut config = ChildStdioTransportConfig::default();
-    config.graceful_shutdown_timeout = Duration::from_millis(100);
-    config.terminate_timeout = Duration::from_millis(100);
+    config.graceful_shutdown_timeout = LIFECYCLE_GRACE_TIMEOUT;
     config
+}
+
+fn held_fault_config() -> ChildStdioTransportConfig {
+    // This fixture deliberately cannot exit on EOF, so production defaults
+    // bound its expected terminate-or-kill path after the fault is published.
+    ChildStdioTransportConfig::default()
+}
+
+fn escalation_config() -> ChildStdioTransportConfig {
+    let mut config = ChildStdioTransportConfig::default();
+    config.graceful_shutdown_timeout = ESCALATION_PHASE_TIMEOUT;
+    config.terminate_timeout = ESCALATION_PHASE_TIMEOUT;
+    config
+}
+
+async fn shutdown_with_watchdog(handle: &ChildStdioHandle) -> ChildExitDiagnostics {
+    timeout(DEADLOCK_WATCHDOG, handle.shutdown())
+        .await
+        .expect("shutdown should not hang")
+        .expect("child diagnostics")
+}
+
+fn assert_graceful_shutdown(diagnostics: &ChildExitDiagnostics) {
+    assert_eq!(diagnostics.reason, ChildExitReason::ShutdownRequested);
+    assert_eq!(
+        diagnostics.termination,
+        ChildTermination::Graceful,
+        "unexpected shutdown diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(diagnostics.exit_code, Some(0));
+    assert_eq!(diagnostics.signal, None);
+    assert!(
+        diagnostics.success,
+        "unexpected shutdown diagnostics: {diagnostics:?}"
+    );
+}
+
+fn assert_graceful_fault(diagnostics: &ChildExitDiagnostics, reason: ChildExitReason) {
+    assert_eq!(diagnostics.reason, reason);
+    assert_eq!(
+        diagnostics.termination,
+        ChildTermination::Graceful,
+        "unexpected fault diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(diagnostics.exit_code, Some(0));
+    assert_eq!(diagnostics.signal, None);
+    assert!(
+        diagnostics.success,
+        "unexpected fault diagnostics: {diagnostics:?}"
+    );
 }
 
 #[tokio::test]
 async fn canonical_initialize_works_through_app_client() {
-    let (transport, handle) = ChildStdioTransport::spawn(fixture_command("normal"), fast_config())
-        .await
-        .expect("spawn fixture");
+    let (transport, handle) =
+        ChildStdioTransport::spawn(fixture_command("normal"), lifecycle_config())
+            .await
+            .expect("spawn fixture");
 
-    let client = timeout(TEST_TIMEOUT, AppClient::from_transport(Box::new(transport)))
-        .await
-        .expect("initialize should not hang")
-        .expect("canonical initialize should succeed");
+    let client = timeout(
+        DEADLOCK_WATCHDOG,
+        AppClient::from_transport(Box::new(transport)),
+    )
+    .await
+    .expect("initialize should not hang")
+    .expect("canonical initialize should succeed");
 
     drop(client);
-    let diagnostics = timeout(TEST_TIMEOUT, handle.wait_for_exit())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.wait_for_exit())
         .await
         .expect("drop should stop child")
         .expect("child diagnostics");
-    assert_eq!(diagnostics.reason, ChildExitReason::ShutdownRequested);
-    assert!(diagnostics.success);
+    assert_graceful_shutdown(&diagnostics);
 }
 
 #[tokio::test]
 async fn responses_notifications_and_server_requests_keep_protocol_semantics() {
-    let (transport, handle) = ChildStdioTransport::spawn(fixture_command("normal"), fast_config())
-        .await
-        .expect("spawn fixture");
+    let (transport, handle) =
+        ChildStdioTransport::spawn(fixture_command("normal"), lifecycle_config())
+            .await
+            .expect("spawn fixture");
     let mut notifications = transport
         .take_notification_receiver()
         .await
@@ -65,7 +124,7 @@ async fn responses_notifications_and_server_requests_keep_protocol_semantics() {
     assert_eq!(second.expect("second response"), json!({"request": 2}));
 
     let ordered = timeout(
-        TEST_TIMEOUT,
+        DEADLOCK_WATCHDOG,
         transport.request("fixture/ordered", Some(json!({}))),
     )
     .await
@@ -105,23 +164,23 @@ async fn responses_notifications_and_server_requests_keep_protocol_semantics() {
         })
     );
 
-    let diagnostics = handle.shutdown().await.expect("shutdown fixture");
-    assert_eq!(diagnostics.termination, ChildTermination::Graceful);
-    assert!(diagnostics.success);
+    let diagnostics = shutdown_with_watchdog(&handle).await;
+    assert_graceful_shutdown(&diagnostics);
 }
 
 #[tokio::test]
 async fn durable_notification_survives_saturated_best_effort_queue() {
-    let (transport, handle) = ChildStdioTransport::spawn(fixture_command("normal"), fast_config())
-        .await
-        .expect("spawn fixture");
+    let (transport, handle) =
+        ChildStdioTransport::spawn(fixture_command("normal"), lifecycle_config())
+            .await
+            .expect("spawn fixture");
     let mut notifications = transport
         .take_notification_receiver()
         .await
         .expect("notification receiver");
 
     let response = timeout(
-        TEST_TIMEOUT,
+        DEADLOCK_WATCHDOG,
         transport.request("fixture/notification-backpressure", None),
     )
     .await
@@ -129,7 +188,7 @@ async fn durable_notification_survives_saturated_best_effort_queue() {
     .expect("fixture response");
     assert_eq!(response, json!({"notifications_sent": 300}));
 
-    let (best_effort_count, terminal) = timeout(TEST_TIMEOUT, async {
+    let (best_effort_count, terminal) = timeout(DEADLOCK_WATCHDOG, async {
         let mut best_effort_count = 0;
         loop {
             let notification = notifications.recv().await.expect("notification");
@@ -150,57 +209,57 @@ async fn durable_notification_survives_saturated_best_effort_queue() {
     assert_eq!(terminal.params["subscription_id"], "fixture-backpressure");
     assert_eq!(terminal.params["event"]["event"], "turn_finished");
 
-    let diagnostics = handle.shutdown().await.expect("shutdown fixture");
-    assert!(diagnostics.success);
+    let diagnostics = shutdown_with_watchdog(&handle).await;
+    assert_graceful_shutdown(&diagnostics);
 }
 
 #[tokio::test]
 async fn malformed_stdout_cancels_pending_request_and_reports_reason() {
     let (transport, handle) =
-        ChildStdioTransport::spawn(fixture_command("malformed"), fast_config())
+        ChildStdioTransport::spawn(fixture_command("malformed"), lifecycle_config())
             .await
             .expect("spawn fixture");
 
-    let result = timeout(TEST_TIMEOUT, transport.request("fixture/echo", None))
+    let result = timeout(DEADLOCK_WATCHDOG, transport.request("fixture/echo", None))
         .await
         .expect("malformed output should not hang");
     assert!(matches!(result, Err(ClientError::Cancelled)));
 
-    let diagnostics = timeout(TEST_TIMEOUT, handle.wait_for_exit())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.wait_for_exit())
         .await
         .expect("child should be reaped")
         .expect("child diagnostics");
-    assert_eq!(diagnostics.reason, ChildExitReason::MalformedStdout);
+    assert_graceful_fault(&diagnostics, ChildExitReason::MalformedStdout);
 }
 
 #[tokio::test]
 async fn oversized_stdout_is_bounded_and_cancels_pending_request() {
-    let mut config = fast_config();
+    let mut config = lifecycle_config();
     config.max_payload_bytes = 256;
     let (transport, handle) = ChildStdioTransport::spawn(fixture_command("oversized"), config)
         .await
         .expect("spawn fixture");
 
-    let result = timeout(TEST_TIMEOUT, transport.request("fixture/echo", None))
+    let result = timeout(DEADLOCK_WATCHDOG, transport.request("fixture/echo", None))
         .await
         .expect("oversized output should not hang");
     assert!(matches!(result, Err(ClientError::Cancelled)));
 
-    let diagnostics = timeout(TEST_TIMEOUT, handle.wait_for_exit())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.wait_for_exit())
         .await
         .expect("child should be reaped")
         .expect("child diagnostics");
-    assert_eq!(diagnostics.reason, ChildExitReason::OversizedStdout);
+    assert_graceful_fault(&diagnostics, ChildExitReason::OversizedStdout);
 }
 
 #[tokio::test]
 async fn early_exit_does_not_leave_requests_pending() {
     let (transport, handle) =
-        ChildStdioTransport::spawn(fixture_command("early-exit"), fast_config())
+        ChildStdioTransport::spawn(fixture_command("early-exit"), lifecycle_config())
             .await
             .expect("process can spawn before it exits");
 
-    let result = timeout(TEST_TIMEOUT, transport.request("fixture/echo", None))
+    let result = timeout(DEADLOCK_WATCHDOG, transport.request("fixture/echo", None))
         .await
         .expect("request should be released after early exit");
     assert!(matches!(
@@ -208,11 +267,12 @@ async fn early_exit_does_not_leave_requests_pending() {
         Err(ClientError::Cancelled | ClientError::Transport(_))
     ));
 
-    let diagnostics = timeout(TEST_TIMEOUT, handle.wait_for_exit())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.wait_for_exit())
         .await
         .expect("child should be reaped")
         .expect("child diagnostics");
     assert_eq!(diagnostics.exit_code, Some(23));
+    assert_eq!(diagnostics.signal, None);
     assert!(!diagnostics.success);
 }
 
@@ -220,20 +280,32 @@ async fn early_exit_does_not_leave_requests_pending() {
 #[tokio::test]
 async fn broken_stdin_cancels_pending_request_and_reports_reason() {
     let (transport, handle) =
-        ChildStdioTransport::spawn(fixture_command("broken-stdin"), fast_config())
+        ChildStdioTransport::spawn(fixture_command("broken-stdin"), held_fault_config())
             .await
             .expect("spawn fixture");
     let mut notifications = transport
         .take_notification_receiver()
         .await
         .expect("notification receiver");
-    let ready = timeout(TEST_TIMEOUT, notifications.recv())
+    let armed = timeout(
+        DEADLOCK_WATCHDOG,
+        transport.request("fixture/arm-broken-stdin", None),
+    )
+    .await
+    .expect("fixture arm request should not hang")
+    .expect("fixture arm response");
+    assert_eq!(armed, json!({"armed": true}));
+    let ready = timeout(DEADLOCK_WATCHDOG, notifications.recv())
         .await
         .expect("fixture ready timeout")
         .expect("fixture ready notification");
     assert_eq!(ready.method, "fixture/ready");
 
-    let result = timeout(TEST_TIMEOUT, transport.request("fixture/echo", None))
+    assert!(
+        handle.diagnostics().is_none(),
+        "the held fixture must still be alive after readiness"
+    );
+    let result = timeout(DEADLOCK_WATCHDOG, transport.request("fixture/echo", None))
         .await
         .expect("broken stdin should not hang");
     assert!(matches!(
@@ -241,17 +313,27 @@ async fn broken_stdin_cancels_pending_request_and_reports_reason() {
         Err(ClientError::Cancelled | ClientError::Transport(_))
     ));
 
-    let diagnostics = timeout(TEST_TIMEOUT, handle.wait_for_exit())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.wait_for_exit())
         .await
         .expect("child should be reaped")
         .expect("child diagnostics");
     assert_eq!(diagnostics.reason, ChildExitReason::StdinIo);
+    assert!(matches!(
+        diagnostics.termination,
+        ChildTermination::Terminated | ChildTermination::Killed
+    ));
+    assert_eq!(diagnostics.exit_code, None);
+    assert!(matches!(
+        diagnostics.signal,
+        Some(libc::SIGTERM) | Some(libc::SIGKILL)
+    ));
+    assert!(!diagnostics.success);
 }
 
 #[tokio::test]
 async fn shutdown_escalates_after_eof_and_remains_bounded() {
     let (transport, handle) =
-        ChildStdioTransport::spawn(fixture_command("slow-shutdown"), fast_config())
+        ChildStdioTransport::spawn(fixture_command("slow-shutdown"), escalation_config())
             .await
             .expect("spawn fixture");
     let response = transport
@@ -261,11 +343,11 @@ async fn shutdown_escalates_after_eof_and_remains_bounded() {
     assert_eq!(response, json!({"ready": true}));
 
     let started = Instant::now();
-    let diagnostics = timeout(TEST_TIMEOUT, handle.shutdown())
+    let diagnostics = timeout(DEADLOCK_WATCHDOG, handle.shutdown())
         .await
         .expect("shutdown must remain bounded")
         .expect("child diagnostics");
-    assert!(started.elapsed() < TEST_TIMEOUT);
+    assert!(started.elapsed() < DEADLOCK_WATCHDOG);
     assert_eq!(diagnostics.reason, ChildExitReason::ShutdownRequested);
     assert!(matches!(
         diagnostics.termination,
@@ -280,7 +362,7 @@ async fn shutdown_escalates_after_eof_and_remains_bounded() {
 
 #[tokio::test]
 async fn stderr_tail_is_bounded_and_redacted_before_exposure() {
-    let mut config = fast_config();
+    let mut config = lifecycle_config();
     config.stderr_tail_bytes = 512;
     let config = config.with_redacted_value("fixture-prompt-secret");
     let (transport, handle) = ChildStdioTransport::spawn(fixture_command("stderr"), config)
@@ -294,7 +376,8 @@ async fn stderr_tail_is_bounded_and_redacted_before_exposure() {
         json!({"ready": true})
     );
 
-    let diagnostics = handle.shutdown().await.expect("shutdown fixture");
+    let diagnostics = shutdown_with_watchdog(&handle).await;
+    assert_graceful_shutdown(&diagnostics);
     assert!(diagnostics.stderr_tail.len() <= 512);
     assert!(diagnostics.stderr_tail.contains("[REDACTED]"));
     for secret in [
@@ -313,22 +396,32 @@ async fn stderr_tail_is_bounded_and_redacted_before_exposure() {
 
 #[tokio::test]
 async fn outbound_payload_limit_is_enforced_before_write() {
-    let mut config = fast_config();
+    let mut config = lifecycle_config();
     config.max_payload_bytes = 128;
     let (transport, handle) = ChildStdioTransport::spawn(fixture_command("normal"), config)
         .await
         .expect("spawn fixture");
 
+    let ready = timeout(
+        DEADLOCK_WATCHDOG,
+        transport.request("fixture/echo", Some(json!({"ready": true}))),
+    )
+    .await
+    .expect("fixture readiness should not hang")
+    .expect("fixture readiness response");
+    assert_eq!(ready, json!({"ready": true}));
+
     let result = transport
         .request("fixture/echo", Some(json!({"large": "x".repeat(1024)})))
         .await;
     assert!(matches!(result, Err(ClientError::Transport(message)) if message.contains("exceeds")));
-    handle.shutdown().await.expect("shutdown fixture");
+    let diagnostics = shutdown_with_watchdog(&handle).await;
+    assert_graceful_shutdown(&diagnostics);
 }
 
 #[tokio::test]
 async fn invalid_zero_payload_limit_does_not_launch_child() {
-    let mut config = fast_config();
+    let mut config = lifecycle_config();
     config.max_payload_bytes = 0;
     let result = ChildStdioTransport::spawn(fixture_command("normal"), config).await;
     assert!(
