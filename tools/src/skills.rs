@@ -744,6 +744,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{},"prompts":{}},"serverInfo":{"name":"slow-stdio","version":"0.1.0"}}}\n' "$id"
       ;;
     *\"method\":\"prompts/list\"*)
+      printf 'prompts/list\n' >> "$MARKER_PATH"
       sleep 0.7
       printf '{"jsonrpc":"2.0","id":%s,"result":{"prompts":[]}}\n' "$id"
       ;;
@@ -797,7 +798,17 @@ done
         .expect("load skills");
 
         assert!(skills.is_empty());
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let events = tokio::fs::read_to_string(&marker).await.unwrap_or_default();
+                if events.lines().any(|event| event == "prompts/list") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("slow prompts/list request should start");
         registry
             .list_tools("slow")
             .await
@@ -805,7 +816,7 @@ done
 
         let starts = tokio::fs::read_to_string(&marker).await.expect("starts");
         assert_eq!(
-            starts.lines().count(),
+            starts.lines().filter(|event| *event == "started").count(),
             1,
             "timed-out skill discovery must not kill and restart the stdio MCP server"
         );

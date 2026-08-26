@@ -1,0 +1,46 @@
+# Production tokio::spawn owner allow-list for the Slice 8 maintenance audit.
+#
+# Generated anchors come from:
+#   scripts/audit-rust-maintenance.py --list-spawns
+#
+# The disposition is a compact pointer to the semantic classification in
+# docs/plans/rust-maintenance-current-head-inventory.md and the Slice 8 closeout.
+# A changed count or a new owner must be reviewed before this file is updated.
+#
+# Format: path<TAB>owning-function<TAB>count<TAB>disposition
+
+app-server-client/src/child_stdio_transport.rs	spawn	4	deferred:client-stdio-lifecycle
+app-server-client/src/in_process.rs	new	2	deferred:in-process-drop-panic
+app-server-client/src/lib.rs	start_router_tasks	2	best-effort:app-client-routing
+app-server-client/src/ndjson_transport.rs	connect	1	deferred:ndjson-reader-drop
+app-server-client/src/websocket_transport.rs	connect	2	deferred:websocket-client-transport
+app-server-transport/src/stdio.rs	run_transport	2	complete:await-peer-abort
+app-server-transport/src/websocket.rs	handle_ws_connection	2	complete:await-peer-abort
+app-server/src/background_api.rs	background_task_progress_stream	1	best-effort:progress-forwarder
+app-server/src/background_api.rs	submit_background_turn	1	complete:terminal-cancel-owner
+app-server/src/message_processor.rs	pump_events	3	deferred:pending-request-waiters
+app-server/src/message_processor.rs	register_subscription_pump	1	complete:subscription-pump-joinset
+app-server/src/message_processor.rs	resolve_server_request	1	best-effort:pending-response-resolver
+cli/src/acp_sdk/mod.rs	start_server_request_pump	1	deferred:acp-request-pump
+cli/src/acp_sdk/server_requests.rs	server_request_pump	3	deferred:acp-request-handlers
+cli/src/headless.rs	run_control_input_loop	1	best-effort:stdin-control-reader
+cli/src/main.rs	main	2	complete:serve-readiness-abort
+core/src/hook_runner/command.rs	run_command_hook_capture	1	best-effort:bounded-hook-stdin
+core/src/hook_runner/command.rs	run_nonblocking_command_hook	1	best-effort:bounded-hook-stdin
+core/src/session_manager/mod.rs	submit_turn_with_interaction	1	deferred:core-turn-driver-panic
+core/src/session_manager/session_background_agent.rs	start_background_agent_task	2	deferred:background-agent-supervisor
+core/src/session_manager/session_goal.rs	spawn_supervised_goal_turn	2	deferred:persistent-goal-supervisor
+core/src/session_manager/session_response.rs	start_streamed_tool_execution	2	complete:streamed-tool-owner
+core/src/session_manager/session_workflows.rs	invoke_agent	1	deferred:workflow-child-drain
+core/src/session_manager/session_workflows.rs	spawn_workflow_run	1	deferred:workflow-run-supervisor
+core/src/tool_runtime.rs	attach_ask_user_channel	1	complete:ask-user-forwarder
+mcp/src/transport/stdio.rs	spawn_stderr_capture	1	deferred:mcp-stdio-shutdown-join
+tools/src/bash.rs	run_bash	2	complete:tool-process-join
+tools/src/process.rs	run_command_output	2	complete:tool-process-join
+tools/src/skills.rs	discover_mcp_skill_prompts_with_timeout	2	complete:mcp-skill-observe-log
+tui/src/app.rs	run_tui	2	best-effort:tui-statusline
+tui/src/app.rs	subscribe_pending_transcript_task_cards	1	best-effort:tui-task-stream
+tui/src/commands/async_local.rs	start_async_local_slash_command	1	best-effort:tui-command-operation
+tui/src/commands/async_local.rs	start_context_slash_command	1	best-effort:tui-command-operation
+tui/src/commands/compact.rs	start_compact_slash_command	1	best-effort:tui-command-operation
+tui/src/commands/tui_local.rs	run_tui_local_slash_command	1	best-effort:tui-command-operation

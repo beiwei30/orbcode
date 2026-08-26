@@ -1,5 +1,12 @@
 # Rust maintenance current-head inventory
 
+> Historical handoff note (2026-08-26): this document remains the authoritative
+> `daa1f04` inventory and deferred-family classification. Its four selected
+> implementation families subsequently landed in `c100f5f`, `bfdb327`,
+> `f4d0be5`, and `746aace`. Current counts, sustainable guardrails, final
+> dispositions, and gate evidence are recorded in
+> [`rust-maintenance-slice8-closeout.md`](rust-maintenance-slice8-closeout.md).
+
 ## Conclusion
 
 This inventory audits `daa1f041ca5ebf2c2c6a5d7ff6dd1e27394e22a3`
