@@ -375,25 +375,33 @@ mod tests {
         .expect("app server")
     }
 
+    async fn start_test_transport(
+        app: AppServer,
+        config: WebSocketTransportConfig,
+    ) -> (
+        SocketAddr,
+        tokio::task::JoinHandle<Result<(), TransportError>>,
+    ) {
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("ephemeral loopback address");
+        let (bound_addr_tx, bound_addr_rx) = tokio::sync::oneshot::channel();
+        let transport_handle = tokio::spawn(async move {
+            run_websocket_transport_with_bound_addr(addr, app, config, Some(bound_addr_tx)).await
+        });
+        let bound_addr = tokio::time::timeout(Duration::from_secs(5), bound_addr_rx)
+            .await
+            .expect("timeout waiting for WebSocket transport bind")
+            .expect("WebSocket transport exited before reporting its bound address");
+        (bound_addr, transport_handle)
+    }
+
     // -------------------------------------------------------------------
     // 1. Initialize over WebSocket
     // -------------------------------------------------------------------
     #[tokio::test]
     async fn websocket_initialize() {
         let app = test_app("ws-init").await;
-
-        // Bind to an ephemeral port.
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let listener = TcpListener::bind(addr).await.expect("bind");
-        let bound_addr = listener.local_addr().expect("local_addr");
-        drop(listener); // Free the port for the transport to re-bind.
-
-        let config = WebSocketTransportConfig::default();
-        let transport_handle =
-            tokio::spawn(async move { run_websocket_transport(bound_addr, app, config).await });
-
-        // Wait briefly for the listener to bind.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (bound_addr, transport_handle) =
+            start_test_transport(app, WebSocketTransportConfig::default()).await;
 
         // Connect as a WebSocket client.
         let url = format!("ws://{bound_addr}");
@@ -442,17 +450,8 @@ mod tests {
     #[tokio::test]
     async fn websocket_disconnect() {
         let app = test_app("ws-disc").await;
-
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let listener = TcpListener::bind(addr).await.expect("bind");
-        let bound_addr = listener.local_addr().expect("local_addr");
-        drop(listener);
-
-        let config = WebSocketTransportConfig::default();
-        let transport_handle =
-            tokio::spawn(async move { run_websocket_transport(bound_addr, app, config).await });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (bound_addr, transport_handle) =
+            start_test_transport(app, WebSocketTransportConfig::default()).await;
 
         let url = format!("ws://{bound_addr}");
         let (ws, _resp) = connect_async(&url).await.expect("WS connect");
@@ -472,21 +471,12 @@ mod tests {
 
         let app = test_app("ws-tcp-no-upgrade").await;
 
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let listener = TcpListener::bind(addr).await.expect("bind");
-        let bound_addr = listener.local_addr().expect("local_addr");
-        drop(listener);
-
         // Use a 1-second handshake timeout so the test is fast.
         let config = WebSocketTransportConfig {
             handshake_timeout: Duration::from_secs(1),
             ..Default::default()
         };
-
-        let transport_handle =
-            tokio::spawn(async move { run_websocket_transport(bound_addr, app, config).await });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (bound_addr, transport_handle) = start_test_transport(app, config).await;
 
         // Connect via raw TCP — no WS upgrade sent.
         let _tcp = TcpStream::connect(bound_addr).await.expect("TCP connect");

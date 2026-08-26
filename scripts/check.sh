@@ -4,8 +4,8 @@
 # Runs the same checks as CI so local failures surface before push.
 #
 # Usage:
-#   scripts/check.sh                       # full: fmt → clippy → check → test
-#   scripts/check.sh --quick               # fast: fmt → clippy → check (no tests)
+#   scripts/check.sh                       # full: fmt → clippy → check → audits → test
+#   scripts/check.sh --quick               # fast: fmt → clippy → check → audits
 #   scripts/check.sh --release             # full pipeline in release profile
 #   scripts/check.sh --crate orbcode-config  # test only the specified crate
 #   scripts/check.sh --pty-e2e             # ONLY the #[ignore]d PTY e2e tests (serial)
@@ -26,7 +26,7 @@ usage() {
 Usage: scripts/check.sh [OPTIONS]
 
 Options:
-  --quick           Skip tests (fmt + clippy + check only)
+  --quick           Skip tests (fmt + clippy + check + audits only)
   --release         Use the release profile
   --crate <name>    Run tests for a single crate only (e.g. orbcode-config)
   --pty-e2e         Run ONLY the load-sensitive #[ignore]d PTY e2e tests, serially
@@ -144,6 +144,9 @@ cargo check --workspace ${PROFILE_FLAG}
 step "cargo check (no default features)"
 cargo check --workspace --no-default-features ${PROFILE_FLAG}
 
+step "Rust maintenance boundary audit"
+"${REPO_ROOT}/scripts/audit-rust-maintenance.py"
+
 step "public API surface audit"
 "${REPO_ROOT}/scripts/audit-public-surface.sh"
 
@@ -151,7 +154,7 @@ step "brand audit"
 "${REPO_ROOT}/scripts/audit-brand.sh"
 
 if [ "$QUICK" = true ]; then
-    printf '\n\033[1;32m✓ Quick check passed (fmt + clippy + check).\033[0m\n'
+    printf '\n\033[1;32m✓ Quick check passed (fmt + clippy + check + audits).\033[0m\n'
     exit 0
 fi
 
