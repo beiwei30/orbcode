@@ -17,6 +17,7 @@ pub(crate) const WEBSOCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const WEBSOCKET_PING_TIMEOUT: Duration = Duration::from_secs(30);
 const WEBSOCKET_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 pub(crate) const WEBSOCKET_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+const MAX_WEBSOCKET_FRAME_PAYLOAD_LEN: u64 = 8 * 1024 * 1024;
 
 trait WebSocketStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
@@ -172,7 +173,7 @@ impl WebSocketMcpClient {
 
     #[cfg(test)]
     pub(crate) async fn send_ping(&mut self) -> Result<(), McpError> {
-        let frame = websocket_client_frame(0x9, b"ping");
+        let frame = websocket_client_frame(0x9, b"ping")?;
         self.stream.write_all(&frame).await?;
         self.stream.flush().await?;
         self.awaiting_pong = true;
@@ -218,21 +219,21 @@ impl WebSocketMcpClient {
 
     #[cfg(test)]
     async fn send_close(&mut self) -> Result<(), McpError> {
-        let frame = websocket_client_frame(0x8, &[]);
+        let frame = websocket_client_frame(0x8, &[])?;
         self.stream.write_all(&frame).await?;
         self.stream.flush().await?;
         Ok(())
     }
 
     async fn send_text(&mut self, payload: &str) -> Result<(), McpError> {
-        let frame = websocket_client_frame(0x1, payload.as_bytes());
+        let frame = websocket_client_frame(0x1, payload.as_bytes())?;
         self.stream.write_all(&frame).await?;
         self.stream.flush().await?;
         Ok(())
     }
 
     async fn send_pong(&mut self, payload: &[u8]) -> Result<(), McpError> {
-        let frame = websocket_client_frame(0xA, payload);
+        let frame = websocket_client_frame(0xA, payload)?;
         self.stream.write_all(&frame).await?;
         self.stream.flush().await?;
         Ok(())
@@ -396,25 +397,33 @@ pub(crate) fn validate_websocket_handshake(
     Ok(())
 }
 
-fn websocket_client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+fn websocket_client_frame(opcode: u8, payload: &[u8]) -> Result<Vec<u8>, McpError> {
     let mut frame = Vec::new();
     frame.push(0x80 | opcode);
-    let len = payload.len();
+    let len = u64::try_from(payload.len()).map_err(|_| {
+        McpError::Protocol("WebSocket payload length exceeded 64-bit wire limit".to_string())
+    })?;
     if len < 126 {
-        frame.push(0x80 | len as u8);
-    } else if len <= u16::MAX as usize {
+        let len = u8::try_from(len).map_err(|_| {
+            McpError::Protocol("WebSocket payload length did not fit short frame".to_string())
+        })?;
+        frame.push(0x80 | len);
+    } else if len <= u64::from(u16::MAX) {
         frame.push(0x80 | 126);
-        frame.extend_from_slice(&(len as u16).to_be_bytes());
+        let len = u16::try_from(len).map_err(|_| {
+            McpError::Protocol("WebSocket payload length did not fit 16-bit frame".to_string())
+        })?;
+        frame.extend_from_slice(&len.to_be_bytes());
     } else {
         frame.push(0x80 | 127);
-        frame.extend_from_slice(&(len as u64).to_be_bytes());
+        frame.extend_from_slice(&len.to_be_bytes());
     }
     let mask = websocket_mask();
     frame.extend_from_slice(&mask);
     for (index, byte) in payload.iter().enumerate() {
         frame.push(byte ^ mask[index % 4]);
     }
-    frame
+    Ok(frame)
 }
 
 fn websocket_mask() -> [u8; 4] {
@@ -449,7 +458,7 @@ where
         stream.read_exact(&mut extended).await?;
         len = u64::from_be_bytes(extended);
     }
-    if len > 8 * 1024 * 1024 {
+    if len > MAX_WEBSOCKET_FRAME_PAYLOAD_LEN {
         return Err(McpError::Protocol(
             "WebSocket frame exceeded 8 MiB limit".to_string(),
         ));
@@ -461,7 +470,13 @@ where
     } else {
         None
     };
-    let mut payload = vec![0_u8; len as usize];
+    // The 8 MiB cap is below u32::MAX (locked by a boundary test), so this
+    // succeeds on supported 32- and 64-bit targets. Keep the checked conversion
+    // so a narrower future target rejects the frame instead of truncating it.
+    let len = usize::try_from(len).map_err(|_| {
+        McpError::Protocol("WebSocket frame length exceeded platform address space".to_string())
+    })?;
+    let mut payload = vec![0_u8; len];
     stream.read_exact(&mut payload).await?;
     if let Some(mask) = mask {
         for (index, byte) in payload.iter_mut().enumerate() {
@@ -469,4 +484,111 @@ where
         }
     }
     Ok(WebSocketFrame { opcode, payload })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn websocket_server_frame(payload_len: u64, include_payload: bool) -> Vec<u8> {
+        let mut frame = vec![0x81];
+        if payload_len < 126 {
+            frame.push(u8::try_from(payload_len).expect("short test frame length fits in u8"));
+        } else if payload_len <= u64::from(u16::MAX) {
+            frame.push(126);
+            frame.extend_from_slice(
+                &u16::try_from(payload_len)
+                    .expect("16-bit test frame length fits in u16")
+                    .to_be_bytes(),
+            );
+        } else {
+            frame.push(127);
+            frame.extend_from_slice(&payload_len.to_be_bytes());
+        }
+        if include_payload {
+            let payload_len =
+                usize::try_from(payload_len).expect("test payload length fits in usize");
+            frame.resize(frame.len() + payload_len, 0x5a);
+        }
+        frame
+    }
+
+    #[test]
+    fn websocket_frame_outgoing_length_prefix_boundaries() {
+        let cases: &[(usize, &[u8])] = &[
+            (0, &[0x81, 0x80]),
+            (125, &[0x81, 0xfd]),
+            (126, &[0x81, 0xfe, 0x00, 0x7e]),
+            (65_535, &[0x81, 0xfe, 0xff, 0xff]),
+            (
+                65_536,
+                &[0x81, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00],
+            ),
+            (
+                8 * 1024 * 1024,
+                &[0x81, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00],
+            ),
+            (
+                8 * 1024 * 1024 + 1,
+                &[0x81, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x01],
+            ),
+        ];
+
+        for &(payload_len, expected_prefix) in cases {
+            let payload = vec![0x5a; payload_len];
+            let frame = websocket_client_frame(0x1, &payload).expect("encode client frame");
+
+            assert_eq!(
+                &frame[..expected_prefix.len()],
+                expected_prefix,
+                "wrong length prefix for payload length {payload_len}"
+            );
+            assert_eq!(frame.len(), expected_prefix.len() + 4 + payload_len);
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_frame_incoming_length_boundaries() {
+        for payload_len in [0, 125, 126, 65_535, 65_536, MAX_WEBSOCKET_FRAME_PAYLOAD_LEN] {
+            let wire = websocket_server_frame(payload_len, true);
+            let mut stream = wire.as_slice();
+            let frame = read_websocket_frame(&mut stream)
+                .await
+                .expect("read valid server frame");
+
+            assert_eq!(
+                u64::try_from(frame.payload.len()).expect("payload length fits in u64"),
+                payload_len
+            );
+            assert!(frame.payload.iter().all(|byte| *byte == 0x5a));
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_frame_rejects_over_limit_before_allocation() {
+        for payload_len in [MAX_WEBSOCKET_FRAME_PAYLOAD_LEN + 1, u64::MAX] {
+            // The input deliberately contains only the header. A payload read would
+            // produce an I/O EOF, so the protocol error proves rejection happened first.
+            let wire = websocket_server_frame(payload_len, false);
+            let mut stream = wire.as_slice();
+            let error = match read_websocket_frame(&mut stream).await {
+                Ok(_) => panic!("over-limit frame must be rejected"),
+                Err(error) => error,
+            };
+
+            assert!(
+                matches!(
+                    error,
+                    McpError::Protocol(ref message)
+                        if message == "WebSocket frame exceeded 8 MiB limit"
+                ),
+                "unexpected error for payload length {payload_len}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn websocket_frame_limit_fits_32_bit_usize() {
+        assert!(MAX_WEBSOCKET_FRAME_PAYLOAD_LEN <= u64::from(u32::MAX));
+    }
 }
